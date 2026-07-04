@@ -104,6 +104,7 @@ export default function InventoryMovements() {
   const [currentWarehouseStock, setCurrentWarehouseStock] = useState<number | null>(null)
   const [productWarehouseStocks, setProductWarehouseStocks] = useState<WarehouseStock[]>([])
   const [productWarehouseStockMap, setProductWarehouseStockMap] = useState<Record<number, WarehouseStock[]>>({})
+  const [loadingWarehouseStockMap, setLoadingWarehouseStockMap] = useState<Record<number, boolean>>({})
   const [availableAdjustImeis, setAvailableAdjustImeis] = useState<string[]>([])
   const [availableAdjustSerials, setAvailableAdjustSerials] = useState<string[]>([])
   const [savingAdjust, setSavingAdjust] = useState(false)
@@ -178,12 +179,22 @@ export default function InventoryMovements() {
   useEffect(() => {
     if (activeTab !== 'products' || products.length === 0) return
 
-    const missingProducts = products.filter(product => !productWarehouseStockMap[product.id])
+    const missingProducts = products.filter(product =>
+      !Object.prototype.hasOwnProperty.call(productWarehouseStockMap, product.id) &&
+      !loadingWarehouseStockMap[product.id]
+    )
     if (missingProducts.length === 0) return
 
     let cancelled = false
 
     const loadProductStocks = async () => {
+      const missingProductIds = missingProducts.map(product => product.id)
+      setLoadingWarehouseStockMap(prev => {
+        const next = { ...prev }
+        for (const productId of missingProductIds) next[productId] = true
+        return next
+      })
+
       try {
         const entries = await Promise.all(
           missingProducts.map(async product => {
@@ -203,6 +214,13 @@ export default function InventoryMovements() {
         })
       } catch (err) {
         if (!cancelled) console.error(err)
+      } finally {
+        if (cancelled) return
+        setLoadingWarehouseStockMap(prev => {
+          const next = { ...prev }
+          for (const productId of missingProductIds) next[productId] = false
+          return next
+        })
       }
     }
 
@@ -211,7 +229,7 @@ export default function InventoryMovements() {
     return () => {
       cancelled = true
     }
-  }, [activeTab, products, productWarehouseStockMap])
+  }, [activeTab, products, productWarehouseStockMap, loadingWarehouseStockMap])
 
   // Load history when tab is active or filters change
   useEffect(() => {
@@ -294,11 +312,50 @@ export default function InventoryMovements() {
     setLoadingProducts(true)
     try {
       const data = await getProducts()
-      setProducts(Array.isArray(data) ? data : [])
+      const nextProducts = Array.isArray(data) ? data : []
+      setProducts(nextProducts)
+      setProductWarehouseStockMap({})
+      setLoadingWarehouseStockMap({})
     } catch (err) {
       console.error(err)
     } finally {
       setLoadingProducts(false)
+    }
+  }
+
+  const refreshProductsWarehouseStock = async (productIds: number[]) => {
+    const uniqueProductIds = [...new Set(productIds.map(id => Number(id)).filter(id => id > 0))]
+    if (uniqueProductIds.length === 0) return
+
+    setLoadingWarehouseStockMap(prev => {
+      const next = { ...prev }
+      for (const productId of uniqueProductIds) next[productId] = true
+      return next
+    })
+
+    try {
+      const entries = await Promise.all(
+        uniqueProductIds.map(async productId => {
+          const stocks = await getProductWarehouseStock(productId)
+          return [productId, Array.isArray(stocks) ? stocks : []] as const
+        })
+      )
+
+      setProductWarehouseStockMap(prev => {
+        const next = { ...prev }
+        for (const [productId, stocks] of entries) {
+          next[productId] = stocks
+        }
+        return next
+      })
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setLoadingWarehouseStockMap(prev => {
+        const next = { ...prev }
+        for (const productId of uniqueProductIds) next[productId] = false
+        return next
+      })
     }
   }
 
@@ -550,7 +607,8 @@ export default function InventoryMovements() {
       alert('Ajuste registrado correctamente')
       setShowAdjust(false)
       if (activeTab === 'products') {
-        loadProducts()
+        await loadProducts()
+        await refreshProductsWarehouseStock([Number(adjustForm.productId)])
       }
       if (activeTab === 'history') {
         loadHistory()
@@ -661,11 +719,17 @@ export default function InventoryMovements() {
   }, [brands])
 
   const renderWarehouseStockBreakdown = (productId: number, globalStock: number, compact = false) => {
+    const hasLoadedStocks = Object.prototype.hasOwnProperty.call(productWarehouseStockMap, productId)
     const stocks = productWarehouseStockMap[productId] || []
+    const isLoadingStocks = Boolean(loadingWarehouseStockMap[productId]) || !hasLoadedStocks
 
     return (
       <div style={{ display: 'grid', gap: compact ? 2 : 4 }}>
-        {stocks.length > 0 ? (
+        {isLoadingStocks ? (
+          <div style={{ fontSize: compact ? 11 : 12, color: 'var(--muted)' }}>
+            Cargando stock por tienda...
+          </div>
+        ) : stocks.length > 0 ? (
           stocks.map(stock => (
             <div
               key={`${productId}-${stock.warehouseId}`}
@@ -685,7 +749,7 @@ export default function InventoryMovements() {
           ))
         ) : (
           <div style={{ fontSize: compact ? 11 : 12, color: 'var(--muted)' }}>
-            Cargando stock por tienda...
+            Sin stock por tienda registrado
           </div>
         )}
         <div

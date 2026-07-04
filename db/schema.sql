@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS products (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(160) NOT NULL,
   sku VARCHAR(80) UNIQUE,
-  product_code VARCHAR(80),
+  product_code VARCHAR(80) UNIQUE,
   category_id INT,
   brand_id INT,
   supplier_id INT,

@@ -58,6 +58,59 @@ function sumQuantity(arr, quantityKey = 'quantity') {
   return arr.reduce((acc, v) => acc + Number(v?.[quantityKey] || 0), 0)
 }
 
+function normalizeOptionalIdentifier(value) {
+  const normalized = String(value ?? '').trim().toUpperCase()
+  return normalized || null
+}
+
+async function ensureUniqueProductIdentifiers(pool, { sku, productCode, excludeProductId = null }) {
+  const normalizedSku = normalizeOptionalIdentifier(sku)
+  const normalizedProductCode = normalizeOptionalIdentifier(productCode)
+
+  if (normalizedSku) {
+    const skuParams = [normalizedSku]
+    let skuQuery = 'SELECT id FROM products WHERE UPPER(TRIM(COALESCE(sku, ""))) = ?'
+    if (excludeProductId) {
+      skuQuery += ' AND id <> ?'
+      skuParams.push(Number(excludeProductId))
+    }
+    skuQuery += ' LIMIT 1'
+
+    const [skuRows] = await pool.query(skuQuery, skuParams)
+    if (Array.isArray(skuRows) && skuRows.length > 0) {
+      throw {
+        code: 'ER_DUP_ENTRY',
+        sqlMessage: `Duplicate entry '${normalizedSku}' for key 'products.sku'`,
+        message: 'SKU duplicado'
+      }
+    }
+  }
+
+  if (normalizedProductCode) {
+    const codeParams = [normalizedProductCode]
+    let codeQuery = 'SELECT id FROM products WHERE UPPER(TRIM(COALESCE(product_code, ""))) = ?'
+    if (excludeProductId) {
+      codeQuery += ' AND id <> ?'
+      codeParams.push(Number(excludeProductId))
+    }
+    codeQuery += ' LIMIT 1'
+
+    const [codeRows] = await pool.query(codeQuery, codeParams)
+    if (Array.isArray(codeRows) && codeRows.length > 0) {
+      throw {
+        code: 'ER_DUP_ENTRY',
+        sqlMessage: `Duplicate entry '${normalizedProductCode}' for key 'uniq_products_product_code'`,
+        message: 'Codigo de producto duplicado'
+      }
+    }
+  }
+
+  return {
+    normalizedSku,
+    normalizedProductCode,
+  }
+}
+
 function resolveWarehouseScope(req, requestedWarehouseId) {
   const userWarehouseId = getUserWarehouseId(req.user)
   const isAdmin = isAdminUser(req.user)
@@ -503,6 +556,7 @@ router.post('/', authMiddleware, upload.single('image'), async (req, res) => {
     if (!await canWriteProducts(req, pool)) {
       return res.status(403).json({ error: 'No tienes permisos para crear productos' })
     }
+    const { normalizedSku, normalizedProductCode } = await ensureUniqueProductIdentifiers(pool, { sku, productCode })
 
     // Sanear arrays recibidos
     const rawBatches = parseJsonArrayField(req.body, 'batches')
@@ -563,8 +617,8 @@ router.post('/', authMiddleware, upload.single('image'), async (req, res) => {
         'INSERT INTO products (name, sku, product_code, category_id, brand_id, supplier_id, price, price2, price3, cost, min_stock, unit, description, image_url, product_type, alt_name, generic_name, shelf_location) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
           name,
-          sku || null,
-          productCode || null,
+          normalizedSku,
+          normalizedProductCode,
           categoryId ? Number(categoryId) : null,
           brandId ? Number(brandId) : null,
           supplierId ? Number(supplierId) : null,
@@ -624,8 +678,8 @@ router.post('/', authMiddleware, upload.single('image'), async (req, res) => {
       return res.json({
         id,
         name,
-        sku,
-        productCode: productCode || undefined,
+        sku: normalizedSku || undefined,
+        productCode: normalizedProductCode || undefined,
         categoryId: categoryId ? Number(categoryId) : undefined,
         brandId: brandId ? Number(brandId) : undefined,
         supplierId: supplierId ? Number(supplierId) : undefined,
@@ -662,6 +716,9 @@ router.post('/', authMiddleware, upload.single('image'), async (req, res) => {
       }
       if (m.includes('product_imeis') || m.toLowerCase().includes('imei')) {
         return res.status(409).json({ error: 'IMEI duplicado', duplicate })
+      }
+      if (m.toLowerCase().includes('product_code') || m.toLowerCase().includes('uniq_products_product_code')) {
+        return res.status(409).json({ error: 'Codigo de producto duplicado', duplicate })
       }
       if (m.includes('products') || m.toLowerCase().includes('sku')) {
         return res.status(409).json({ error: 'SKU duplicado', duplicate })
@@ -723,8 +780,8 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
     else if (nextType === 'SERIAL') derivedStock = serials.length
 
     const nextName = has(name) ? name : current.name
-    const nextSku = has(sku) ? sku : (current.sku || null)
-    const nextProductCode = has(productCode) ? productCode : (current.product_code || null)
+    const nextSku = has(sku) ? normalizeOptionalIdentifier(sku) : normalizeOptionalIdentifier(current.sku)
+    const nextProductCode = has(productCode) ? normalizeOptionalIdentifier(productCode) : normalizeOptionalIdentifier(current.product_code)
     const nextCategoryId = hasNum(categoryId) ? Number(categoryId) : (current.category_id ?? null)
     const nextBrandId = hasNum(brandId) ? Number(brandId) : (current.brand_id ?? null)
     const nextSupplierId = hasNum(supplierId) ? Number(supplierId) : (current.supplier_id ?? null)
@@ -740,6 +797,7 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
     const nextAltName = has(altName) ? altName : (current.alt_name || null)
     const nextGenericName = has(genericName) ? genericName : (current.generic_name || null)
     const nextShelfLocation = has(shelfLocation) ? shelfLocation : (current.shelf_location || null)
+    await ensureUniqueProductIdentifiers(pool, { sku: nextSku, productCode: nextProductCode, excludeProductId: id })
 
     // Reglas de conteo para IMEI/SERIAL: requerir cantidad exacta según stock inicial
     // REMOVED: Stock logic is now handled via purchases/adjustments
@@ -890,6 +948,9 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
       }
       if (m.includes('product_imeis') || m.toLowerCase().includes('imei')) {
         return res.status(409).json({ error: 'IMEI duplicado', duplicate })
+      }
+      if (m.toLowerCase().includes('product_code') || m.toLowerCase().includes('uniq_products_product_code')) {
+        return res.status(409).json({ error: 'Codigo de producto duplicado', duplicate })
       }
       if (m.includes('products') || m.toLowerCase().includes('sku')) {
         return res.status(409).json({ error: 'SKU duplicado', duplicate })

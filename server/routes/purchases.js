@@ -21,6 +21,25 @@ const storage = multer.diskStorage({
 })
 const upload = multer({ storage: storage })
 
+async function resolvePurchaseMovementType(conn, productId, warehouseId) {
+  await conn.query(
+    `INSERT INTO product_warehouse_stock (product_id, warehouse_id, quantity)
+     VALUES (?, ?, 0)
+     ON DUPLICATE KEY UPDATE quantity = quantity`,
+    [productId, warehouseId]
+  )
+
+  const [rows] = await conn.query(
+    `SELECT quantity
+     FROM product_warehouse_stock
+     WHERE product_id = ? AND warehouse_id = ?
+     FOR UPDATE`,
+    [productId, warehouseId]
+  )
+
+  return Number(rows[0]?.quantity || 0) > 0 ? 'PURCHASE' : 'INITIAL'
+}
+
 // Listar compras
 router.get('/', authMiddleware, async (req, res) => {
   try {
@@ -144,10 +163,18 @@ router.post('/', authMiddleware, upload.single('document'), async (req, res) => 
 
       // 2. Procesar items y actualizar stock
       const targetWarehouseId = warehouseId || 1 // Default to 1 if not specified
+      const movementTypeByProduct = new Map()
 
       for (const item of items) {
         // item: { productId, quantity, unitCost }
         const itemTotal = Number(item.unitCost) * Number(item.quantity)
+        const movementKey = `${item.productId}:${targetWarehouseId}`
+        let movementType = movementTypeByProduct.get(movementKey)
+        if (!movementType) {
+          movementType = await resolvePurchaseMovementType(conn, item.productId, targetWarehouseId)
+          movementTypeByProduct.set(movementKey, movementType)
+        }
+        const movementLabel = movementType === 'INITIAL' ? 'Ingreso inicial por compra' : 'Compra'
         
         await conn.query(
           'INSERT INTO purchase_items (purchase_id, product_id, quantity, unit_cost, total, total_cost, serials) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -220,11 +247,11 @@ router.post('/', authMiddleware, upload.single('document'), async (req, res) => 
         await registerMovement({
             productId: item.productId,
             warehouseId: targetWarehouseId, // Use the target warehouse
-            type: 'PURCHASE',
+            type: movementType,
             quantity: item.quantity,
             referenceId: purchaseId,
             userId: userId,
-            notes: `Compra #${docNo || purchaseId}`
+            notes: `${movementLabel} #${docNo || purchaseId}`
         }, conn)
       }
 

@@ -168,6 +168,24 @@ async function ensureIndex(conn, table, indexName, expression) {
   }
 }
 
+async function ensureUniqueIndex(conn, table, indexName, expression, duplicateCheckQuery = null) {
+  if (await indexExists(conn, table, indexName)) {
+    return
+  }
+
+  if (duplicateCheckQuery) {
+    const [duplicateRows] = await conn.query(duplicateCheckQuery)
+    if (Array.isArray(duplicateRows) && duplicateRows.length > 0) {
+      const duplicateValue = duplicateRows[0]?.duplicate_value || duplicateRows[0]?.value || 'desconocido'
+      console.warn(`Skipped unique index ${indexName} on ${table}: existing duplicates found (${duplicateValue})`)
+      return
+    }
+  }
+
+  await conn.query(`CREATE UNIQUE INDEX \`${indexName}\` ON \`${table}\` (${expression})`)
+  console.log(`Created unique index ${indexName} on ${table}`)
+}
+
 async function ensureForeignKey(conn, table, column, referencedTable, fkName, onDeleteClause = '') {
   if (!(await fkExists(conn, table, fkName))) {
     try {
@@ -273,6 +291,25 @@ async function normalizeSchema(conn) {
   await ensureColumn(conn, 'products', 'alt_name', 'VARCHAR(160) NULL')
   await ensureColumn(conn, 'products', 'generic_name', 'VARCHAR(160) NULL')
   await ensureColumn(conn, 'products', 'shelf_location', 'VARCHAR(100) NULL')
+  await conn.query(`
+    UPDATE products
+    SET product_code = NULL
+    WHERE product_code IS NOT NULL AND TRIM(product_code) = ''
+  `)
+  await ensureUniqueIndex(
+    conn,
+    'products',
+    'uniq_products_product_code',
+    'product_code',
+    `
+      SELECT UPPER(TRIM(product_code)) AS duplicate_value
+      FROM products
+      WHERE product_code IS NOT NULL AND TRIM(product_code) <> ''
+      GROUP BY UPPER(TRIM(product_code))
+      HAVING COUNT(*) > 1
+      LIMIT 1
+    `
+  )
 
   await conn.query(`
     CREATE TABLE IF NOT EXISTS permissions (
@@ -417,6 +454,9 @@ async function normalizeSchema(conn) {
     )
   `)
   await ensureColumn(conn, 'transfer_items', 'destination_movement_type', 'VARCHAR(20) NULL')
+  await ensureColumn(conn, 'transfer_items', 'batch_no', 'VARCHAR(100) NULL')
+  await ensureColumn(conn, 'transfer_items', 'imei', 'VARCHAR(100) NULL')
+  await ensureColumn(conn, 'transfer_items', 'serial', 'VARCHAR(100) NULL')
 
   await ensureForeignKey(conn, 'users', 'role_id', 'roles', 'fk_users_role', 'SET NULL')
   await ensureForeignKey(conn, 'users', 'warehouse_id', 'warehouses', 'fk_users_warehouse', 'SET NULL')

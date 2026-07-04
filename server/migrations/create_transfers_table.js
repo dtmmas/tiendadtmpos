@@ -4,6 +4,13 @@ import path from 'path'
 
 dotenv.config({ path: path.join(process.cwd(), '.env') })
 
+async function ensureColumn(conn, table, column, definition) {
+  const [rows] = await conn.query(`SHOW COLUMNS FROM \`${table}\` LIKE ?`, [column])
+  if (!Array.isArray(rows) || rows.length === 0) {
+    await conn.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`)
+  }
+}
+
 async function migrate() {
   const pool = await getPool()
   const conn = await pool.getConnection()
@@ -40,6 +47,11 @@ async function migrate() {
         FOREIGN KEY (product_id) REFERENCES products(id)
       )
     `)
+
+    await ensureColumn(conn, 'transfer_items', 'destination_movement_type', 'VARCHAR(20) NULL')
+    await ensureColumn(conn, 'transfer_items', 'batch_no', 'VARCHAR(100) NULL')
+    await ensureColumn(conn, 'transfer_items', 'imei', 'VARCHAR(100) NULL')
+    await ensureColumn(conn, 'transfer_items', 'serial', 'VARCHAR(100) NULL')
 
     console.log('Transfers migration completed.')
     await conn.commit()

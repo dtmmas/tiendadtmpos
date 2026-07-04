@@ -17,6 +17,21 @@ async function ensureTransferItemsDestinationTypeColumn(conn) {
   }
 }
 
+async function ensureTransferItemsTrackedColumns(conn) {
+  const trackedColumns = [
+    { name: 'batch_no', definition: 'VARCHAR(100) NULL AFTER destination_movement_type' },
+    { name: 'imei', definition: 'VARCHAR(100) NULL AFTER batch_no' },
+    { name: 'serial', definition: 'VARCHAR(100) NULL AFTER imei' }
+  ]
+
+  for (const column of trackedColumns) {
+    const [rows] = await conn.query(`SHOW COLUMNS FROM transfer_items LIKE ?`, [column.name])
+    if (!Array.isArray(rows) || rows.length === 0) {
+      await conn.query(`ALTER TABLE transfer_items ADD COLUMN ${column.name} ${column.definition}`)
+    }
+  }
+}
+
 function resolveDestinationMovementType(mode, destinationStockQty) {
   const normalizedMode = String(mode || 'AUTO').toUpperCase()
   if (normalizedMode === 'TRANSFER') {
@@ -51,6 +66,7 @@ router.get('/', authMiddleware, async (req, res) => {
   try {
     const pool = await getPool()
     await ensureTransferItemsDestinationTypeColumn(pool)
+    await ensureTransferItemsTrackedColumns(pool)
     const { limit = 50, offset = 0 } = req.query
 
     const isAdmin = isAdminUser(req.user)
@@ -94,6 +110,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
     const id = Number(req.params.id)
     const pool = await getPool()
     await ensureTransferItemsDestinationTypeColumn(pool)
+    await ensureTransferItemsTrackedColumns(pool)
     const isAdmin = isAdminUser(req.user)
     const userWarehouseId = getUserWarehouseId(req.user)
     const whereClause = !isAdmin
@@ -171,6 +188,7 @@ router.post('/', authMiddleware, roleMiddleware(['ADMIN', 'ALMACEN']), async (re
     try {
       await conn.beginTransaction()
       await ensureTransferItemsDestinationTypeColumn(conn)
+      await ensureTransferItemsTrackedColumns(conn)
 
       const [warehouseRows] = await conn.query(
         'SELECT id, status FROM warehouses WHERE id IN (?, ?)',
@@ -279,9 +297,9 @@ router.post('/', authMiddleware, roleMiddleware(['ADMIN', 'ALMACEN']), async (re
         const destinationMovementLabel = destinationMovementType === 'INITIAL' ? 'Ingreso inicial por transferencia' : 'Transferencia'
 
         await conn.query(`
-          INSERT INTO transfer_items (transfer_id, product_id, quantity, destination_movement_type)
-          VALUES (?, ?, ?, ?)
-        `, [transferId, productId, quantity, destinationMovementType])
+          INSERT INTO transfer_items (transfer_id, product_id, quantity, destination_movement_type, batch_no, imei, serial)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `, [transferId, productId, quantity, destinationMovementType, batchNo || null, imei || null, serial || null])
 
         await registerMovement({
           productId,
