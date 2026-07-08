@@ -202,7 +202,19 @@ function capTrackedDetailsByWarehouseStock(values, stockRows, warehouseKey = 'wa
 
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    const { warehouseId, search } = req.query
+    const {
+      warehouseId,
+      search,
+      paged,
+      limit: rawLimit,
+      offset: rawOffset,
+      categoryId,
+      subcategoryId,
+      brandId,
+      supplierId,
+      departmentId,
+      stockFilter,
+    } = req.query
     const pool = await getPool()
     const includeSensitive = await canViewSensitiveProductData(req, pool)
     const scope = resolveWarehouseScope(req, warehouseId)
@@ -224,29 +236,124 @@ router.get('/', authMiddleware, async (req, res) => {
       params.push(scope.warehouseId, scope.warehouseId)
     }
 
+    const whereClauses = []
+    const whereParams = []
+    const havingClauses = []
+    const havingParams = []
+
     let query = `
       SELECT p.id, p.name, p.sku, p.product_code, p.category_id, p.brand_id, p.supplier_id, p.price, p.price2, p.price3, p.cost, 
               ${selectStock}, 
               (SELECT COALESCE(SUM(quantity), 0) FROM inventory_movements WHERE product_id = p.id AND type = 'INITIAL') as initial_stock, 
               p.min_stock, p.unit, p.description, p.image_url, p.product_type, p.alt_name, p.generic_name, p.shelf_location 
        FROM products p 
-       LEFT JOIN product_warehouse_stock pws ON p.id = pws.product_id`
+       LEFT JOIN product_warehouse_stock pws ON p.id = pws.product_id
+       LEFT JOIN categories c ON p.category_id = c.id
+       LEFT JOIN categories pc ON c.parent_id = pc.id`
 
     const normalizedSearch = String(search || '').trim()
     if (normalizedSearch) {
-      query += `
-        WHERE (
+      const searchTerms = normalizedSearch
+        .split(/\s+/)
+        .map(term => term.trim())
+        .filter(Boolean)
+        .slice(0, 8)
+
+      for (const term of searchTerms) {
+        const searchTerm = `%${term}%`
+        whereClauses.push(`(
           p.name LIKE ?
           OR COALESCE(p.sku, '') LIKE ?
           OR COALESCE(p.product_code, '') LIKE ?
           OR COALESCE(p.description, '') LIKE ?
-        )`
-      const searchTerm = `%${normalizedSearch}%`
-      params.push(searchTerm, searchTerm, searchTerm, searchTerm)
+          OR COALESCE(p.alt_name, '') LIKE ?
+          OR COALESCE(p.generic_name, '') LIKE ?
+        )`)
+        whereParams.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+      }
     }
 
-    query += ` GROUP BY p.id ORDER BY p.id DESC`
-    const [rows] = await pool.query(query, params)
+    const normalizedSubcategoryId = Number(subcategoryId || 0)
+    const normalizedCategoryId = Number(categoryId || 0)
+    const normalizedBrandId = Number(brandId || 0)
+    const normalizedSupplierId = Number(supplierId || 0)
+    const normalizedDepartmentId = Number(departmentId || 0)
+
+    if (normalizedSubcategoryId > 0) {
+      whereClauses.push('p.category_id = ?')
+      whereParams.push(normalizedSubcategoryId)
+    } else if (normalizedCategoryId > 0) {
+      whereClauses.push('(p.category_id = ? OR c.parent_id = ?)')
+      whereParams.push(normalizedCategoryId, normalizedCategoryId)
+    }
+
+    if (normalizedBrandId > 0) {
+      whereClauses.push('p.brand_id = ?')
+      whereParams.push(normalizedBrandId)
+    }
+
+    if (normalizedSupplierId > 0) {
+      whereClauses.push('p.supplier_id = ?')
+      whereParams.push(normalizedSupplierId)
+    }
+
+    if (normalizedDepartmentId > 0) {
+      whereClauses.push('COALESCE(c.department_id, pc.department_id) = ?')
+      whereParams.push(normalizedDepartmentId)
+    }
+
+    const normalizedStockFilter = String(stockFilter || '').trim().toLowerCase()
+    if (normalizedStockFilter === 'with_stock') {
+      havingClauses.push('COALESCE(SUM(pws.quantity), 0) > 0')
+    } else if (normalizedStockFilter === 'without_stock') {
+      havingClauses.push('COALESCE(SUM(pws.quantity), 0) = 0')
+    }
+
+    if (whereClauses.length > 0) {
+      query += ` WHERE ${whereClauses.join(' AND ')}`
+    }
+
+    const limit = Math.min(Math.max(Number(rawLimit || 60), 1), 200)
+    const offset = Math.max(Number(rawOffset || 0), 0)
+    const isPaged = String(paged || '').toLowerCase() === 'true' || Number(rawLimit || 0) > 0
+
+    const finalParams = [...params, ...whereParams]
+    query += ` GROUP BY p.id`
+    if (havingClauses.length > 0) {
+      query += ` HAVING ${havingClauses.join(' AND ')}`
+      finalParams.push(...havingParams)
+    }
+    query += ` ORDER BY p.id DESC`
+
+    let total = null
+    let catalogTotal = null
+
+    if (isPaged) {
+      const countParams = [...params, ...whereParams, ...havingParams]
+      const [countRows] = await pool.query(
+        `SELECT COUNT(*) AS total
+         FROM (
+           SELECT p.id
+           FROM products p
+           LEFT JOIN product_warehouse_stock pws ON p.id = pws.product_id
+           LEFT JOIN categories c ON p.category_id = c.id
+           LEFT JOIN categories pc ON c.parent_id = pc.id
+           ${whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : ''}
+           GROUP BY p.id
+           ${havingClauses.length > 0 ? `HAVING ${havingClauses.join(' AND ')}` : ''}
+         ) grouped_products`,
+        countParams
+      )
+      total = Number(countRows?.[0]?.total || 0)
+
+      const [catalogRows] = await pool.query('SELECT COUNT(*) AS total FROM products')
+      catalogTotal = Number(catalogRows?.[0]?.total || 0)
+
+      query += ` LIMIT ? OFFSET ?`
+      finalParams.push(limit, offset)
+    }
+
+    const [rows] = await pool.query(query, finalParams)
 
     const items = rows.map(r => sanitizeSensitiveProductFields({
       id: r.id,
@@ -272,6 +379,21 @@ router.get('/', authMiddleware, async (req, res) => {
       genericName: r.generic_name || undefined,
       shelfLocation: r.shelf_location || undefined,
     }, includeSensitive))
+
+    if (isPaged) {
+      return res.json({
+        data: items,
+        pagination: {
+          total,
+          limit,
+          offset,
+          page: Math.floor(offset / limit) + 1,
+          totalPages: Math.max(1, Math.ceil(total / limit)),
+          catalogTotal,
+        }
+      })
+    }
+
     return res.json(items)
   } catch (err) {
     console.error('Products GET error:', err)

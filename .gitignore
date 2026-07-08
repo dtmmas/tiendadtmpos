@@ -36,3 +36,8 @@ server/README.txt
 server/config.json
 server/database.sql
 server/data/backups/
+
+# Local-only deployment and migration artifacts
+HOSTINGER_VPS_DICAR.md
+server/dicar.sql
+server/migrate_dicar_catalog.js

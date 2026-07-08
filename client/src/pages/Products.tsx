@@ -89,6 +89,12 @@ export default function Products() {
   const [selectedBrandId, setSelectedBrandId] = useState<number | null>(null)
   const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null)
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<number | null>(null)
+  const [selectedStockFilter, setSelectedStockFilter] = useState<'all' | 'with_stock' | 'without_stock'>('all')
+  const [currentPage, setCurrentPage] = useState(1)
+  const productsPerPage = 60
+  const [totalProducts, setTotalProducts] = useState(0)
+  const [catalogTotal, setCatalogTotal] = useState(0)
+  const [debouncedQuery, setDebouncedQuery] = useState('')
 
   // Quick add: estados para agregar catálogo desde el modal de producto
   const [quickAddModal, setQuickAddModal] = useState<'none' | 'category' | 'subcategory' | 'brand' | 'supplier' | 'unit' | 'department'>('none')
@@ -388,18 +394,14 @@ export default function Products() {
   
   useEffect(() => {
     (async () => {
-      setLoading(true)
       try {
         const results = await Promise.allSettled([
-          getProducts(),
           getCategories(),
           getBrands(),
           getSuppliers(),
           getDepartments(),
         ])
-        const [prodsRes, catsRes, brsRes, supsRes, depsRes] = results
-        if (prodsRes.status === 'fulfilled') setProducts(prodsRes.value)
-        else console.error('AxiosError: No se pudieron cargar productos:', (prodsRes as any)?.reason)
+        const [catsRes, brsRes, supsRes, depsRes] = results
         if (catsRes.status === 'fulfilled') setCategories(catsRes.value)
         else {
           const reason: any = (catsRes as any)?.reason
@@ -425,11 +427,16 @@ export default function Products() {
         if (anyRejected) setError('Algunas listas no se pudieron cargar, mostrando lo disponible.')
       } catch (err: any) {
         setError(err?.message || 'Error al cargar listas iniciales')
-      } finally {
-        setLoading(false)
       }
     })()
   }, [])
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebouncedQuery(query.trim())
+    }, 250)
+    return () => window.clearTimeout(handle)
+  }, [query])
 
   useEffect(() => {
     (async () => {
@@ -570,8 +577,8 @@ export default function Products() {
   const parentCategories = useMemo(() => categories.filter(c => !c.parentId && (formDepartmentId ? c.departmentId === formDepartmentId : true)), [categories, formDepartmentId])
   const subcategoriesForParent = useMemo(() => categories.filter(c => c.parentId === formParentId), [categories, formParentId])
   const hasActiveFilters = useMemo(() => {
-    return (selectedSubcategoryId !== null) || (selectedCategoryId !== null) || (selectedBrandId !== null) || (selectedSupplierId !== null) || (selectedDepartmentId !== null) || (query.trim() !== '')
-  }, [selectedSubcategoryId, selectedCategoryId, selectedBrandId, selectedSupplierId, selectedDepartmentId, query])
+    return (selectedSubcategoryId !== null) || (selectedCategoryId !== null) || (selectedBrandId !== null) || (selectedSupplierId !== null) || (selectedDepartmentId !== null) || (selectedStockFilter !== 'all') || (query.trim() !== '')
+  }, [selectedSubcategoryId, selectedCategoryId, selectedBrandId, selectedSupplierId, selectedDepartmentId, selectedStockFilter, query])
   
   function clearFilters() {
     setSelectedCategoryId(null)
@@ -579,6 +586,7 @@ export default function Products() {
     setSelectedBrandId(null)
     setSelectedSupplierId(null)
     setSelectedDepartmentId(null)
+    setSelectedStockFilter('all')
     setQuery('')
   }
 
@@ -603,46 +611,60 @@ export default function Products() {
     if (deptId !== formDepartmentId) setFormDepartmentId(deptId)
   }, [formParentId, categories])
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    let base = products
-    if (selectedDepartmentId !== null) {
-      base = base.filter(p => {
-        if (!p.categoryId) return false
-        const cat = categoryById[p.categoryId]
-        const deptId = cat ? (cat.departmentId ?? (cat.parentId ? (categoryById[cat.parentId]?.departmentId ?? null) : null)) : null
-        return deptId === selectedDepartmentId
-      })
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(totalProducts / productsPerPage)), [totalProducts])
+  const paginatedProducts = products
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [query, selectedDepartmentId, selectedCategoryId, selectedSubcategoryId, selectedBrandId, selectedSupplierId, selectedStockFilter])
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages)
+  }, [currentPage, totalPages])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadProductsPage = async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        const response = await getProducts({
+          paged: true,
+          page: currentPage,
+          limit: productsPerPage,
+          search: debouncedQuery || undefined,
+          categoryId: selectedSubcategoryId === null ? selectedCategoryId : undefined,
+          subcategoryId: selectedSubcategoryId,
+          brandId: selectedBrandId,
+          supplierId: selectedSupplierId,
+          departmentId: selectedDepartmentId,
+          stockFilter: selectedStockFilter,
+        })
+
+        if (cancelled) return
+
+        const nextProducts = Array.isArray(response?.data) ? response.data : []
+        setProducts(nextProducts)
+        setTotalProducts(Number(response?.pagination?.total || 0))
+        setCatalogTotal(Number(response?.pagination?.catalogTotal || 0))
+      } catch (err: any) {
+        if (cancelled) return
+        console.error('AxiosError: No se pudieron cargar productos:', err?.message, err?.response?.status, err?.response?.data)
+        setProducts([])
+        setTotalProducts(0)
+        setError(err?.response?.data?.error || err?.message || 'No se pudo cargar el catalogo de productos')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     }
-    if (selectedSubcategoryId !== null) {
-      base = base.filter(p => p.categoryId === selectedSubcategoryId)
-    } else if (selectedCategoryId !== null) {
-      base = base.filter(p => {
-        if (!p.categoryId) return false
-        const cat = categoryById[p.categoryId]
-        return (p.categoryId === selectedCategoryId) || (!!cat && cat.parentId === selectedCategoryId)
-      })
+
+    void loadProductsPage()
+
+    return () => {
+      cancelled = true
     }
-    if (selectedBrandId !== null) {
-      base = base.filter(p => p.brandId === selectedBrandId)
-    }
-    if (selectedSupplierId !== null) {
-      base = base.filter(p => p.supplierId === selectedSupplierId)
-    }
-    if (!q) return base
-    return base.filter(p => {
-      const productCode = (p.productCode || '').toLowerCase()
-      const name = (p.name || '').toLowerCase()
-      const sku = (p.sku || '').toLowerCase()
-      const description = (p.description || '').toLowerCase()
-      const altName = (p.altName || '').toLowerCase()
-      const genericName = (p.genericName || '').toLowerCase()
-      const cat = p.categoryId ? (categoryMap[p.categoryId] || '').toLowerCase() : ''
-      const brand = p.brandId ? (brandMap[p.brandId] || '').toLowerCase() : ''
-      const supplier = canViewSensitiveProductData && p.supplierId ? (supplierMap[p.supplierId] || '').toLowerCase() : ''
-      return productCode.includes(q) || name.includes(q) || sku.includes(q) || description.includes(q) || altName.includes(q) || genericName.includes(q) || cat.includes(q) || brand.includes(q) || supplier.includes(q)
-    })
-  }, [products, query, categoryMap, brandMap, supplierMap, categoryById, selectedDepartmentId, selectedCategoryId, selectedSubcategoryId, selectedBrandId, selectedSupplierId, canViewSensitiveProductData])
+  }, [currentPage, debouncedQuery, selectedDepartmentId, selectedCategoryId, selectedSubcategoryId, selectedBrandId, selectedSupplierId, selectedStockFilter])
 
   function startCreate() {
     if (!canManageProducts) {
@@ -1027,6 +1049,8 @@ export default function Products() {
       setLoading(true)
       await deleteProduct(deleteTarget.id)
       setProducts(prev => prev.filter(p => p.id !== deleteTarget.id))
+      setTotalProducts(prev => Math.max(0, prev - 1))
+      setCatalogTotal(prev => Math.max(0, prev - 1))
       setDeleteTarget(null)
     } catch (err: any) {
       const msg = err?.response?.data?.error || err?.message || 'Error eliminando producto'
@@ -1051,7 +1075,11 @@ export default function Products() {
             />
           </div>
           <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-            Mostrando {filtered.length} de {products.length}
+            Mostrando {paginatedProducts.length > 0 ? ((currentPage - 1) * productsPerPage) + 1 : 0}
+            {' - '}
+            {Math.min(currentPage * productsPerPage, totalProducts)} de {totalProducts}
+            {' '}resultados
+            {' '}• Total catalogo: {catalogTotal || totalProducts}
             {hasActiveFilters && (
               <>
                 {' '}• Filtros activos
@@ -1134,6 +1162,14 @@ export default function Products() {
               ))}
             </select>
           </div>
+          <div>
+            <label style={{ fontSize: 12, color: 'var(--muted)' }}>Stock</label>
+            <select value={selectedStockFilter} onChange={e => setSelectedStockFilter(e.target.value as 'all' | 'with_stock' | 'without_stock')}>
+              <option value="all">Con y sin stock</option>
+              <option value="with_stock">Solo con stock</option>
+              <option value="without_stock">Solo sin stock</option>
+            </select>
+          </div>
           {canViewSensitiveProductData && (
           <div>
             <label style={{ fontSize: 12, color: 'var(--muted)' }}>Proveedor</label>
@@ -1169,9 +1205,22 @@ export default function Products() {
 
       {!loading && (
         <>
+          {totalProducts > productsPerPage && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                Pagina {currentPage} de {totalPages} • {productsPerPage} productos por pagina
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button className="small-btn" onClick={() => setCurrentPage(1)} disabled={currentPage === 1}>Primera</button>
+                <button className="small-btn" onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} disabled={currentPage === 1}>Anterior</button>
+                <button className="small-btn" onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages}>Siguiente</button>
+                <button className="small-btn" onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages}>Ultima</button>
+              </div>
+            </div>
+          )}
           {view === 'grid' ? (
             <div className="products-grid">
-              {filtered.map(p => (
+              {paginatedProducts.map(p => (
                 <div
                   key={p.id}
                   style={{
@@ -1189,6 +1238,8 @@ export default function Products() {
                     <img
                       src={p.imageUrl || 'https://via.placeholder.com/800x600?text=IMG'}
                       alt={p.name}
+                      loading="lazy"
+                      decoding="async"
                       style={{
                         width: '100%',
                         height: 156,
@@ -1342,12 +1393,14 @@ export default function Products() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map(p => (
+                  {paginatedProducts.map(p => (
                     <tr key={p.id}>
                       <td style={{ padding: 8 }}>
                         <img
                           src={p.imageUrl || 'https://via.placeholder.com/40x40?text=IMG'}
                           alt={p.name}
+                          loading="lazy"
+                          decoding="async"
                           width={40}
                           height={40}
                           style={{ borderRadius: 6, objectFit: 'cover', cursor: 'zoom-in' }}

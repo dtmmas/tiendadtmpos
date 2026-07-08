@@ -85,8 +85,27 @@ api.interceptors.request.use((config) => {
 })
 
 // Product helpers used by Products page
-export async function getProducts() {
-  const { data } = await api.get('/products')
+export async function getProducts(params?: {
+  paged?: boolean
+  page?: number
+  limit?: number
+  offset?: number
+  search?: string
+  categoryId?: number | null
+  subcategoryId?: number | null
+  brandId?: number | null
+  supplierId?: number | null
+  departmentId?: number | null
+  stockFilter?: 'all' | 'with_stock' | 'without_stock'
+  warehouseId?: number | null
+}) {
+  const normalizedParams = params
+    ? {
+        ...params,
+        offset: params.offset ?? ((params.page && params.limit) ? (Math.max(params.page, 1) - 1) * params.limit : undefined),
+      }
+    : undefined
+  const { data } = await api.get('/products', { params: normalizedParams })
   return data
 }
 

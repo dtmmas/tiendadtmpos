@@ -6,6 +6,7 @@ PROJECT_DIR="${PROJECT_DIR:-/var/www/tiendadtmpos}"
 APP_NAME="${APP_NAME:-tiendadtmpos-api}"
 HEALTH_URL="${HEALTH_URL:-http://localhost:4003/api/health}"
 RUN_NGINX_RELOAD="${RUN_NGINX_RELOAD:-1}"
+ECOSYSTEM_FILE="${ECOSYSTEM_FILE:-server/ecosystem.config.cjs}"
 
 echo "==> Actualizando proyecto en ${PROJECT_DIR}"
 cd "${PROJECT_DIR}"
@@ -32,7 +33,7 @@ cd "${PROJECT_DIR}"
 if pm2 describe "${APP_NAME}" >/dev/null 2>&1; then
   pm2 restart "${APP_NAME}" --update-env
 else
-  pm2 start server/ecosystem.config.cjs
+  pm2 start "${ECOSYSTEM_FILE}" --update-env
 fi
 pm2 save
 
