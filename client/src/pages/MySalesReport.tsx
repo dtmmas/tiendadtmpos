@@ -107,17 +107,17 @@ export default function MySalesReport() {
   const [summary, setSummary] = useState<ReportSummary>(EMPTY_SUMMARY)
   const [pagination, setPagination] = useState({ total: 0, limit: 20, offset: 0 })
   const [searchInput, setSearchInput] = useState('')
-  const [periodMode, setPeriodMode] = useState<PeriodMode>('month')
+  const [periodMode, setPeriodMode] = useState<PeriodMode>('day')
   const [selectedDay, setSelectedDay] = useState(todayString)
   const [selectedMonth, setSelectedMonth] = useState(currentMonth)
   const [selectedYear, setSelectedYear] = useState(String(today.getFullYear()))
-  const [rangeStart, setRangeStart] = useState(defaultMonthRange.startDate)
-  const [rangeEnd, setRangeEnd] = useState(defaultMonthRange.endDate)
+  const [rangeStart, setRangeStart] = useState(todayString)
+  const [rangeEnd, setRangeEnd] = useState(todayString)
   const [appliedFilters, setAppliedFilters] = useState({
     search: '',
-    startDate: defaultMonthRange.startDate,
-    endDate: defaultMonthRange.endDate,
-    label: defaultMonthRange.label,
+    startDate: todayString,
+    endDate: todayString,
+    label: todayString,
   })
   const [selectedSale, setSelectedSale] = useState<SaleDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -189,18 +189,18 @@ export default function MySalesReport() {
 
   function resetFilters() {
     setSearchInput('')
-    setPeriodMode('all')
+    setPeriodMode('day')
     setSelectedDay(todayString)
     setSelectedMonth(currentMonth)
     setSelectedYear(String(today.getFullYear()))
-    setRangeStart(defaultMonthRange.startDate)
-    setRangeEnd(defaultMonthRange.endDate)
+    setRangeStart(todayString)
+    setRangeEnd(todayString)
     setPagination(prev => ({ ...prev, offset: 0 }))
     setAppliedFilters({
       search: '',
-      startDate: '',
-      endDate: '',
-      label: 'Todas las fechas',
+      startDate: todayString,
+      endDate: todayString,
+      label: todayString,
     })
   }
 

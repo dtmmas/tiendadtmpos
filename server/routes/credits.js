@@ -199,9 +199,11 @@ router.post('/pay', authMiddleware, upload.single('document'), async (req, res) 
       // 1. Verificar deuda actual
       const [rows] = await conn.query(
         `SELECT 
-          i.id, i.amount, i.paid,
+          i.id, i.amount, i.paid, i.sale_id,
+          COALESCE(s.status, 'COMPLETED') as sale_status,
           (SELECT COALESCE(SUM(amount), 0) FROM credit_payments cp WHERE cp.installment_id = i.id) as paid_so_far
          FROM installments i 
+         JOIN sales s ON s.id = i.sale_id
          WHERE i.id = ? FOR UPDATE`,
         [installmentId]
       )
@@ -214,10 +216,26 @@ router.post('/pay', authMiddleware, upload.single('document'), async (req, res) 
       if (installment.paid) {
         throw new Error('Esta cuota ya está pagada')
       }
+      if (installment.sale_status === 'CANCELLED') {
+        throw new Error('No se puede registrar pagos a una venta cancelada')
+      }
 
       const currentDebt = Number(installment.amount) - Number(installment.paid_so_far)
       if (Number(amount) > currentDebt) {
         throw new Error(`El monto excede la deuda pendiente (${currentDebt})`)
+      }
+
+      const finalPaymentMethod = paymentMethod || 'CASH'
+      let activeShift = null
+      if (finalPaymentMethod === 'CASH') {
+        const [shiftRows] = await conn.query(
+          'SELECT id FROM cashbox_shifts WHERE opened_by = ? AND closed_at IS NULL ORDER BY id DESC LIMIT 1 FOR UPDATE',
+          [req.user.id]
+        )
+        activeShift = shiftRows?.[0] || null
+        if (!activeShift) {
+          throw new Error('Caja cerrada. Debes abrir caja para registrar cobros en efectivo.')
+        }
       }
 
       // 2. Registrar pago
@@ -226,7 +244,7 @@ router.post('/pay', authMiddleware, upload.single('document'), async (req, res) 
 
       if (paymentColumns.has('payment_method')) {
         insertColumns.push('payment_method')
-        insertValues.push(paymentMethod || 'CASH')
+        insertValues.push(finalPaymentMethod)
       }
       if (paymentColumns.has('reference')) {
         insertColumns.push('reference')
@@ -251,13 +269,20 @@ router.post('/pay', authMiddleware, upload.single('document'), async (req, res) 
       )
       const paymentId = result.insertId
 
+      if (finalPaymentMethod === 'CASH') {
+        await conn.query(
+          'INSERT INTO cash_movements (shift_id, type, concept, amount, ref_type, ref_id, created_at) VALUES (?, "IN", ?, ?, "CREDIT_PAYMENT", ?, ?)',
+          [activeShift.id, `Abono de crédito venta #${installment.sale_id}`, amount, paymentId, finalPaymentDate]
+        )
+      }
+
       // 3. Verificar si se completó el pago
       const newPaidAmount = Number(installment.paid_so_far) + Number(amount)
       // Usamos un pequeño margen por errores de punto flotante
       if (Math.abs(newPaidAmount - Number(installment.amount)) < 0.01) {
         await conn.query(
-          'UPDATE installments SET paid = 1, paid_at = NOW() WHERE id = ?',
-          [installmentId]
+          'UPDATE installments SET paid = 1, paid_at = ? WHERE id = ?',
+          [finalPaymentDate, installmentId]
         )
       }
 

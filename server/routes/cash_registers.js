@@ -61,7 +61,7 @@ async function getClosedShifts(pool, { start, end, limit }) {
           SELECT COALESCE(SUM(amount), 0)
           FROM cash_movements m
           WHERE m.shift_id = s.id
-            AND m.ref_type = 'MANUAL'
+            AND m.ref_type IN ('MANUAL', 'CREDIT_PAYMENT')
             AND m.type = 'IN'
         ) AS movements_in,
         (
@@ -181,15 +181,19 @@ router.get('/summary', authMiddleware, async (req, res) => {
         SUM(CASE WHEN payment_method = 'CASH' THEN received_amount - change_amount ELSE 0 END) as cash_in_hand
       FROM sales 
       WHERE created_at >= ? 
-        AND status = 'COMPLETED'
+        AND COALESCE(status, 'COMPLETED') = 'COMPLETED'
+        AND user_id = ?
       GROUP BY payment_method
-    `, [shift.opened_at])
+    `, [shift.opened_at, targetUserId])
 
     const [movements] = await pool.query(`
       SELECT type, SUM(amount) as total 
       FROM cash_movements 
       WHERE shift_id = ?
-        AND ref_type = 'MANUAL'
+        AND (
+          ref_type = 'MANUAL'
+          OR (ref_type = 'CREDIT_PAYMENT' AND type = 'IN')
+        )
       GROUP BY type
     `, [shift.id])
 
@@ -313,15 +317,20 @@ router.post('/close', authMiddleware, async (req, res) => {
     const [salesStats] = await pool.query(`
       SELECT payment_method, SUM(total) as total_sales
       FROM sales 
-      WHERE created_at >= ? AND status = 'COMPLETED'
+      WHERE created_at >= ?
+        AND COALESCE(status, 'COMPLETED') = 'COMPLETED'
+        AND user_id = ?
       GROUP BY payment_method
-    `, [shift.opened_at])
+    `, [shift.opened_at, req.user.id])
 
     const [movements] = await pool.query(`
       SELECT type, SUM(amount) as total 
       FROM cash_movements 
       WHERE shift_id = ?
-        AND ref_type = 'MANUAL'
+        AND (
+          ref_type = 'MANUAL'
+          OR (ref_type = 'CREDIT_PAYMENT' AND type = 'IN')
+        )
       GROUP BY type
     `, [shift.id])
 

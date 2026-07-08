@@ -523,15 +523,26 @@ router.get('/daily', authMiddleware, async (req, res) => {
     let rows
     if (date) {
       if (isAdmin) {
-        ;[rows] = await pool.query('SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE DATE(created_at) = ?', [date])
+        ;[rows] = await pool.query(
+          "SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE DATE(created_at) = ? AND COALESCE(status, 'COMPLETED') != 'CANCELLED'",
+          [date]
+        )
       } else {
-        ;[rows] = await pool.query('SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE DATE(created_at) = ? AND warehouse_id = ?', [date, warehouseId])
+        ;[rows] = await pool.query(
+          "SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE DATE(created_at) = ? AND warehouse_id = ? AND COALESCE(status, 'COMPLETED') != 'CANCELLED'",
+          [date, warehouseId]
+        )
       }
     } else {
       if (isAdmin) {
-        ;[rows] = await pool.query('SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE DATE(created_at) = CURDATE()')
+        ;[rows] = await pool.query(
+          "SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE DATE(created_at) = CURDATE() AND COALESCE(status, 'COMPLETED') != 'CANCELLED'"
+        )
       } else {
-        ;[rows] = await pool.query('SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE DATE(created_at) = CURDATE() AND warehouse_id = ?', [warehouseId])
+        ;[rows] = await pool.query(
+          "SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE DATE(created_at) = CURDATE() AND warehouse_id = ? AND COALESCE(status, 'COMPLETED') != 'CANCELLED'",
+          [warehouseId]
+        )
       }
     }
     const total = Number(rows?.[0]?.total || 0)
@@ -590,20 +601,25 @@ router.get('/summary', authMiddleware, async (req, res) => {
     if (start && end) {
       if (isAdmin) {
         ;[rows] = await pool.query(
-          'SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE DATE(created_at) BETWEEN ? AND ?',
+          "SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE DATE(created_at) BETWEEN ? AND ? AND COALESCE(status, 'COMPLETED') != 'CANCELLED'",
           [start, end]
         )
       } else {
         ;[rows] = await pool.query(
-          'SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE DATE(created_at) BETWEEN ? AND ? AND warehouse_id = ?',
+          "SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE DATE(created_at) BETWEEN ? AND ? AND warehouse_id = ? AND COALESCE(status, 'COMPLETED') != 'CANCELLED'",
           [start, end, warehouseId]
         )
       }
     } else {
       if (isAdmin) {
-        ;[rows] = await pool.query('SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE DATE(created_at) = CURDATE()')
+        ;[rows] = await pool.query(
+          "SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE DATE(created_at) = CURDATE() AND COALESCE(status, 'COMPLETED') != 'CANCELLED'"
+        )
       } else {
-        ;[rows] = await pool.query('SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE DATE(created_at) = CURDATE() AND warehouse_id = ?', [warehouseId])
+        ;[rows] = await pool.query(
+          "SELECT COALESCE(SUM(total), 0) AS total FROM sales WHERE DATE(created_at) = CURDATE() AND warehouse_id = ? AND COALESCE(status, 'COMPLETED') != 'CANCELLED'",
+          [warehouseId]
+        )
       }
     }
     const total = Number(rows?.[0]?.total || 0)

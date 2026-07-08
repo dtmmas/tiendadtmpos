@@ -123,6 +123,21 @@ function getPaymentMethodLabel(method?: string, isCredit?: number) {
   return method || 'N/D'
 }
 
+function DateField({
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 140 }}>
+      <span style={{ fontSize: 12, color: 'var(--muted)' }}>{label}</span>
+      {children}
+    </label>
+  )
+}
+
 export default function Sales() {
   const today = new Date()
   const todayString = formatInputDate(today)
@@ -136,19 +151,19 @@ export default function Sales() {
   const [byUser, setByUser] = useState<UserSalesSummary[]>([])
   const [userOptions, setUserOptions] = useState<UserOption[]>([])
   const [searchInput, setSearchInput] = useState('')
-  const [periodMode, setPeriodMode] = useState<PeriodMode>('month')
+  const [periodMode, setPeriodMode] = useState<PeriodMode>('day')
   const [selectedDay, setSelectedDay] = useState(todayString)
   const [selectedMonth, setSelectedMonth] = useState(currentMonth)
   const [selectedYear, setSelectedYear] = useState(String(today.getFullYear()))
-  const [rangeStart, setRangeStart] = useState(defaultMonthRange.startDate)
-  const [rangeEnd, setRangeEnd] = useState(defaultMonthRange.endDate)
+  const [rangeStart, setRangeStart] = useState(todayString)
+  const [rangeEnd, setRangeEnd] = useState(todayString)
   const [selectedUserId, setSelectedUserId] = useState('')
   const [appliedFilters, setAppliedFilters] = useState({
     search: '',
-    startDate: defaultMonthRange.startDate,
-    endDate: defaultMonthRange.endDate,
+    startDate: todayString,
+    endDate: todayString,
     userId: '',
-    label: defaultMonthRange.label,
+    label: todayString,
   })
   const [selectedSale, setSelectedSale] = useState<SaleDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -260,19 +275,19 @@ export default function Sales() {
   const resetFilters = () => {
     setSearchInput('')
     setSelectedUserId('')
-    setPeriodMode('all')
+    setPeriodMode('day')
     setSelectedDay(todayString)
     setSelectedMonth(currentMonth)
     setSelectedYear(String(today.getFullYear()))
-    setRangeStart(defaultMonthRange.startDate)
-    setRangeEnd(defaultMonthRange.endDate)
+    setRangeStart(todayString)
+    setRangeEnd(todayString)
     setPagination(prev => ({ ...prev, offset: 0 }))
     setAppliedFilters({
       search: '',
-      startDate: '',
-      endDate: '',
+      startDate: todayString,
+      endDate: todayString,
       userId: '',
-      label: 'Todas las fechas',
+      label: todayString,
     })
   }
 
@@ -428,58 +443,70 @@ export default function Sales() {
               ))}
             </select>
           )}
-          <select
-            value={periodMode}
-            onChange={e => setPeriodMode(e.target.value as PeriodMode)}
-            style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}
-          >
-            <option value="all">Todas las fechas</option>
-            <option value="day">Día</option>
-            <option value="month">Mes</option>
-            <option value="year">Año</option>
-            <option value="range">Rango</option>
-          </select>
-          {periodMode === 'day' && (
-            <input
-              type="date"
-              value={selectedDay}
-              onChange={e => setSelectedDay(e.target.value)}
+          <DateField label="Tipo de filtro">
+            <select
+              value={periodMode}
+              onChange={e => setPeriodMode(e.target.value as PeriodMode)}
               style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}
-            />
+            >
+              <option value="all">Todas las fechas</option>
+              <option value="day">Día específico</option>
+              <option value="month">Mes</option>
+              <option value="year">Año</option>
+              <option value="range">Fecha inicial / final</option>
+            </select>
+          </DateField>
+          {periodMode === 'day' && (
+            <DateField label="Fecha del día">
+              <input
+                type="date"
+                value={selectedDay}
+                onChange={e => setSelectedDay(e.target.value)}
+                style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}
+              />
+            </DateField>
           )}
           {periodMode === 'month' && (
-            <input
-              type="month"
-              value={selectedMonth}
-              onChange={e => setSelectedMonth(e.target.value)}
-              style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}
-            />
+            <DateField label="Mes seleccionado">
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={e => setSelectedMonth(e.target.value)}
+                style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}
+              />
+            </DateField>
           )}
           {periodMode === 'year' && (
-            <input
-              type="number"
-              min="2020"
-              max="2100"
-              step="1"
-              value={selectedYear}
-              onChange={e => setSelectedYear(e.target.value)}
-              style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit', width: 120 }}
-            />
+            <DateField label="Año seleccionado">
+              <input
+                type="number"
+                min="2020"
+                max="2100"
+                step="1"
+                value={selectedYear}
+                onChange={e => setSelectedYear(e.target.value)}
+                style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit', width: 120 }}
+              />
+            </DateField>
           )}
           {periodMode === 'range' && (
             <>
-              <input
-                type="date"
-                value={rangeStart}
-                onChange={e => setRangeStart(e.target.value)}
-                style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}
-              />
-              <input
-                type="date"
-                value={rangeEnd}
-                onChange={e => setRangeEnd(e.target.value)}
-                style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}
-              />
+              <DateField label="Fecha inicial">
+                <input
+                  type="date"
+                  value={rangeStart}
+                  onChange={e => setRangeStart(e.target.value)}
+                  style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}
+                />
+              </DateField>
+              <DateField label="Fecha final">
+                <input
+                  type="date"
+                  value={rangeEnd}
+                  onChange={e => setRangeEnd(e.target.value)}
+                  style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}
+                />
+              </DateField>
             </>
           )}
           <button type="submit" className="primary-btn">Filtrar</button>
