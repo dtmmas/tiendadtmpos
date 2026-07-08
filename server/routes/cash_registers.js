@@ -1,5 +1,5 @@
 import express from 'express'
-import { authMiddleware } from '../auth.js'
+import { authMiddleware, canUserSell } from '../auth.js'
 import { getPool } from '../db.js'
 
 const router = express.Router()
@@ -137,6 +137,10 @@ router.get('/status', authMiddleware, async (req, res) => {
 // 2. Open Register
 router.post('/open', authMiddleware, async (req, res) => {
   try {
+    if (!canUserSell(req.user)) {
+      return res.status(403).json({ error: 'Tu usuario no tiene habilitada la operacion de ventas/caja' })
+    }
+
     const { openingAmount, notes } = req.body
     const amount = Number(openingAmount)
     
@@ -250,6 +254,10 @@ router.get('/summary', authMiddleware, async (req, res) => {
 // 4. Add Movement
 router.post('/movements', authMiddleware, async (req, res) => {
   try {
+    if (!canUserSell(req.user)) {
+      return res.status(403).json({ error: 'Tu usuario no tiene habilitada la operacion de ventas/caja' })
+    }
+
     const { type, amount, description } = req.body
     
     if (!['IN', 'OUT'].includes(type)) return res.status(400).json({ error: 'Tipo inválido' })
@@ -300,6 +308,10 @@ router.get('/movements', authMiddleware, async (req, res) => {
 // 6. Close Register
 router.post('/close', authMiddleware, async (req, res) => {
   try {
+    if (!canUserSell(req.user)) {
+      return res.status(403).json({ error: 'Tu usuario no tiene habilitada la operacion de ventas/caja' })
+    }
+
     const { closingAmount, notes } = req.body
     const finalAmount = Number(closingAmount)
 

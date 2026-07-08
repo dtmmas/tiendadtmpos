@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { api, getCashStatus } from '../api'
+import { api, getCashStatus, getProducts } from '../api'
 import { useConfigStore } from '../store/config'
 import { useAuthStore } from '../store/auth'
 import { useNavigate } from 'react-router-dom'
@@ -79,6 +79,7 @@ type CompletedSale = {
 }
 
 export default function POS() {
+  const productsPerPage = 40
   const [products, setProducts] = useState<Product[]>([])
   const [loadedImages, setLoadedImages] = useState<Record<number, boolean>>({})
   const [categories, setCategories] = useState<Category[]>([])
@@ -87,9 +88,12 @@ export default function POS() {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [cart, setCart] = useState<CartItem[]>([])
   const [searchTerm, setSearchTerm] = useState('')
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null)
   const [selectedBrand, setSelectedBrand] = useState<number | null>(null)
   const [selectedDepartment, setSelectedDepartment] = useState<number | null>(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalProducts, setTotalProducts] = useState(0)
   const [selectedCustomer, setSelectedCustomer] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'DEPOSIT' | 'CREDIT'>('CASH')
@@ -143,8 +147,23 @@ export default function POS() {
 
   useEffect(() => {
     checkCashStatus()
+  }, [])
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm.trim())
+    }, 300)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [searchTerm])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [debouncedSearchTerm, selectedCategory, selectedBrand, selectedDepartment, user?.warehouseId])
+
+  useEffect(() => {
     loadData()
-  }, [user?.warehouseId]) // Reload if warehouse changes
+  }, [user?.warehouseId, currentPage, debouncedSearchTerm, selectedCategory, selectedBrand, selectedDepartment])
 
   useEffect(() => {
     setHeldSalesLoaded(false)
@@ -206,24 +225,42 @@ export default function POS() {
       const wId = user?.warehouseId ? Number(user.warehouseId) : null
       if (!isAdmin && !wId) {
         setProducts([])
+        setTotalProducts(0)
         return
       }
-      const params = wId ? { params: { warehouseId: wId } } : undefined
+
+      const categoryIdsForDepartment = selectedDepartment
+        ? categories.filter(c => c.departmentId === selectedDepartment).map(c => c.id)
+        : []
+      const effectiveCategoryId = selectedCategory || (categoryIdsForDepartment.length === 1 ? categoryIdsForDepartment[0] : null)
 
       const [prodRes, catRes, brandRes, deptRes, custRes] = await Promise.all([
-        api.get('/products', params),
+        getProducts({
+          paged: true,
+          page: currentPage,
+          limit: productsPerPage,
+          search: debouncedSearchTerm || undefined,
+          categoryId: effectiveCategoryId,
+          brandId: selectedBrand,
+          departmentId: selectedDepartment,
+          warehouseId: wId,
+        }),
         api.get('/categories'),
         api.get('/brands'),
         api.get('/departments'),
         api.get('/customers')
       ])
-      setProducts(prodRes.data)
+      const nextProducts = Array.isArray(prodRes?.data) ? prodRes.data : []
+      setProducts(nextProducts)
+      setTotalProducts(Number(prodRes?.pagination?.total || 0))
       setCategories(catRes.data)
       setBrands(brandRes.data)
       setDepartments(deptRes.data)
       setCustomers(custRes.data)
     } catch (err) {
       console.error('Error loading POS data:', err)
+      setProducts([])
+      setTotalProducts(0)
     }
   }
 
@@ -388,11 +425,32 @@ export default function POS() {
     setSearchTerm(scannedValue)
 
     const normalizedValue = scannedValue.toLowerCase()
-    const exactMatches = products.filter(product => {
+    let exactMatches = products.filter(product => {
       const productCode = String(product.productCode || '').trim().toLowerCase()
       const sku = String(product.sku || '').trim().toLowerCase()
       return productCode === normalizedValue || sku === normalizedValue
     })
+
+    if (exactMatches.length === 0) {
+      try {
+        const wId = user?.warehouseId ? Number(user.warehouseId) : null
+        const response = await getProducts({
+          paged: true,
+          page: 1,
+          limit: 10,
+          search: scannedValue,
+          warehouseId: wId,
+        })
+        const remoteProducts = Array.isArray(response?.data) ? response.data : []
+        exactMatches = remoteProducts.filter(product => {
+          const productCode = String(product.productCode || '').trim().toLowerCase()
+          const sku = String(product.sku || '').trim().toLowerCase()
+          return productCode === normalizedValue || sku === normalizedValue
+        })
+      } catch (error) {
+        console.error('Error searching scanned product:', error)
+      }
+    }
 
     if (exactMatches.length === 1) {
       await addToCart(exactMatches[0])
@@ -533,34 +591,10 @@ export default function POS() {
     setSelectedCategory(null)
     setSelectedBrand(null)
     setSelectedDepartment(null)
+    setCurrentPage(1)
   }
 
-  const filteredProducts = useMemo(() => {
-    return products.filter(p => {
-      const normalizedSearch = searchTerm.toLowerCase()
-      const matchesSearch = p.name.toLowerCase().includes(normalizedSearch) ||
-                            p.sku?.toLowerCase().includes(normalizedSearch) ||
-                            p.productCode?.toLowerCase().includes(normalizedSearch)
-
-      const matchesCategory = selectedCategory ? p.categoryId === selectedCategory : true
-      const matchesBrand = selectedBrand ? p.brandId === selectedBrand : true
-
-      let matchesDepartment = true
-      if (selectedDepartment) {
-        const deptCategoryIds = categories
-          .filter(c => c.departmentId === selectedDepartment)
-          .map(c => c.id)
-
-        if (p.categoryId) {
-          matchesDepartment = deptCategoryIds.includes(p.categoryId)
-        } else {
-          matchesDepartment = false
-        }
-      }
-
-      return matchesSearch && matchesCategory && matchesBrand && matchesDepartment
-    })
-  }, [products, searchTerm, selectedCategory, selectedBrand, selectedDepartment, categories])
+  const totalPages = Math.max(1, Math.ceil(totalProducts / productsPerPage))
 
   const total = useMemo(() => {
     return cart.reduce((sum, item) => sum + (item.price * item.quantity), 0)
@@ -1202,7 +1236,7 @@ export default function POS() {
 
         {/* Grid */}
         <div className="pos-grid">
-          {filteredProducts.map(p => (
+          {products.map(p => (
             <div
               key={p.id}
               onClick={() => addToCart(p)}
@@ -1292,6 +1326,55 @@ export default function POS() {
             </div>
           ))}
         </div>
+        {products.length === 0 && !loading && (
+          <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)' }}>
+            No se encontraron productos para los filtros actuales.
+          </div>
+        )}
+        {totalProducts > productsPerPage && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginTop: 20, padding: '14px 16px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--modal)' }}>
+            <div style={{ color: 'var(--muted)', fontSize: 13 }}>
+              Mostrando {products.length} de {totalProducts} productos. Pagina {currentPage} de {totalPages}
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
+              <button
+                className="icon-btn"
+                disabled={currentPage === 1 || loading}
+                onClick={() => setCurrentPage(1)}
+                style={{ minWidth: 88, padding: '10px 14px', borderRadius: 10, opacity: currentPage === 1 || loading ? 0.5 : 1 }}
+              >
+                Primera
+              </button>
+              <button
+                className="icon-btn"
+                disabled={currentPage === 1 || loading}
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                style={{ minWidth: 88, padding: '10px 14px', borderRadius: 10, opacity: currentPage === 1 || loading ? 0.5 : 1 }}
+              >
+                Anterior
+              </button>
+              <div style={{ minWidth: 110, padding: '10px 14px', borderRadius: 10, background: 'var(--bg)', border: '1px solid var(--border)', textAlign: 'center', fontWeight: 600, color: 'var(--text)' }}>
+                {currentPage} / {totalPages}
+              </div>
+              <button
+                className="icon-btn"
+                disabled={currentPage >= totalPages || loading}
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                style={{ minWidth: 88, padding: '10px 14px', borderRadius: 10, opacity: currentPage >= totalPages || loading ? 0.5 : 1 }}
+              >
+                Siguiente
+              </button>
+              <button
+                className="icon-btn"
+                disabled={currentPage >= totalPages || loading}
+                onClick={() => setCurrentPage(totalPages)}
+                style={{ minWidth: 88, padding: '10px 14px', borderRadius: 10, opacity: currentPage >= totalPages || loading ? 0.5 : 1 }}
+              >
+                Ultima
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Right: Cart */}

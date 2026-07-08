@@ -8,6 +8,7 @@ export function signToken(user) {
     name: user.name,
     warehouseId: user.warehouseId ?? null,
     warehouseName: user.warehouseName ?? null,
+    canSell: user.canSell !== undefined ? Boolean(user.canSell) : true,
   }, secret, { expiresIn: '8h' })
 }
 
@@ -35,6 +36,11 @@ export function roleMiddleware(roles) {
 
 export function isAdminUser(user) {
   return String(user?.role || '').toUpperCase() === 'ADMIN'
+}
+
+export function canUserSell(user) {
+  if (!user) return false
+  return Boolean(user?.canSell ?? true)
 }
 
 export function getUserWarehouseId(user) {

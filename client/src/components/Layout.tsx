@@ -8,7 +8,7 @@ import { formatCompanyName } from '../utils/text'
 export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { user, logout, hasPermission } = useAuthStore()
+  const { user, logout, hasPermission, canSell } = useAuthStore()
   const config = useConfigStore(s => s.config)
   const { mode, setMode } = useThemeStore()
   const companyName = formatCompanyName(config?.name)
@@ -56,7 +56,7 @@ export default function Layout() {
             </svg>
             <span>DASHBOARD</span>
           </Link>
-          {(hasPermission('sales:create')) && (
+          {canSell() && (
             <button
               type="button"
               onClick={openPOSWindow}
@@ -215,7 +215,7 @@ export default function Layout() {
       <div className={`mobile-menu ${mobileMenuOpen ? 'open' : ''}`}>
         <div className="mobile-menu-section">
           <Link to="/">Dashboard</Link>
-          {hasPermission('sales:create') && (
+          {canSell() && (
             <button type="button" onClick={openPOSWindow}>Ventas / POS</button>
           )}
           {(hasPermission('cash:view') || hasPermission('cash:open') || hasPermission('cash:movements') || hasPermission('cash:close') || hasPermission('sales:create')) && (

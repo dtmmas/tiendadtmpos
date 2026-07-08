@@ -10,9 +10,14 @@ router.post('/login', async (req, res) => {
   try {
     const pool = await getPool()
     if (pool) {
+      const [canSellCols] = await pool.query("SHOW COLUMNS FROM users LIKE 'can_sell'")
+      const hasCanSellColumn = Array.isArray(canSellCols) && canSellCols.length > 0
+
       // Fetch user and role name
       const [rows] = await pool.query(
-        `SELECT u.id, u.name, u.email, u.password, u.role_id, u.warehouse_id, r.code as role_code, r.name as role_name, w.name as warehouse_name 
+        `SELECT u.id, u.name, u.email, u.password, u.role_id, u.warehouse_id,
+                ${hasCanSellColumn ? 'u.can_sell' : '1 AS can_sell'},
+                r.code as role_code, r.name as role_name, w.name as warehouse_name 
          FROM users u 
          LEFT JOIN roles r ON u.role_id = r.id 
          LEFT JOIN warehouses w ON u.warehouse_id = w.id
@@ -48,6 +53,7 @@ router.post('/login', async (req, res) => {
         name: user.name,
         role: user.role_code || user.role_name || 'USER', // Fallback
         permissions,
+        canSell: Boolean(Number(user.can_sell ?? 1)),
         warehouseId: user.warehouse_id ?? null,
         warehouseName: user.warehouse_name ?? null
       }

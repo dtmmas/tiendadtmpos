@@ -1,5 +1,5 @@
 import express from 'express'
-import { authMiddleware, getUserWarehouseId, isAdminUser } from '../auth.js'
+import { authMiddleware, getUserWarehouseId, isAdminUser, canUserSell } from '../auth.js'
 import { getPool } from '../db.js'
 import { registerMovement } from '../services/inventory.js'
 
@@ -381,6 +381,10 @@ router.get('/my-report', authMiddleware, async (req, res) => {
 router.post('/', authMiddleware, async (req, res) => {
   try {
     const { customerId, items, total, isCredit, docNo, paymentMethod, receivedAmount, changeAmount, referenceNumber } = req.body
+
+    if (!canUserSell(req.user)) {
+      return res.status(403).json({ error: 'Tu usuario no tiene habilitadas las ventas en POS' })
+    }
     
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'No hay items en la venta' })

@@ -8,6 +8,7 @@ export interface User {
   name: string
   role: Role
   permissions: string[]
+  canSell?: boolean
   warehouseId?: number
   warehouseName?: string
 }
@@ -18,6 +19,7 @@ interface AuthState {
   login: (email: string, password: string) => Promise<boolean>
   logout: () => void
   hasPermission: (permission: string) => boolean
+  canSell: () => boolean
 }
 
 // Rehidratar desde localStorage al cargar
@@ -55,5 +57,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (!user) return false
     if (user.role === 'ADMIN') return true
     return user.permissions?.includes(permission) || false
+  },
+  canSell() {
+    const user = get().user
+    if (!user || user.canSell === false) return false
+    if (user.role === 'ADMIN') return true
+    return user.permissions?.includes('sales:create') || user.permissions?.includes('pos:access') || false
   }
 }))

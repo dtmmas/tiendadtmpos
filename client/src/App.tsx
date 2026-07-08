@@ -35,10 +35,12 @@ import CashRegister from './pages/CashRegister'
 import CashHistory from './pages/CashHistory'
 import { formatCompanyName } from './utils/text'
 import AlertHost from './components/AlertHost'
+import { useAuthStore } from './store/auth'
 
 export default function App() {
   const fetchConfig = useConfigStore(s => s.fetchConfig)
   const config = useConfigStore(s => s.config)
+  const canSell = useAuthStore(s => s.canSell)
 
   useEffect(() => { fetchConfig() }, [fetchConfig])
   useEffect(() => {
@@ -53,9 +55,7 @@ export default function App() {
           path="/pos"
           element={
             <ProtectedRoute>
-              <PermissionGuard permission="sales:create">
-                <POS />
-              </PermissionGuard>
+              {canSell() ? <POS /> : <Navigate to="/" />}
             </ProtectedRoute>
           }
         />

@@ -17,6 +17,7 @@ interface User {
   email: string
   role_id: number
   role_name: string
+  can_sell?: number
   warehouse_id?: number | null
   warehouse_name?: string | null
   active: number
@@ -36,6 +37,7 @@ export default function Users() {
     password: '',
     role_id: 0,
     warehouse_id: 0,
+    can_sell: true,
     active: true
   })
 
@@ -103,6 +105,7 @@ export default function Users() {
         password: '',
         role_id: user.role_id,
         warehouse_id: Number(user.warehouse_id || 0),
+        can_sell: Number(user.can_sell ?? 1) === 1,
         active: user.active === 1
       })
     } else {
@@ -113,6 +116,7 @@ export default function Users() {
         password: '',
         role_id: roles[0]?.id || 0,
         warehouse_id: warehouses[0]?.id || 0,
+        can_sell: true,
         active: true
       })
     }
@@ -146,6 +150,7 @@ export default function Users() {
               <th style={{ textAlign: 'left', padding: 8 }}>Email</th>
               <th style={{ textAlign: 'left', padding: 8 }}>Rol</th>
               <th style={{ textAlign: 'left', padding: 8 }}>Tienda</th>
+              <th style={{ textAlign: 'left', padding: 8 }}>POS</th>
               <th style={{ textAlign: 'left', padding: 8 }}>Estado</th>
               <th style={{ textAlign: 'left', padding: 8 }}>Acciones</th>
             </tr>
@@ -157,6 +162,19 @@ export default function Users() {
                 <td style={{ padding: 8 }}>{user.email}</td>
                 <td style={{ padding: 8 }}>{user.role_name}</td>
                 <td style={{ padding: 8 }}>{user.warehouse_name || 'Sin asignar'}</td>
+                <td style={{ padding: 8 }}>
+                  <span style={{
+                    padding: '2px 8px',
+                    borderRadius: 10,
+                    fontSize: 11,
+                    background: Number(user.can_sell ?? 1) === 1 ? '#ECFDF5' : '#FEF3C7',
+                    color: Number(user.can_sell ?? 1) === 1 ? '#065F46' : '#92400E',
+                    fontWeight: 600,
+                    border: Number(user.can_sell ?? 1) === 1 ? '1px solid #34D399' : '1px solid #FCD34D'
+                  }}>
+                    {Number(user.can_sell ?? 1) === 1 ? 'Habilitado' : 'Bloqueado'}
+                  </span>
+                </td>
                 <td style={{ padding: 8 }}>
                   <span style={{ 
                     padding: '2px 8px', 
@@ -250,6 +268,20 @@ export default function Users() {
                       <option key={w.id} value={w.id}>{w.name}</option>
                     ))}
                   </select>
+                </div>
+                <div style={{ marginBottom: 12 }}>
+                  <label className="flex items-center space-x-2" style={{ flexDirection: 'row', gap: '8px', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={formData.can_sell}
+                      onChange={e => setFormData({ ...formData, can_sell: e.target.checked })}
+                      style={{ width: 'auto' }}
+                    />
+                    <span className="text-sm font-medium">Puede vender / usar POS</span>
+                  </label>
+                  <div style={{ color: 'var(--muted)', fontSize: 12, marginTop: 4 }}>
+                    Recomendado para administradores con tienda asignada o usuarios operativos de ventas.
+                  </div>
                 </div>
                 {editingUser && (
                   <div style={{ marginBottom: 12 }}>

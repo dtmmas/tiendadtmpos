@@ -267,6 +267,7 @@ async function normalizeSchema(conn) {
 
   await ensureColumn(conn, 'users', 'role_id', 'INT NULL')
   await ensureColumn(conn, 'users', 'warehouse_id', 'INT NULL')
+  await ensureColumn(conn, 'users', 'can_sell', 'TINYINT(1) NOT NULL DEFAULT 1')
   try {
     await conn.query(`
       ALTER TABLE users
@@ -275,6 +276,11 @@ async function normalizeSchema(conn) {
   } catch (error) {
     console.warn(`Could not normalize users.warehouse_id: ${error.message}`)
   }
+  await conn.query(`
+    UPDATE users
+    SET can_sell = 1
+    WHERE can_sell IS NULL
+  `)
 
   await ensureColumn(conn, 'products', 'brand_id', 'INT NULL')
   await ensureColumn(conn, 'products', 'supplier_id', 'INT NULL')
