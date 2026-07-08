@@ -45,6 +45,7 @@ interface WarehouseStock {
 }
 
 export default function InventoryMovements() {
+  const productsPerPage = 40
   const [activeTab, setActiveTab] = useState<'products' | 'history' | 'kardex'>('products')
   
   // History state
@@ -66,11 +67,16 @@ export default function InventoryMovements() {
   })
   const [kardexProductSearch, setKardexProductSearch] = useState('')
   const [kardexSelectedProduct, setKardexSelectedProduct] = useState<Product | null>(null)
+  const [kardexSearchResults, setKardexSearchResults] = useState<Product[]>([])
+  const [loadingKardexSearch, setLoadingKardexSearch] = useState(false)
 
   // Products state
   const [products, setProducts] = useState<Product[]>([])
   const [loadingProducts, setLoadingProducts] = useState(false)
   const [productQuery, setProductQuery] = useState('')
+  const [debouncedProductQuery, setDebouncedProductQuery] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalProducts, setTotalProducts] = useState(0)
   const [view, setView] = useState<'grid' | 'list'>('grid')
   const [categories, setCategories] = useState<any[]>([])
   const [brands, setBrands] = useState<any[]>([])
@@ -171,10 +177,21 @@ export default function InventoryMovements() {
     loadMeta()
   }, [])
 
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebouncedProductQuery(productQuery.trim())
+    }, 250)
+    return () => window.clearTimeout(handle)
+  }, [productQuery])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [debouncedProductQuery])
+
   // Load products when tab is active
   useEffect(() => {
-    if (activeTab === 'products' || activeTab === 'kardex') loadProducts()
-  }, [activeTab])
+    if (activeTab === 'products') loadProducts()
+  }, [activeTab, currentPage, debouncedProductQuery])
 
   useEffect(() => {
     if (activeTab !== 'products' || products.length === 0) return
@@ -311,13 +328,21 @@ export default function InventoryMovements() {
   const loadProducts = async () => {
     setLoadingProducts(true)
     try {
-      const data = await getProducts()
-      const nextProducts = Array.isArray(data) ? data : []
+      const data = await getProducts({
+        paged: true,
+        page: currentPage,
+        limit: productsPerPage,
+        search: debouncedProductQuery || undefined,
+      })
+      const nextProducts = Array.isArray(data?.data) ? data.data : []
       setProducts(nextProducts)
+      setTotalProducts(Number(data?.pagination?.total || 0))
       setProductWarehouseStockMap({})
       setLoadingWarehouseStockMap({})
     } catch (err) {
       console.error(err)
+      setProducts([])
+      setTotalProducts(0)
     } finally {
       setLoadingProducts(false)
     }
@@ -427,6 +452,44 @@ export default function InventoryMovements() {
       loadKardex()
     }
   }, [activeTab, kardexSelectedProduct, kardexFilters])
+
+  useEffect(() => {
+    if (activeTab !== 'kardex' || kardexSelectedProduct) return
+
+    const normalizedSearch = kardexProductSearch.trim()
+    if (!normalizedSearch) {
+      setKardexSearchResults([])
+      setLoadingKardexSearch(false)
+      return
+    }
+
+    let cancelled = false
+    const handle = window.setTimeout(async () => {
+      setLoadingKardexSearch(true)
+      try {
+        const response = await getProducts({
+          paged: true,
+          page: 1,
+          limit: 10,
+          search: normalizedSearch,
+        })
+        if (cancelled) return
+        setKardexSearchResults(Array.isArray(response?.data) ? response.data : [])
+      } catch (err) {
+        if (!cancelled) {
+          console.error(err)
+          setKardexSearchResults([])
+        }
+      } finally {
+        if (!cancelled) setLoadingKardexSearch(false)
+      }
+    }, 250)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(handle)
+    }
+  }, [activeTab, kardexProductSearch, kardexSelectedProduct])
 
   const openAdjustModal = (product?: Product) => {
     // Pre-select first warehouse if available
@@ -694,17 +757,7 @@ export default function InventoryMovements() {
       .join(' | ')
   }
 
-  // Filter products
-  const filteredProducts = useMemo(() => {
-    if (!productQuery) return products
-    const q = productQuery.toLowerCase()
-    return products.filter(p => 
-      p.name.toLowerCase().includes(q) || 
-      p.sku.toLowerCase().includes(q) ||
-      (p.productCode && p.productCode.toLowerCase().includes(q)) ||
-      (p.description && p.description.toLowerCase().includes(q))
-    )
-  }, [products, productQuery])
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(totalProducts / productsPerPage)), [totalProducts])
 
   const categoryMap = useMemo(() => {
     const map: Record<number, string> = {}
@@ -906,6 +959,11 @@ export default function InventoryMovements() {
                 modalTitle="Escanear producto para ajuste"
                 onDetected={value => setProductQuery(value)}
               />
+              <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                {loadingProducts
+                  ? 'Buscando productos...'
+                  : `${products.length > 0 ? ((currentPage - 1) * productsPerPage) + 1 : 0} - ${Math.min(currentPage * productsPerPage, totalProducts)} de ${totalProducts}`}
+              </div>
             </div>
             <div className="view-toggle">
               <button
@@ -929,9 +987,22 @@ export default function InventoryMovements() {
             <div style={{ textAlign: 'center', padding: 40 }}>Cargando productos...</div>
           ) : (
             <>
+              {totalProducts > productsPerPage && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                    Pagina {currentPage} de {totalPages} - {productsPerPage} productos por pagina
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button className="small-btn" onClick={() => setCurrentPage(1)} disabled={currentPage === 1}>Primera</button>
+                    <button className="small-btn" onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} disabled={currentPage === 1}>Anterior</button>
+                    <button className="small-btn" onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages}>Siguiente</button>
+                    <button className="small-btn" onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages}>Ultima</button>
+                  </div>
+                </div>
+              )}
               {view === 'grid' ? (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 16 }}>
-                  {filteredProducts.map(p => (
+                  {products.map(p => (
                     <div key={p.id} style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
                       <div style={{ display: 'flex', gap: 10 }}>
                         <img 
@@ -993,7 +1064,7 @@ export default function InventoryMovements() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredProducts.map(p => (
+                  {products.map(p => (
                         <tr key={p.id} style={{ borderTop: '1px solid var(--border)' }}>
                           <td style={{ padding: 10 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1178,13 +1249,18 @@ export default function InventoryMovements() {
                 )}
                 {!kardexSelectedProduct && kardexProductSearch && (
                   <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, maxHeight: 200, overflowY: 'auto', background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 6, zIndex: 10, boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
-                    {products
-                      .filter(p => p.name.toLowerCase().includes(kardexProductSearch.toLowerCase()) || p.sku.toLowerCase().includes(kardexProductSearch.toLowerCase()))
-                      .slice(0, 10)
-                      .map(p => (
+                    {loadingKardexSearch ? (
+                      <div style={{ padding: '12px', color: 'var(--muted)', fontSize: 12 }}>
+                        Buscando productos...
+                      </div>
+                    ) : kardexSearchResults.length === 0 ? (
+                      <div style={{ padding: '12px', color: 'var(--muted)', fontSize: 12 }}>
+                        Sin resultados
+                      </div>
+                    ) : kardexSearchResults.map(p => (
                         <div 
                           key={p.id}
-                          onClick={() => { setKardexSelectedProduct(p); setKardexProductSearch(''); }}
+                          onClick={() => { setKardexSelectedProduct(p); setKardexProductSearch(''); setKardexSearchResults([]) }}
                           style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}
                           onMouseOver={e => e.currentTarget.style.background = 'var(--surface)'}
                           onMouseOut={e => e.currentTarget.style.background = 'transparent'}
@@ -1192,7 +1268,8 @@ export default function InventoryMovements() {
                           <div style={{ fontWeight: 500 }}>{p.name}</div>
                           <div style={{ fontSize: 11, color: 'var(--muted)' }}>{p.sku}</div>
                         </div>
-                      ))}
+                      ))
+                    }
                   </div>
                 )}
               </div>
