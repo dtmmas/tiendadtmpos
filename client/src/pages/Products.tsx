@@ -5,6 +5,7 @@ import { useConfigStore } from '../store/config'
 import { formatMoney } from '../utils/currency'
 import { resolveUnitName, buildUnitNameMap } from '../utils/units'
 import MobileBarcodeScannerButton from '../components/MobileBarcodeScannerButton'
+import CameraCaptureButton from '../components/CameraCaptureButton'
 
 interface Category {
   id: number
@@ -89,7 +90,7 @@ export default function Products() {
   const [selectedBrandId, setSelectedBrandId] = useState<number | null>(null)
   const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null)
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<number | null>(null)
-  const [selectedStockFilter, setSelectedStockFilter] = useState<'all' | 'with_stock' | 'without_stock'>('all')
+  const [selectedStockFilter, setSelectedStockFilter] = useState<'all' | 'with_stock' | 'without_stock'>('with_stock')
   const [currentPage, setCurrentPage] = useState(1)
   const productsPerPage = 60
   const [totalProducts, setTotalProducts] = useState(0)
@@ -577,7 +578,7 @@ export default function Products() {
   const parentCategories = useMemo(() => categories.filter(c => !c.parentId && (formDepartmentId ? c.departmentId === formDepartmentId : true)), [categories, formDepartmentId])
   const subcategoriesForParent = useMemo(() => categories.filter(c => c.parentId === formParentId), [categories, formParentId])
   const hasActiveFilters = useMemo(() => {
-    return (selectedSubcategoryId !== null) || (selectedCategoryId !== null) || (selectedBrandId !== null) || (selectedSupplierId !== null) || (selectedDepartmentId !== null) || (selectedStockFilter !== 'all') || (query.trim() !== '')
+    return (selectedSubcategoryId !== null) || (selectedCategoryId !== null) || (selectedBrandId !== null) || (selectedSupplierId !== null) || (selectedDepartmentId !== null) || (selectedStockFilter !== 'with_stock') || (query.trim() !== '')
   }, [selectedSubcategoryId, selectedCategoryId, selectedBrandId, selectedSupplierId, selectedDepartmentId, selectedStockFilter, query])
   
   function clearFilters() {
@@ -586,7 +587,7 @@ export default function Products() {
     setSelectedBrandId(null)
     setSelectedSupplierId(null)
     setSelectedDepartmentId(null)
-    setSelectedStockFilter('all')
+    setSelectedStockFilter('with_stock')
     setQuery('')
   }
 
@@ -1617,8 +1618,19 @@ export default function Products() {
                 </div>
                 <div>
                   <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>Imagen del producto</div>
-                  <input type="file" accept="image/*" onChange={e => onImageChange(e.target.files?.[0] || null)} />
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input type="file" accept="image/*" onChange={e => onImageChange(e.target.files?.[0] || null)} />
+                    <CameraCaptureButton
+                      onCapture={onImageChange}
+                      modalTitle="Capturar imagen del producto"
+                      buttonTitle="Tomar foto del producto"
+                      fileNamePrefix="producto"
+                    />
+                  </div>
                   {formState.imageFile && <div className="file-name">{formState.imageFile.name}</div>}
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
+                    Puedes subir una imagen o capturarla desde el telefono o una webcam USB.
+                  </div>
                 </div>
                 <div style={{ padding: 12, borderRadius: 16, background: 'var(--modal)', border: '1px solid var(--border)' }}>
                   <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Resumen rapido</div>

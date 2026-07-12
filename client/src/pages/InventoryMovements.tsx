@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { api, getProducts, getWarehouses, getCategories, getBrands, getProductWarehouseStock } from '../api'
 import { useConfigStore } from '../store/config'
+import { useAuthStore } from '../store/auth'
 import { formatMoney } from '../utils/currency'
 import MobileBarcodeScannerButton from '../components/MobileBarcodeScannerButton'
 
@@ -46,7 +47,10 @@ interface WarehouseStock {
 
 export default function InventoryMovements() {
   const productsPerPage = 40
-  const [activeTab, setActiveTab] = useState<'products' | 'history' | 'kardex'>('products')
+  const hasPermission = useAuthStore(s => s.hasPermission)
+  const canReadInventory = hasPermission('inventory:read')
+  const canWriteInventory = hasPermission('inventory:write')
+  const [activeTab, setActiveTab] = useState<'products' | 'history' | 'kardex'>(canWriteInventory ? 'products' : 'history')
   
   // History state
   const [items, setItems] = useState<Movement[]>([])
@@ -176,6 +180,12 @@ export default function InventoryMovements() {
     loadWarehouses()
     loadMeta()
   }, [])
+
+  useEffect(() => {
+    if (!canWriteInventory && activeTab === 'products') {
+      setActiveTab('history')
+    }
+  }, [activeTab, canWriteInventory])
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -333,6 +343,7 @@ export default function InventoryMovements() {
         page: currentPage,
         limit: productsPerPage,
         search: debouncedProductQuery || undefined,
+        stockFilter: 'with_stock',
       })
       const nextProducts = Array.isArray(data?.data) ? data.data : []
       setProducts(nextProducts)
@@ -492,6 +503,10 @@ export default function InventoryMovements() {
   }, [activeTab, kardexProductSearch, kardexSelectedProduct])
 
   const openAdjustModal = (product?: Product) => {
+    if (!canWriteInventory) {
+      alert('Tu usuario no tiene permiso para ajustar stock')
+      return
+    }
     // Pre-select first warehouse if available
     const defaultWh = warehouses.length > 0 ? String(warehouses[0].id) : ''
     setCurrentWarehouseStock(null)
@@ -514,6 +529,10 @@ export default function InventoryMovements() {
   }
 
   const saveAdjust = async () => {
+    if (!canWriteInventory) {
+      alert('Tu usuario no tiene permiso para ajustar stock')
+      return
+    }
     if (savingAdjust) {
       alert('El ajuste ya se está procesando, espera un momento')
       return
@@ -842,38 +861,40 @@ export default function InventoryMovements() {
           borderBottom: '1px solid var(--border)',
           overflowX: 'auto'
         }}>
-          <button 
-            onClick={() => setActiveTab('products')}
-            style={{ 
-              padding: '12px 20px', 
-              border: 'none',
-              background: 'transparent',
-              color: activeTab === 'products' ? 'var(--primary)' : 'var(--muted)',
-              borderBottom: activeTab === 'products' ? '2px solid var(--primary)' : '2px solid transparent',
-              cursor: 'pointer',
-              fontWeight: activeTab === 'products' ? 600 : 500,
-              fontSize: '14px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              transition: 'all 0.2s ease',
-              marginBottom: -1
-            }}
-          >
-            <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: 24, height: 24, borderRadius: 6,
-              background: activeTab === 'products' ? 'rgba(var(--primary-rgb), 0.1)' : 'var(--surface)',
-              color: 'inherit'
-            }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
-                <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
-                <line x1="12" y1="22.08" x2="12" y2="12"></line>
-              </svg>
-            </div>
-            Ajustar Stock
-          </button>
+          {canWriteInventory && (
+            <button 
+              onClick={() => setActiveTab('products')}
+              style={{ 
+                padding: '12px 20px', 
+                border: 'none',
+                background: 'transparent',
+                color: activeTab === 'products' ? 'var(--primary)' : 'var(--muted)',
+                borderBottom: activeTab === 'products' ? '2px solid var(--primary)' : '2px solid transparent',
+                cursor: 'pointer',
+                fontWeight: activeTab === 'products' ? 600 : 500,
+                fontSize: '14px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                transition: 'all 0.2s ease',
+                marginBottom: -1
+              }}
+            >
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: 24, height: 24, borderRadius: 6,
+                background: activeTab === 'products' ? 'rgba(var(--primary-rgb), 0.1)' : 'var(--surface)',
+                color: 'inherit'
+              }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                  <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                  <line x1="12" y1="22.08" x2="12" y2="12"></line>
+                </svg>
+              </div>
+              Ajustar Stock
+            </button>
+          )}
           
           <button 
             onClick={() => setActiveTab('history')}
@@ -944,7 +965,7 @@ export default function InventoryMovements() {
         </div>
       </div>
 
-      {activeTab === 'products' && (
+      {canWriteInventory && activeTab === 'products' && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center' }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1612,6 +1633,11 @@ export default function InventoryMovements() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {!canReadInventory && (
+        <div style={{ marginTop: 16, color: '#dc2626', fontWeight: 600 }}>
+          Tu usuario no tiene permiso para ver inventario.
         </div>
       )}
     </div>

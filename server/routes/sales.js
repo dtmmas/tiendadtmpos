@@ -1,5 +1,5 @@
 import express from 'express'
-import { authMiddleware, getUserWarehouseId, isAdminUser, canUserSell } from '../auth.js'
+import { authMiddleware, getUserWarehouseId, isAdminUser, canUserSell, hasExplicitUserPermission } from '../auth.js'
 import { getPool } from '../db.js'
 import { registerMovement } from '../services/inventory.js'
 
@@ -110,6 +110,14 @@ async function ensureSalesSchema(db) {
     WHERE (s.warehouse_id IS NULL OR s.warehouse_id = 0)
       AND u.warehouse_id IS NOT NULL
   `)
+
+  if (!(await columnExists(db, 'sale_items', 'original_unit_price'))) {
+    await db.query('ALTER TABLE sale_items ADD COLUMN original_unit_price DECIMAL(10,2) NULL')
+  }
+
+  if (!(await columnExists(db, 'sale_items', 'price_source'))) {
+    await db.query("ALTER TABLE sale_items ADD COLUMN price_source VARCHAR(30) NULL DEFAULT 'BASE'")
+  }
 }
 
 async function buildSalesContext(db) {
@@ -381,6 +389,8 @@ router.get('/my-report', authMiddleware, async (req, res) => {
 router.post('/', authMiddleware, async (req, res) => {
   try {
     const { customerId, items, total, isCredit, docNo, paymentMethod, receivedAmount, changeAmount, referenceNumber } = req.body
+    const canChangePosPrice = hasExplicitUserPermission(req.user, 'pos:change_price')
+    const canUseManualPosPrice = hasExplicitUserPermission(req.user, 'pos:manual_price')
 
     if (!canUserSell(req.user)) {
       return res.status(403).json({ error: 'Tu usuario no tiene habilitadas las ventas en POS' })
@@ -441,12 +451,62 @@ router.post('/', authMiddleware, async (req, res) => {
       // 2. Procesar items
       for (const item of items) {
         // item: { productId, quantity, price, imei, serial }
+        const [productRows] = await conn.query(
+          'SELECT price, price2, price3 FROM products WHERE id = ? LIMIT 1',
+          [item.productId]
+        )
+        const productPriceRow = productRows?.[0]
+        if (!productPriceRow) {
+          throw new Error(`Producto no encontrado: ${item.productId}`)
+        }
+
+        const requestedPrice = Number(item.price)
+        const originalUnitPrice = Number(productPriceRow.price || 0)
+        const requestedPriceSource = String(item.priceSource || '').trim().toUpperCase()
+        const allowedPrices = [
+          originalUnitPrice,
+          Number(productPriceRow.price2 || 0),
+          Number(productPriceRow.price3 || 0),
+        ].filter(price => Number.isFinite(price) && price > 0)
+
+        if (requestedPrice <= 0 || !Number.isFinite(requestedPrice)) {
+          await conn.rollback()
+          return res.status(400).json({ error: 'El precio del item no es valido' })
+        }
+
+        let priceSource = 'BASE'
+
+        if (canUseManualPosPrice && requestedPriceSource === 'MANUAL') {
+          priceSource = 'MANUAL'
+        } else if (!canChangePosPrice) {
+          if (Math.abs(requestedPrice - originalUnitPrice) > 0.0001) {
+            await conn.rollback()
+            return res.status(403).json({ error: 'Tu usuario no tiene permiso para cambiar precios en POS' })
+          }
+        } else if (!allowedPrices.some(price => Math.abs(price - requestedPrice) <= 0.0001)) {
+          if (canUseManualPosPrice) {
+            priceSource = 'MANUAL'
+          } else {
+            await conn.rollback()
+            return res.status(400).json({ error: 'El precio seleccionado no es valido para este producto' })
+          }
+        } else if (Math.abs(requestedPrice - Number(productPriceRow.price2 || 0)) <= 0.0001) {
+          priceSource = 'PRICE2'
+        } else if (Math.abs(requestedPrice - Number(productPriceRow.price3 || 0)) <= 0.0001) {
+          priceSource = 'PRICE3'
+        }
+
+        if (requestedPriceSource === 'MANUAL' && !canUseManualPosPrice) {
+          await conn.rollback()
+          return res.status(403).json({ error: 'Tu usuario no tiene permiso para ingresar precio manual en POS' })
+        }
+
         const itemTotal = Number(item.price) * Number(item.quantity)
         
         // Insertar sale_item
         await conn.query(
-          'INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, total, serial, imei) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [saleId, item.productId, item.quantity, item.price, itemTotal, item.serial || null, item.imei || null]
+          'INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, total, serial, imei, original_unit_price, price_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [saleId, item.productId, item.quantity, item.price, itemTotal, item.serial || null, item.imei || null, originalUnitPrice, priceSource]
         )
 
         if (item.serial) {

@@ -1,5 +1,5 @@
 import express from 'express'
-import { authMiddleware, roleMiddleware } from '../auth.js'
+import { authMiddleware, permissionMiddleware } from '../auth.js'
 import { getPool } from '../db.js'
 
 const router = express.Router()
@@ -69,7 +69,7 @@ function buildAdjustmentNotes({ baseNotes, qty, batches, imeis, serials }) {
 }
 
 // Listar movimientos de inventario
-router.get('/movements', authMiddleware, async (req, res) => {
+router.get('/movements', authMiddleware, permissionMiddleware('inventory:read'), async (req, res) => {
   try {
     const pool = await getPool()
     
@@ -140,7 +140,7 @@ router.get('/movements', authMiddleware, async (req, res) => {
 })
 
 // Obtener stock actual (resumen)
-router.get('/stock', authMiddleware, async (req, res) => {
+router.get('/stock', authMiddleware, permissionMiddleware('inventory:read'), async (req, res) => {
   try {
     const pool = await getPool()
     const { warehouseId } = req.query
@@ -271,7 +271,7 @@ router.get('/stock', authMiddleware, async (req, res) => {
 import { registerMovement } from '../services/inventory.js'
 
 // Crear movimiento manual (Ajuste)
-router.post('/adjust', authMiddleware, async (req, res) => {
+router.post('/adjust', authMiddleware, permissionMiddleware('inventory:write'), async (req, res) => {
   try {
     const { productId, warehouseId, type, quantity, notes, batches, imeis, serials } = req.body
     const debugTraceId = String(req.body?.debugTraceId || `srv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)

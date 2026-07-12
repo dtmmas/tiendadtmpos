@@ -52,6 +52,7 @@ const permissionCatalog = [
   ['transfers:write', 'Realizar transferencias'],
   ['pos:access', 'Acceso al POS'],
   ['pos:change_price', 'Cambiar precio en POS'],
+  ['pos:manual_price', 'Ingresar precio manual en POS'],
   ['cash:open', 'Abrir caja'],
   ['cash:close', 'Cerrar caja'],
   ['cash:movements', 'Registrar entradas/salidas de efectivo'],

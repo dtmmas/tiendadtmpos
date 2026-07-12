@@ -20,7 +20,8 @@ async function updateRolesV2() {
     { code: 'transfers:read', desc: 'Ver transferencias entre almacenes' },
     { code: 'transfers:write', desc: 'Realizar transferencias' },
     { code: 'pos:access', desc: 'Acceso al Punto de Venta (POS)' },
-    { code: 'pos:change_price', desc: 'Cambiar precio en POS' }
+    { code: 'pos:change_price', desc: 'Cambiar precio en POS' },
+    { code: 'pos:manual_price', desc: 'Ingresar precio manual en POS' }
   ]
 
   for (const p of newPermissions) {

@@ -27,6 +27,7 @@ interface Product {
 interface CartItem extends Product {
   quantity: number
   originalPrice?: number
+  priceSource?: 'BASE' | 'PRICE2' | 'PRICE3' | 'MANUAL'
   batchNo?: string
   expiryDate?: string
   maxQuantity?: number
@@ -123,7 +124,11 @@ export default function POS() {
   const [isCashOpen, setIsCashOpen] = useState<boolean | null>(null)
 
   const user = useAuthStore(s => s.user)
+  const hasPermission = useAuthStore(s => s.hasPermission)
+  const hasExplicitPermission = useAuthStore(s => s.hasExplicitPermission)
   const isAdmin = String(user?.role || '').toUpperCase() === 'ADMIN'
+  const canChangePosPrice = hasExplicitPermission('pos:change_price')
+  const canUseManualPosPrice = hasExplicitPermission('pos:manual_price')
   // Print Settings
   const [shouldPrintTicket, setShouldPrintTicket] = useState(true)
   const [lastSale, setLastSale] = useState<CompletedSale | null>(null)
@@ -243,6 +248,7 @@ export default function POS() {
           categoryId: effectiveCategoryId,
           brandId: selectedBrand,
           departmentId: selectedDepartment,
+          stockFilter: 'with_stock',
           warehouseId: wId,
         }),
         api.get('/categories'),
@@ -414,7 +420,7 @@ export default function POS() {
             : item
         )
       }
-      return [...prev, { ...product, quantity: 1, originalPrice: product.price }]
+      return [...prev, { ...product, quantity: 1, originalPrice: product.price, priceSource: 'BASE' }]
     })
   }
 
@@ -439,6 +445,7 @@ export default function POS() {
           page: 1,
           limit: 10,
           search: scannedValue,
+          stockFilter: 'with_stock',
           warehouseId: wId,
         })
         const remoteProducts = Array.isArray(response?.data) ? response.data : []
@@ -476,6 +483,7 @@ export default function POS() {
               ...product,
               quantity: qty,
               originalPrice: product.price,
+              priceSource: 'BASE',
               batchNo: batch.batchNo,
               expiryDate: batch.expiryDate,
               maxQuantity: batch.quantity
@@ -494,6 +502,7 @@ export default function POS() {
               ...product,
               quantity: 1,
               originalPrice: product.price,
+              priceSource: 'BASE',
               imei: imei,
               maxQuantity: 1 // Unique item
           }]
@@ -510,6 +519,7 @@ export default function POS() {
               ...product,
               quantity: 1,
               originalPrice: product.price,
+              priceSource: 'BASE',
               serial: serial,
               maxQuantity: 1 // Unique item
           }]
@@ -517,7 +527,14 @@ export default function POS() {
       setSelectedProductForSerial(null)
   }
 
-  const updatePrice = (productId: number, newPrice: number, batchNo?: string, imei?: string, serial?: string) => {
+  const updatePrice = (
+    productId: number,
+    newPrice: number,
+    batchNo?: string,
+    imei?: string,
+    serial?: string,
+    priceSource: CartItem['priceSource'] = 'BASE'
+  ) => {
     setCart(prev => prev.map(item => {
       const isTarget = item.id === productId &&
                        item.batchNo === batchNo &&
@@ -525,10 +542,16 @@ export default function POS() {
                        item.serial === serial
 
       if (isTarget) {
-        return { ...item, price: newPrice }
+        return { ...item, price: newPrice, priceSource }
       }
       return item
     }))
+  }
+
+  const handleManualPriceChange = (productId: number, value: string, batchNo?: string, imei?: string, serial?: string) => {
+    const manualPrice = Number(value)
+    if (!Number.isFinite(manualPrice) || manualPrice <= 0) return
+    updatePrice(productId, manualPrice, batchNo, imei, serial, 'MANUAL')
   }
 
   const updateQuantity = (productId: number, delta: number, batchNo?: string, imei?: string, serial?: string) => {
@@ -956,6 +979,7 @@ export default function POS() {
           productId: item.id,
           quantity: item.quantity,
           price: item.price,
+          priceSource: item.priceSource || 'BASE',
           batchNo: item.batchNo,
           expiryDate: item.expiryDate,
           imei: item.imei,
@@ -1513,10 +1537,16 @@ export default function POS() {
                   <div style={{ fontWeight: 500, color: 'var(--text)' }}>{item.name}</div>
                   <div style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
                     <span>{config?.currency}</span>
-                    {(item.price2 || item.price3) ? (
+                    {(item.price2 || item.price3) && canChangePosPrice ? (
                         <select
-                            value={item.price}
-                            onChange={(e) => updatePrice(item.id, Number(e.target.value), item.batchNo, item.imei, item.serial)}
+                            value={item.priceSource === 'MANUAL' ? (item.originalPrice ?? item.price) : item.price}
+                            onChange={(e) => {
+                              const nextPrice = Number(e.target.value)
+                              let nextSource: CartItem['priceSource'] = 'BASE'
+                              if (item.price2 && Math.abs(nextPrice - Number(item.price2)) <= 0.0001) nextSource = 'PRICE2'
+                              else if (item.price3 && Math.abs(nextPrice - Number(item.price3)) <= 0.0001) nextSource = 'PRICE3'
+                              updatePrice(item.id, nextPrice, item.batchNo, item.imei, item.serial, nextSource)
+                            }}
                             style={{
                                 background: 'transparent',
                                 border: '1px solid var(--border)',
@@ -1536,6 +1566,29 @@ export default function POS() {
                     )}
                     <span>x {item.quantity}</span>
                   </div>
+                  {canUseManualPosPrice && (
+                    <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Precio manual:</span>
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        defaultValue={item.priceSource === 'MANUAL' ? item.price.toFixed(2) : ''}
+                        placeholder="0.00"
+                        onBlur={(e) => handleManualPriceChange(item.id, e.target.value, item.batchNo, item.imei, item.serial)}
+                        style={{
+                          width: 96,
+                          padding: '4px 8px',
+                          fontSize: '0.8rem'
+                        }}
+                      />
+                      {item.priceSource === 'MANUAL' && (
+                        <span style={{ fontSize: '0.75rem', color: '#f59e0b', fontWeight: 700 }}>
+                          Manual
+                        </span>
+                      )}
+                    </div>
+                  )}
                   {item.batchNo && (
                      <div style={{ fontSize: '0.75rem', color: '#3b82f6', marginTop: 2 }}>
                         Lote: {item.batchNo} (Vence: {item.expiryDate})

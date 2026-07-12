@@ -6,6 +6,7 @@ export function signToken(user) {
     id: user.id,
     role: user.role,
     name: user.name,
+    permissions: Array.isArray(user.permissions) ? user.permissions : [],
     warehouseId: user.warehouseId ?? null,
     warehouseName: user.warehouseName ?? null,
     canSell: user.canSell !== undefined ? Boolean(user.canSell) : true,
@@ -41,6 +42,17 @@ export function isAdminUser(user) {
 export function canUserSell(user) {
   if (!user) return false
   return Boolean(user?.canSell ?? true)
+}
+
+export function hasUserPermission(user, permission) {
+  if (!user || !permission) return false
+  if (isAdminUser(user)) return true
+  return Array.isArray(user.permissions) && user.permissions.includes(permission)
+}
+
+export function hasExplicitUserPermission(user, permission) {
+  if (!user || !permission) return false
+  return Array.isArray(user.permissions) && user.permissions.includes(permission)
 }
 
 export function getUserWarehouseId(user) {

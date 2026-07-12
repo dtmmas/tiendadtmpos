@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { getCredits, payCredit, getConfig, getCreditPayments } from '../api'
 import { formatDate, formatDateTime } from '../utils/date'
+import CameraCaptureButton from '../components/CameraCaptureButton'
 
 interface Credit {
   id: number
@@ -470,14 +471,30 @@ export default function Credits() {
               {paymentMethod !== 'CASH' && (
                 <div style={{ marginBottom: 16 }}>
                   <label style={{ display: 'block', marginBottom: 6, fontWeight: 600 }}>Comprobante (Opcional)</label>
-                  <input
-                    type="file"
-                    accept="image/*,.pdf"
-                    onChange={e => setDocumentFile(e.target.files ? e.target.files[0] : null)}
-                    style={{
-                      width: '100%'
-                    }}
-                  />
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input
+                      type="file"
+                      accept="image/*,.pdf"
+                      onChange={e => setDocumentFile(e.target.files ? e.target.files[0] : null)}
+                      style={{
+                        width: '100%'
+                      }}
+                    />
+                    <CameraCaptureButton
+                      onCapture={file => setDocumentFile(file)}
+                      modalTitle="Capturar comprobante del pago"
+                      buttonTitle="Tomar foto del comprobante"
+                      fileNamePrefix="comprobante"
+                    />
+                  </div>
+                  {documentFile && (
+                    <div className="file-name" style={{ marginTop: 6 }}>
+                      {documentFile.name}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>
+                    Puedes subir un PDF/imagen o tomar una foto desde el telefono o webcam USB.
+                  </div>
                 </div>
               )}
 

@@ -19,6 +19,7 @@ interface AuthState {
   login: (email: string, password: string) => Promise<boolean>
   logout: () => void
   hasPermission: (permission: string) => boolean
+  hasExplicitPermission: (permission: string) => boolean
   canSell: () => boolean
 }
 
@@ -56,6 +57,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const user = get().user
     if (!user) return false
     if (user.role === 'ADMIN') return true
+    return user.permissions?.includes(permission) || false
+  },
+  hasExplicitPermission(permission: string) {
+    const user = get().user
+    if (!user) return false
     return user.permissions?.includes(permission) || false
   },
   canSell() {

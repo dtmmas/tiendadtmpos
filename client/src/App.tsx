@@ -69,8 +69,8 @@ export default function App() {
           <Route path="shelves" element={<PermissionGuard permission="shelves:read"><Shelves /></PermissionGuard>} />
           <Route path="warehouses" element={<PermissionGuard permission="products:read"><Warehouses /></PermissionGuard>} />
           <Route path="transfers" element={<PermissionGuard permission="products:read"><Transfers /></PermissionGuard>} />
-          <Route path="inventory" element={<PermissionGuard permission="products:read"><InventoryMovements /></PermissionGuard>} />
-          <Route path="inventory/report" element={<PermissionGuard permission="products:read"><InventoryReport /></PermissionGuard>} />
+          <Route path="inventory" element={<PermissionGuard permission="inventory:read"><InventoryMovements /></PermissionGuard>} />
+          <Route path="inventory/report" element={<PermissionGuard permission="inventory:read"><InventoryReport /></PermissionGuard>} />
           <Route path="customers" element={<PermissionGuard permission="customers:read"><Customers /></PermissionGuard>} />
           <Route path="credits" element={<PermissionGuard permission="credits:read"><Credits /></PermissionGuard>} />
           <Route path="sales" element={<PermissionGuard permission="sales:read"><RoleGuard roles={['ADMIN']}><Sales /></RoleGuard></PermissionGuard>} />

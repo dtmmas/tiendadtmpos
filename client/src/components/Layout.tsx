@@ -120,7 +120,7 @@ export default function Layout() {
           )}
 
           {/* Inventory Group */}
-          {(hasPermission('products:read')) && (
+          {hasPermission('inventory:read') && (
           <div className="nav-group">
             <button className="nav-trigger" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -244,7 +244,7 @@ export default function Layout() {
           </div>
         )}
 
-        {hasPermission('products:read') && (
+        {hasPermission('inventory:read') && (
           <div className="mobile-menu-section">
             <div className="mobile-menu-title">Inventario</div>
             <Link to="/inventory">Movimientos</Link>
