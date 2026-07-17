@@ -18,8 +18,10 @@ export default function Layout() {
     setMobileMenuOpen(false)
   }, [location.pathname])
 
+  const isAdmin = String(user?.role || '').toUpperCase() === 'ADMIN'
   const canManageProducts = String(user?.role || '').toUpperCase() === 'ADMIN' || hasPermission('products:write')
   const productsMenuLabel = canManageProducts ? 'Productos' : 'Catalogo de productos'
+  const defaultHomePath = isAdmin ? '/' : '/products'
 
   const openPOSWindow = (event?: React.MouseEvent<HTMLButtonElement>) => {
     event?.preventDefault()
@@ -41,7 +43,7 @@ export default function Layout() {
   return (
     <div className="app">
       <header className="header">
-        <div className="brand" onClick={() => navigate('/') }>
+        <div className="brand" onClick={() => navigate(defaultHomePath) }>
           {config?.logoUrl && <img src={config.logoUrl} alt="logo" />}
           <div>
             <strong>{companyName}</strong>
@@ -49,13 +51,15 @@ export default function Layout() {
           </div>
         </div>
         <nav className="nav nav-desktop">
-          <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
-              <polyline points="9 22 9 12 15 12 15 22"></polyline>
-            </svg>
-            <span>DASHBOARD</span>
-          </Link>
+          {isAdmin && (
+            <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                <polyline points="9 22 9 12 15 12 15 22"></polyline>
+              </svg>
+              <span>DASHBOARD</span>
+            </Link>
+          )}
           {canSell() && (
             <button
               type="button"
@@ -214,7 +218,7 @@ export default function Layout() {
       </header>
       <div className={`mobile-menu ${mobileMenuOpen ? 'open' : ''}`}>
         <div className="mobile-menu-section">
-          <Link to="/">Dashboard</Link>
+          {isAdmin && <Link to="/">Dashboard</Link>}
           {canSell() && (
             <button type="button" onClick={openPOSWindow}>Ventas / POS</button>
           )}

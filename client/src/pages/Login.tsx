@@ -6,7 +6,7 @@ import { formatCompanyName } from '../utils/text'
 
 export default function Login() {
   const navigate = useNavigate()
-  const { login } = useAuthStore()
+  const { login, user, hasPermission, canSell } = useAuthStore()
   const config = useConfigStore(s => s.config)
   const companyName = formatCompanyName(config?.name)
   const [email, setEmail] = useState('')
@@ -20,7 +20,14 @@ export default function Login() {
     setIsSubmitting(true)
     const ok = await login(email.trim(), password)
     setIsSubmitting(false)
-    if (ok) navigate('/')
+    if (ok) {
+      const nextUser = useAuthStore.getState().user || user
+      const isAdmin = String(nextUser?.role || '').toUpperCase() === 'ADMIN'
+      if (isAdmin) navigate('/')
+      else if (hasPermission('products:read')) navigate('/products')
+      else if (canSell()) navigate('/pos')
+      else navigate('/')
+    }
     else setError('Credenciales inválidas')
   }
 
