@@ -379,6 +379,14 @@ async function normalizeSchema(conn) {
   await ensureColumn(conn, 'credit_payments', 'reference', 'VARCHAR(160) NULL')
   await ensureColumn(conn, 'credit_payments', 'document_url', 'VARCHAR(255) NULL')
   await ensureColumn(conn, 'credit_payments', 'received_by', 'VARCHAR(160) NULL')
+  try {
+    await conn.query(`
+      ALTER TABLE cash_movements
+      MODIFY COLUMN ref_type ENUM('SALE','PURCHASE','MANUAL','PAYMENT','CREDIT_PAYMENT') NOT NULL
+    `)
+  } catch (error) {
+    console.warn(`Could not normalize cash_movements.ref_type: ${error.message}`)
+  }
   await conn.query(`
     UPDATE credit_payments
     SET document_url = SUBSTRING(document_url, LOCATE('/uploads/', document_url))
