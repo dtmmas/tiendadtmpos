@@ -562,19 +562,21 @@ router.get('/:id/warehouse-stock', authMiddleware, async (req, res) => {
     const pool = await getPool()
     await ensureDefaultWarehouseId1(pool)
     await ensureWarehouseStockTable(pool)
-    const isAdmin = isAdminUser(req.user)
-    const userWarehouseId = getUserWarehouseId(req.user)
-    const [rows] = isAdmin
-      ? await pool.query(
-          'SELECT pws.warehouse_id AS warehouseId, w.name AS warehouseName, pws.quantity AS quantity FROM product_warehouse_stock pws JOIN warehouses w ON w.id = pws.warehouse_id WHERE pws.product_id = ? ORDER BY w.name ASC',
-          [productId]
-        )
-      : userWarehouseId
-        ? await pool.query(
-            'SELECT pws.warehouse_id AS warehouseId, w.name AS warehouseName, pws.quantity AS quantity FROM product_warehouse_stock pws JOIN warehouses w ON w.id = pws.warehouse_id WHERE pws.product_id = ? AND pws.warehouse_id = ? ORDER BY w.name ASC',
-            [productId, userWarehouseId]
-          )
-        : [[]]
+    const preferredWarehouseId = Number(getUserWarehouseId(req.user) || 0)
+    const [rows] = await pool.query(
+      `SELECT
+         w.id AS warehouseId,
+         w.name AS warehouseName,
+         COALESCE(pws.quantity, 0) AS quantity
+       FROM warehouses w
+       LEFT JOIN product_warehouse_stock pws
+         ON pws.warehouse_id = w.id
+        AND pws.product_id = ?
+       ORDER BY
+         CASE WHEN ? > 0 AND w.id = ? THEN 0 ELSE 1 END,
+         w.name ASC`,
+      [productId, preferredWarehouseId, preferredWarehouseId]
+    )
     const items = (rows || []).map(r => ({
       warehouseId: Number(r.warehouseId),
       warehouseName: r.warehouseName,

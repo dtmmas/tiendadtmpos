@@ -1343,7 +1343,7 @@ export default function POS() {
                         </svg>
                      </button>
                   </div>
-
+                  <div>Otras tiendas: {Number(p.otherStock ?? 0)}</div>
                 </div>
                 <div style={{ color: 'var(--accent)', fontWeight: 700, fontSize: '1.1rem', marginTop: 8 }}>{config?.currency} {p.price.toFixed(2)}</div>
               </div>
@@ -2231,6 +2231,9 @@ export default function POS() {
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontWeight: 600, color: 'var(--text)' }}>{viewStockProduct.name}</div>
               <div style={{ fontSize: '0.9rem', color: 'var(--muted)' }}>SKU: {viewStockProduct.sku || 'N/A'}</div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginTop: 6 }}>
+                Consulta informativa. La venta sigue limitada a la tienda asignada.
+              </div>
             </div>
 
             <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -2246,7 +2249,15 @@ export default function POS() {
                   </thead>
                   <tbody>
                     {warehouseStocks.map((ws: any, idx) => (
-                      <tr key={idx} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <tr
+                        key={idx}
+                        style={{
+                          borderBottom: '1px solid var(--border)',
+                          ...(String(user?.warehouseId) === String(ws.warehouseId)
+                            ? { background: 'rgba(59, 130, 246, 0.10)' }
+                            : {})
+                        }}
+                      >
                         <td style={{ padding: '12px 4px', color: 'var(--text)' }}>
                           {ws.warehouseName}
                           {String(user?.warehouseId) === String(ws.warehouseId) ? ' (Actual)' : ''}

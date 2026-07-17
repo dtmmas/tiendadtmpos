@@ -28,6 +28,7 @@ interface Product {
   price3?: number
   cost?: number
   stock: number
+  otherStock?: number
   initialStock?: number
   minStock?: number
   unit?: string
@@ -1343,6 +1344,7 @@ export default function Products() {
                       <div>Unidad: {resolveUnitName(unitNameByCode, p.unit)}</div>
                       {canViewSensitiveProductData && <div>Proveedor: {p.supplierId ? (supplierMap[p.supplierId] || '—') : '—'}</div>}
                       <div>Stock min: {p.minStock ?? '—'}</div>
+                      <div>Otras tiendas: {Number(p.otherStock ?? 0)}</div>
                     </div>
 
                     <div style={{ display: 'flex', gap: 8, marginTop: 'auto', paddingTop: 2 }}>
@@ -1472,6 +1474,9 @@ export default function Products() {
                         >
                           {p.stock}
                         </span>
+                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                          Otras tiendas: {Number(p.otherStock ?? 0)}
+                        </div>
                       </td>
                       <td style={{ padding: 8 }}>
                         <div style={{ display: 'flex', gap: 6 }}>
