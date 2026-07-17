@@ -21,7 +21,7 @@ export default function Layout() {
   const isAdmin = String(user?.role || '').toUpperCase() === 'ADMIN'
   const canManageProducts = String(user?.role || '').toUpperCase() === 'ADMIN' || hasPermission('products:write')
   const productsMenuLabel = canManageProducts ? 'Productos' : 'Catalogo de productos'
-  const defaultHomePath = isAdmin ? '/' : '/products'
+  const defaultHomePath = isAdmin ? '/dashboard' : '/products'
 
   const openPOSWindow = (event?: React.MouseEvent<HTMLButtonElement>) => {
     event?.preventDefault()
@@ -52,7 +52,7 @@ export default function Layout() {
         </div>
         <nav className="nav nav-desktop">
           {isAdmin && (
-            <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Link to="/dashboard" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
                 <polyline points="9 22 9 12 15 12 15 22"></polyline>
@@ -218,7 +218,7 @@ export default function Layout() {
       </header>
       <div className={`mobile-menu ${mobileMenuOpen ? 'open' : ''}`}>
         <div className="mobile-menu-section">
-          {isAdmin && <Link to="/">Dashboard</Link>}
+          {isAdmin && <Link to="/dashboard">Dashboard</Link>}
           {canSell() && (
             <button type="button" onClick={openPOSWindow}>Ventas / POS</button>
           )}

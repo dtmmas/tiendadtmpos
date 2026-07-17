@@ -23,7 +23,7 @@ export default function Login() {
     if (ok) {
       const nextUser = useAuthStore.getState().user || user
       const isAdmin = String(nextUser?.role || '').toUpperCase() === 'ADMIN'
-      if (isAdmin) navigate('/')
+      if (isAdmin) navigate('/dashboard')
       else if (hasPermission('products:read')) navigate('/products')
       else if (canSell()) navigate('/pos')
       else navigate('/')

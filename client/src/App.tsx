@@ -43,7 +43,7 @@ function RootLanding() {
   const canSell = useAuthStore(s => s.canSell)
   const isAdmin = String(user?.role || '').toUpperCase() === 'ADMIN'
 
-  if (isAdmin) return <Dashboard />
+  if (isAdmin) return <Navigate to="/dashboard" replace />
   if (hasPermission('products:read')) return <Navigate to="/products" replace />
   if (canSell()) return <Navigate to="/pos" replace />
   if (hasPermission('cash:view') || hasPermission('cash:open') || hasPermission('cash:movements') || hasPermission('cash:close')) {
@@ -76,6 +76,7 @@ export default function App() {
         />
         <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
           <Route index element={<RootLanding />} />
+          <Route path="dashboard" element={<RoleGuard roles={['ADMIN']}><Dashboard /></RoleGuard>} />
           <Route path="products" element={<PermissionGuard permission="products:read"><Products /></PermissionGuard>} />
           <Route path="categories" element={<PermissionGuard permission="categories:read"><Categories /></PermissionGuard>} />
           <Route path="brands" element={<PermissionGuard permission="brands:read"><Brands /></PermissionGuard>} />
