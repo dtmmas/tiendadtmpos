@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom'
 interface Product {
   id: number
   name: string
+  code?: string
   sku?: string
   productCode?: string
   description?: string
@@ -127,7 +128,18 @@ export default function PurchaseCreate() {
   const filteredProducts = useMemo(() => products, [products])
 
   function getProductCode(product: Product) {
-    return product.productCode || product.sku || ''
+    return product.productCode || product.code || product.sku || ''
+  }
+
+  function getProductIdentifierSummary(product: Product) {
+    const code = product.productCode || product.code || ''
+    const sku = product.sku || ''
+    if (code && sku && code !== sku) {
+      return `COD: ${code} | SKU: ${sku}`
+    }
+    if (code) return `COD: ${code}`
+    if (sku) return `SKU: ${sku}`
+    return 'Sin codigo'
   }
 
   async function addItem(product: Product) {
@@ -563,7 +575,7 @@ export default function PurchaseCreate() {
                     <div>
                       <div style={{ fontWeight: 'bold' }}>{p.name}</div>
                       <div style={{ fontSize: '0.8em', opacity: 0.7 }}>
-                        {(getProductCode(p) || 'Sin codigo')} - Stock: {p.stock}
+                        {getProductIdentifierSummary(p)} - Stock: {p.stock}
                       </div>
                     </div>
                     <div style={{ color: 'var(--accent)', fontWeight: 700 }}>+ Agregar</div>
