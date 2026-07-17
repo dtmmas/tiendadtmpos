@@ -1548,7 +1548,7 @@ export default function POS() {
                               updatePrice(item.id, nextPrice, item.batchNo, item.imei, item.serial, nextSource)
                             }}
                             style={{
-                                background: 'transparent',
+                                background: 'var(--modal)',
                                 border: '1px solid var(--border)',
                                 borderRadius: 4,
                                 color: 'var(--text)',

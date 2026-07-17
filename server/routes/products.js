@@ -225,12 +225,14 @@ router.get('/', authMiddleware, async (req, res) => {
     
     // Si se especifica warehouseId, calculamos stock local y 'otros'
     // Si no, stock es global y other_stock es 0
-    let selectStock = `COALESCE(SUM(pws.quantity), 0) as stock, 0 as other_stock`
+    let stockAggregateExpr = `COALESCE(SUM(pws.quantity), 0)`
+    let selectStock = `${stockAggregateExpr} as stock, 0 as other_stock`
     const params = []
 
     if (scope.warehouseId) {
+      stockAggregateExpr = `COALESCE(SUM(CASE WHEN pws.warehouse_id = ? THEN pws.quantity ELSE 0 END), 0)`
       selectStock = `
-        COALESCE(SUM(CASE WHEN pws.warehouse_id = ? THEN pws.quantity ELSE 0 END), 0) as stock,
+        ${stockAggregateExpr} as stock,
         COALESCE(SUM(CASE WHEN pws.warehouse_id != ? THEN pws.quantity ELSE 0 END), 0) as other_stock
       `
       params.push(scope.warehouseId, scope.warehouseId)
@@ -304,9 +306,9 @@ router.get('/', authMiddleware, async (req, res) => {
 
     const normalizedStockFilter = String(stockFilter || '').trim().toLowerCase()
     if (normalizedStockFilter === 'with_stock') {
-      havingClauses.push('COALESCE(SUM(pws.quantity), 0) > 0')
+      havingClauses.push('stock > 0')
     } else if (normalizedStockFilter === 'without_stock') {
-      havingClauses.push('COALESCE(SUM(pws.quantity), 0) = 0')
+      havingClauses.push('stock = 0')
     }
 
     if (whereClauses.length > 0) {
@@ -333,7 +335,7 @@ router.get('/', authMiddleware, async (req, res) => {
       const [countRows] = await pool.query(
         `SELECT COUNT(*) AS total
          FROM (
-           SELECT p.id
+           SELECT p.id, ${stockAggregateExpr} AS stock
            FROM products p
            LEFT JOIN product_warehouse_stock pws ON p.id = pws.product_id
            LEFT JOIN categories c ON p.category_id = c.id

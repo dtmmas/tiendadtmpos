@@ -79,6 +79,7 @@ export default function InventoryMovements() {
   const [loadingProducts, setLoadingProducts] = useState(false)
   const [productQuery, setProductQuery] = useState('')
   const [debouncedProductQuery, setDebouncedProductQuery] = useState('')
+  const [adjustStockFilter, setAdjustStockFilter] = useState<'all' | 'with_stock' | 'without_stock'>('with_stock')
   const [currentPage, setCurrentPage] = useState(1)
   const [totalProducts, setTotalProducts] = useState(0)
   const [view, setView] = useState<'grid' | 'list'>('grid')
@@ -196,12 +197,12 @@ export default function InventoryMovements() {
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [debouncedProductQuery])
+  }, [debouncedProductQuery, adjustStockFilter])
 
   // Load products when tab is active
   useEffect(() => {
     if (activeTab === 'products') loadProducts()
-  }, [activeTab, currentPage, debouncedProductQuery])
+  }, [activeTab, currentPage, debouncedProductQuery, adjustStockFilter])
 
   useEffect(() => {
     if (activeTab !== 'products' || products.length === 0) return
@@ -343,7 +344,7 @@ export default function InventoryMovements() {
         page: currentPage,
         limit: productsPerPage,
         search: debouncedProductQuery || undefined,
-        stockFilter: 'with_stock',
+        stockFilter: adjustStockFilter,
       })
       const nextProducts = Array.isArray(data?.data) ? data.data : []
       setProducts(nextProducts)
@@ -980,6 +981,16 @@ export default function InventoryMovements() {
                 modalTitle="Escanear producto para ajuste"
                 onDetected={value => setProductQuery(value)}
               />
+              <select
+                value={adjustStockFilter}
+                onChange={e => setAdjustStockFilter(e.target.value as 'all' | 'with_stock' | 'without_stock')}
+                style={{ padding: 8, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--modal)', color: 'var(--text)' }}
+                title="Filtro de stock para ajustes"
+              >
+                <option value="with_stock">Solo con stock</option>
+                <option value="without_stock">Solo sin stock</option>
+                <option value="all">Con y sin stock</option>
+              </select>
               <div style={{ fontSize: 12, color: 'var(--muted)' }}>
                 {loadingProducts
                   ? 'Buscando productos...'

@@ -9,6 +9,7 @@
   --surface-hover: #243144;
   --border: #334155;
   --modal: #0b1220;
+  color-scheme: dark;
 }
 
 :root[data-theme="light"] {
@@ -21,6 +22,7 @@
   --surface-hover: #cbd5e1;
   --border: #cbd5e1;
   --modal: #ffffff;
+  color-scheme: light;
 }
 
 /* Fallback for when data-theme no está aún aplicado */
@@ -69,6 +71,13 @@ input, select, textarea {
   padding: 8px 10px;
   width: 100%;
   text-transform: uppercase;
+}
+
+select,
+select option,
+select optgroup {
+  background: var(--modal);
+  color: var(--text);
 }
 
 label {
