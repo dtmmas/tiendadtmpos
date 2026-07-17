@@ -6,7 +6,11 @@ import { useNavigate } from 'react-router-dom'
 interface Product {
   id: number
   name: string
-  code?: string
+  sku?: string
+  productCode?: string
+  description?: string
+  altName?: string
+  genericName?: string
   cost?: number
   stock: number
   productType?: string
@@ -51,6 +55,7 @@ export default function PurchaseCreate() {
   // Product Search State
   const [isProductModalOpen, setIsProductModalOpen] = useState(false)
   const [productSearch, setProductSearch] = useState('')
+  const [debouncedProductSearch, setDebouncedProductSearch] = useState('')
   
   const navigate = useNavigate()
   const config = useConfigStore(s => s.config)
@@ -59,15 +64,51 @@ export default function PurchaseCreate() {
     loadData()
   }, [])
 
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedProductSearch(productSearch.trim())
+    }, 300)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [productSearch])
+
+  useEffect(() => {
+    if (!isProductModalOpen) return
+    let cancelled = false
+
+    const loadProducts = async () => {
+      try {
+        const response = await getProducts({
+          paged: true,
+          page: 1,
+          limit: 40,
+          search: debouncedProductSearch || undefined,
+          stockFilter: 'all',
+        })
+        if (cancelled) return
+        const nextProducts = Array.isArray(response?.data) ? response.data : Array.isArray(response) ? response : []
+        setProducts(nextProducts)
+      } catch (err) {
+        if (cancelled) return
+        console.error('Error loading purchase products:', err)
+        setProducts([])
+      }
+    }
+
+    void loadProducts()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isProductModalOpen, debouncedProductSearch])
+
   async function loadData() {
     try {
-      const [suppData, prodData, whRes] = await Promise.all([
+      const [suppData, whRes] = await Promise.all([
         getSuppliers(),
-        getProducts(),
         api.get('/warehouses')
       ])
       setSuppliers(suppData)
-      setProducts(prodData)
       setWarehouses(whRes.data)
       
       // Default to TIENDA (usually ID 1) or first warehouse
@@ -83,14 +124,11 @@ export default function PurchaseCreate() {
     }
   }
 
-  const filteredProducts = useMemo(() => {
-    if (!productSearch) return products
-    const s = productSearch.toLowerCase()
-    return products.filter(p => 
-      p.name.toLowerCase().includes(s) || 
-      (p.code && p.code.toLowerCase().includes(s))
-    )
-  }, [products, productSearch])
+  const filteredProducts = useMemo(() => products, [products])
+
+  function getProductCode(product: Product) {
+    return product.productCode || product.sku || ''
+  }
 
   async function addItem(product: Product) {
     const existing = items.find(i => i.productId === product.id)
@@ -103,7 +141,7 @@ export default function PurchaseCreate() {
     setItems([...items, {
       productId: product.id,
       name: product.name,
-      code: product.code || '',
+      code: getProductCode(product),
       quantity: 1,
       unitCost: product.cost || 0,
       productType: product.productType,
@@ -112,6 +150,7 @@ export default function PurchaseCreate() {
     }])
     setIsProductModalOpen(false)
     setProductSearch('')
+    setDebouncedProductSearch('')
   }
 
   function updateItem(index: number, field: keyof PurchaseItem, value: any) {
@@ -488,11 +527,14 @@ export default function PurchaseCreate() {
             <input 
               autoFocus
               type="text" 
-              placeholder="Buscar por nombre o código..." 
+              placeholder="Buscar por nombre, SKU, código, descripción, alterno o genérico..." 
               value={productSearch}
               onChange={e => setProductSearch(e.target.value)}
               style={{ width: '100%', padding: 10, marginBottom: 10, borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
             />
+            <div style={{ fontSize: '0.8em', color: 'var(--muted)', marginBottom: 10 }}>
+              Usa las mismas variables del catálogo. Puedes escribir varias palabras en cualquier orden.
+            </div>
             <div style={{ flex: 1, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 4 }}>
               {filteredProducts.length === 0 ? (
                 <div style={{ padding: 20, textAlign: 'center', color: 'var(--muted)' }}>
@@ -521,7 +563,7 @@ export default function PurchaseCreate() {
                     <div>
                       <div style={{ fontWeight: 'bold' }}>{p.name}</div>
                       <div style={{ fontSize: '0.8em', opacity: 0.7 }}>
-                        {(p.code || 'Sin codigo')} - Stock: {p.stock}
+                        {(getProductCode(p) || 'Sin codigo')} - Stock: {p.stock}
                       </div>
                     </div>
                     <div style={{ color: 'var(--accent)', fontWeight: 700 }}>+ Agregar</div>
