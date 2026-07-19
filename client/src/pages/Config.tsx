@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { AxiosProgressEvent } from 'axios'
 import { api } from '../api'
 import { useAuthStore } from '../store/auth'
 import { useConfigStore } from '../store/config'
@@ -70,6 +71,91 @@ interface RestoreBackupResponse {
   }
 }
 
+interface TransferProgressState {
+  loaded: number
+  total: number | null
+  percent: number | null
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return '0 B'
+
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let size = value
+  let unitIndex = 0
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex += 1
+  }
+
+  const digits = size >= 10 || unitIndex === 0 ? 0 : 1
+  return `${size.toFixed(digits)} ${units[unitIndex]}`
+}
+
+function buildTransferProgress(event?: AxiosProgressEvent): TransferProgressState {
+  const loaded = Math.max(0, Number(event?.loaded || 0))
+  const total = Number(event?.total || 0) > 0 ? Number(event?.total) : null
+  const percent = total ? Math.min(100, Math.round((loaded / total) * 100)) : null
+
+  return {
+    loaded,
+    total,
+    percent
+  }
+}
+
+function ProgressBar({
+  title,
+  progress,
+  active
+}: {
+  title: string
+  progress: TransferProgressState | null
+  active: boolean
+}) {
+  if (!active && !progress) return null
+
+  const percent = progress?.percent ?? (active ? 10 : 0)
+  const safePercent = Math.max(0, Math.min(100, percent))
+  const label = progress?.percent != null
+    ? `${progress.percent}% completado`
+    : active
+      ? 'Calculando progreso...'
+      : 'Listo'
+  const details = progress
+    ? progress.total
+      ? `${formatBytes(progress.loaded)} de ${formatBytes(progress.total)}`
+      : progress.loaded > 0
+        ? `${formatBytes(progress.loaded)} transferidos`
+        : ''
+    : ''
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>
+        <span>{title}</span>
+        <span>{label}</span>
+      </div>
+      <div style={{ width: '100%', height: 10, borderRadius: 999, overflow: 'hidden', background: 'var(--border)' }}>
+        <div
+          style={{
+            width: `${safePercent}%`,
+            height: '100%',
+            background: 'linear-gradient(90deg, #2563eb, #06b6d4)',
+            transition: 'width 0.2s ease'
+          }}
+        />
+      </div>
+      {details && (
+        <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>
+          {details}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Config() {
   const { config, fetchConfig } = useConfigStore()
   const user = useAuthStore(s => s.user)
@@ -81,10 +167,14 @@ export default function Config() {
   const [saving, setSaving] = useState(false)
   const [downloadingBackup, setDownloadingBackup] = useState(false)
   const [downloadingFullBackup, setDownloadingFullBackup] = useState(false)
+  const [downloadBackupProgress, setDownloadBackupProgress] = useState<TransferProgressState | null>(null)
+  const [downloadFullBackupProgress, setDownloadFullBackupProgress] = useState<TransferProgressState | null>(null)
   const [sqlRestoreFile, setSqlRestoreFile] = useState<File | null>(null)
   const [fullRestoreFile, setFullRestoreFile] = useState<File | null>(null)
   const [restoringSqlBackup, setRestoringSqlBackup] = useState(false)
   const [restoringFullBackup, setRestoringFullBackup] = useState(false)
+  const [restoreSqlBackupProgress, setRestoreSqlBackupProgress] = useState<TransferProgressState | null>(null)
+  const [restoreFullBackupProgress, setRestoreFullBackupProgress] = useState<TransferProgressState | null>(null)
   const [lastRestoreResult, setLastRestoreResult] = useState<RestoreBackupResponse | null>(null)
   const [runningTrackedAudit, setRunningTrackedAudit] = useState(false)
   const [runningTrackedAutoCorrect, setRunningTrackedAutoCorrect] = useState(false)
@@ -126,14 +216,30 @@ export default function Config() {
     }
   }
 
-  const downloadFile = async (url: string, fallbackFilename: string, defaultError: string) => {
+  const downloadFile = async (
+    url: string,
+    fallbackFilename: string,
+    defaultError: string,
+    setProgress: (value: TransferProgressState | null) => void
+  ) => {
     try {
-      const response = await api.get(url, { responseType: 'blob' })
+      setProgress({ loaded: 0, total: null, percent: 0 })
+      const response = await api.get(url, {
+        responseType: 'blob',
+        onDownloadProgress: (event) => {
+          setProgress(buildTransferProgress(event))
+        }
+      })
       const blob = new Blob([response.data], { type: String(response.headers?.['content-type'] || 'application/octet-stream') })
       const downloadUrl = URL.createObjectURL(blob)
       const contentDisposition = String(response.headers?.['content-disposition'] || '')
       const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/)
       const filename = filenameMatch?.[1] || fallbackFilename
+      setProgress({
+        loaded: blob.size,
+        total: blob.size || null,
+        percent: 100
+      })
 
       const anchor = document.createElement('a')
       anchor.href = downloadUrl
@@ -172,7 +278,7 @@ export default function Config() {
   const downloadBackup = async () => {
     setDownloadingBackup(true)
     try {
-      await downloadFile('/config/backup', `backup-${Date.now()}.sql`, 'No se pudo generar el backup SQL')
+      await downloadFile('/config/backup', `backup-${Date.now()}.sql`, 'No se pudo generar el backup SQL', setDownloadBackupProgress)
     } finally {
       setDownloadingBackup(false)
     }
@@ -181,7 +287,7 @@ export default function Config() {
   const downloadFullBackup = async () => {
     setDownloadingFullBackup(true)
     try {
-      await downloadFile('/config/backup/full', `backup-completo-${Date.now()}.tar.gz`, 'No se pudo generar el backup completo')
+      await downloadFile('/config/backup/full', `backup-completo-${Date.now()}.tar.gz`, 'No se pudo generar el backup completo', setDownloadFullBackupProgress)
     } finally {
       setDownloadingFullBackup(false)
     }
@@ -191,12 +297,14 @@ export default function Config() {
     file,
     endpoint,
     defaultError,
-    confirmMessage
+    confirmMessage,
+    setProgress
   }: {
     file: File | null
     endpoint: string
     defaultError: string
     confirmMessage: string
+    setProgress: (value: TransferProgressState | null) => void
   }) => {
     if (!file) {
       alert('Debes seleccionar un archivo antes de restaurar')
@@ -209,12 +317,25 @@ export default function Config() {
     try {
       const fd = new FormData()
       fd.append('backup', file)
+      setProgress({
+        loaded: 0,
+        total: file.size || null,
+        percent: file.size ? 0 : null
+      })
       const response = await api.post(endpoint, fd, {
         headers: {
           'Content-Type': 'multipart/form-data'
+        },
+        onUploadProgress: (event) => {
+          setProgress(buildTransferProgress(event))
         }
       })
 
+      setProgress({
+        loaded: file.size || 0,
+        total: file.size || null,
+        percent: 100
+      })
       const result = response.data as RestoreBackupResponse
       setLastRestoreResult(result)
       await fetchConfig()
@@ -237,7 +358,8 @@ export default function Config() {
         file: sqlRestoreFile,
         endpoint: '/config/backup/restore/sql',
         defaultError: 'No se pudo restaurar el backup SQL',
-        confirmMessage: 'Se restaurará la base de datos desde el archivo SQL seleccionado. Antes de continuar, el sistema generará un backup de seguridad. Deseas continuar?'
+        confirmMessage: 'Se restaurará la base de datos desde el archivo SQL seleccionado. Antes de continuar, el sistema generará un backup de seguridad. Deseas continuar?',
+        setProgress: setRestoreSqlBackupProgress
       })
 
       if (result?.ok) {
@@ -256,7 +378,8 @@ export default function Config() {
         file: fullRestoreFile,
         endpoint: '/config/backup/restore/full',
         defaultError: 'No se pudo restaurar el backup completo',
-        confirmMessage: 'Se restaurará la base de datos, uploads y config.json desde el backup completo seleccionado. Antes de continuar, el sistema generará un backup de seguridad. Deseas continuar?'
+        confirmMessage: 'Se restaurará la base de datos, uploads y config.json desde el backup completo seleccionado. Antes de continuar, el sistema generará un backup de seguridad. Deseas continuar?',
+        setProgress: setRestoreFullBackupProgress
       })
 
       if (result?.ok) {
@@ -375,6 +498,16 @@ export default function Config() {
                 {runningTrackedAutoCorrect ? 'Autocorrigiendo casos faciles...' : 'Autocorregir casos faciles'}
               </button>
             </div>
+            <ProgressBar
+              title="Descargar backup SQL"
+              progress={downloadBackupProgress}
+              active={downloadingBackup}
+            />
+            <ProgressBar
+              title="Descargar backup completo"
+              progress={downloadFullBackupProgress}
+              active={downloadingFullBackup}
+            />
             <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 10 }}>
               El backup completo incluye `database.sql`, carpeta `uploads` y `config.json`, para restaurar también las imágenes del sistema.
             </div>
@@ -409,6 +542,11 @@ export default function Config() {
                     >
                       {restoringSqlBackup ? 'Restaurando backup SQL...' : 'Restaurar backup SQL'}
                     </button>
+                    <ProgressBar
+                      title="Cargar backup SQL"
+                      progress={restoreSqlBackupProgress}
+                      active={restoringSqlBackup}
+                    />
                   </div>
                 </div>
 
@@ -435,6 +573,11 @@ export default function Config() {
                     >
                       {restoringFullBackup ? 'Restaurando backup completo...' : 'Restaurar backup completo'}
                     </button>
+                    <ProgressBar
+                      title="Cargar backup completo"
+                      progress={restoreFullBackupProgress}
+                      active={restoringFullBackup}
+                    />
                   </div>
                 </div>
               </div>
