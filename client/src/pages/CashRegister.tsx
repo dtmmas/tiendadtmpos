@@ -40,6 +40,122 @@ export default function CashRegister() {
   const selectedUser = users.find(u => u.id === (selectedUserId || user?.id))
   const isOwnCash = !selectedUserId || selectedUserId === user?.id
   const cashParams = isAdmin && selectedUserId && selectedUserId !== user?.id ? { userId: selectedUserId } : undefined
+  const salesByMethod = summary?.salesByMethod || {}
+  const depositSales = Number(salesByMethod.DEPOSIT || 0)
+  const cardSales = Number(salesByMethod.CARD || 0)
+  const creditSales = Number(salesByMethod.CREDIT || 0)
+
+  const handlePrintReport = () => {
+    const reportSummary = summary || null
+    const reportTitle = closeResult ? 'Reporte de Cierre de Caja' : 'Reporte de Caja'
+    const reportUser = isOwnCash ? `${user?.name || '-'} (${user?.role || '-'})` : (selectedUser?.name || '-')
+    const openedAt = reportSummary?.openingTime ? formatDateTime(new Date(reportSummary.openingTime)) : '-'
+    const printedAt = formatDateTime(new Date())
+    const methods = Object.entries(reportSummary?.salesByMethod || {}) as Array<[string, unknown]>
+    const movementsRows = movements.map(m => `
+      <tr>
+        <td>${escapeHtml(formatDateTime(new Date(m.created_at)).split(' ')[1] || '')}</td>
+        <td>${escapeHtml(m.type === 'IN' ? 'ENTRADA' : 'SALIDA')}</td>
+        <td>${escapeHtml(String(m.description || ''))}</td>
+        <td style="text-align:right;">${formatMoney(m.amount)}</td>
+      </tr>
+    `).join('')
+
+    const printWindow = window.open('about:blank', '_blank', 'width=900,height=700')
+    if (!printWindow) {
+      alert('No se pudo abrir la ventana de impresion. Verifica si el navegador bloqueo el popup.')
+      return
+    }
+
+    printWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${escapeHtml(reportTitle)}</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 24px; color: #111827; }
+            h1, h2, h3 { margin: 0 0 12px; }
+            .meta, .grid { margin-bottom: 20px; }
+            .meta div { margin-bottom: 6px; }
+            .grid { display: grid; grid-template-columns: repeat(2, minmax(220px, 1fr)); gap: 12px; }
+            .card { border: 1px solid #d1d5db; border-radius: 8px; padding: 12px; }
+            .label { font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+            .value { font-size: 22px; font-weight: 700; }
+            table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+            th, td { border: 1px solid #d1d5db; padding: 8px; font-size: 12px; }
+            th { background: #f3f4f6; text-align: left; }
+            .section { margin-top: 20px; }
+          </style>
+        </head>
+        <body>
+          <h1>${escapeHtml(reportTitle)}</h1>
+          <div class="meta">
+            <div><strong>Responsable:</strong> ${escapeHtml(reportUser)}</div>
+            <div><strong>Apertura:</strong> ${escapeHtml(openedAt)}</div>
+            <div><strong>Impreso:</strong> ${escapeHtml(printedAt)}</div>
+          </div>
+
+          <div class="grid">
+            <div class="card"><div class="label">Saldo Inicial</div><div class="value">${formatMoney(reportSummary?.openingAmount)}</div></div>
+            <div class="card"><div class="label">Ventas (Efectivo)</div><div class="value">${formatMoney(reportSummary?.salesCash)}</div></div>
+            <div class="card"><div class="label">Ventas (Deposito)</div><div class="value">${formatMoney(depositSales)}</div></div>
+            <div class="card"><div class="label">Ventas (Tarjeta)</div><div class="value">${formatMoney(cardSales)}</div></div>
+            <div class="card"><div class="label">Ventas (Credito)</div><div class="value">${formatMoney(creditSales)}</div></div>
+            <div class="card"><div class="label">Entradas Extra</div><div class="value">${formatMoney(reportSummary?.movementsIn)}</div></div>
+            <div class="card"><div class="label">Salidas / Gastos</div><div class="value">${formatMoney(reportSummary?.movementsOut)}</div></div>
+            <div class="card"><div class="label">Total Esperado</div><div class="value">${formatMoney(reportSummary?.expectedCash)}</div></div>
+            ${closeResult ? `<div class="card"><div class="label">Monto Real (Conteo)</div><div class="value">${formatMoney(closeResult.expected + closeResult.difference)}</div></div>` : ''}
+            ${closeResult ? `<div class="card"><div class="label">Diferencia</div><div class="value">${formatMoney(closeResult.difference)}</div></div>` : ''}
+          </div>
+
+          <div class="section">
+            <h3>Ventas por Metodo</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Metodo</th>
+                  <th style="text-align:right;">Monto</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${methods.map(([method, total]) => `
+                  <tr>
+                    <td>${escapeHtml(translateMethod(method))}</td>
+                    <td style="text-align:right;">${formatMoney(total)}</td>
+                  </tr>
+                `).join('')}
+                <tr>
+                  <td><strong>Total Ventas</strong></td>
+                  <td style="text-align:right;"><strong>${formatMoney(reportSummary?.totalSales)}</strong></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="section">
+            <h3>Movimientos de Efectivo</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Hora</th>
+                  <th>Tipo</th>
+                  <th>Descripcion</th>
+                  <th style="text-align:right;">Monto</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${movementsRows || '<tr><td colspan="4" style="text-align:center;">Sin movimientos</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
+    printWindow.focus()
+    printWindow.print()
+  }
 
   useEffect(() => {
     if (isAdmin) {
@@ -265,9 +381,14 @@ export default function CashRegister() {
               <strong>{closeResult.difference > 0 ? '+' : ''}{closeResult.difference.toFixed(2)}</strong>
             </div>
           </div>
-          <button onClick={() => setCloseResult(null)} className="btn-primary">
-            Volver (Abrir Nueva Caja)
-          </button>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <button type="button" onClick={handlePrintReport} className="btn-secondary">
+              Imprimir Cierre
+            </button>
+            <button type="button" onClick={() => setCloseResult(null)} className="btn-primary">
+              Volver (Abrir Nueva Caja)
+            </button>
+          </div>
         </div>
       </div>
     )
@@ -309,7 +430,15 @@ export default function CashRegister() {
         </div>
         {isOwnCash ? (
           <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={handlePrintReport}
+            >
+              Imprimir Caja
+            </button>
             <button 
+              type="button"
               className="btn-secondary"
               onClick={() => {
                   setMovementType('IN')
@@ -319,6 +448,7 @@ export default function CashRegister() {
               + Entrada
             </button>
             <button 
+              type="button"
               className="btn-secondary"
               onClick={() => {
                   setMovementType('OUT')
@@ -328,6 +458,7 @@ export default function CashRegister() {
               - Salida
             </button>
             <button 
+              type="button"
               className="btn-danger"
               onClick={() => setShowCloseModal(true)}
             >
@@ -335,8 +466,17 @@ export default function CashRegister() {
             </button>
           </div>
         ) : (
-          <div style={{ padding: '10px 12px', borderRadius: 10, background: 'rgba(59, 130, 246, 0.08)', color: 'var(--muted)', fontSize: '0.9rem' }}>
-            Supervisando en modo lectura
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={handlePrintReport}
+            >
+              Imprimir Caja
+            </button>
+            <div style={{ padding: '10px 12px', borderRadius: 10, background: 'rgba(59, 130, 246, 0.08)', color: 'var(--muted)', fontSize: '0.9rem' }}>
+              Supervisando en modo lectura
+            </div>
           </div>
         )}
       </div>
@@ -345,6 +485,9 @@ export default function CashRegister() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 15, marginBottom: 20 }}>
         <StatCard title="Saldo Inicial" value={summary?.openingAmount} color="#64748b" />
         <StatCard title="Ventas (Efectivo)" value={summary?.salesCash} color="#22c55e" />
+        <StatCard title="Ventas (Depósito)" value={depositSales} color="#8b5cf6" />
+        <StatCard title="Ventas (Tarjeta)" value={cardSales} color="#06b6d4" />
+        <StatCard title="Ventas (Crédito)" value={creditSales} color="#f59e0b" />
         <StatCard title="Entradas Extra" value={summary?.movementsIn} color="#3b82f6" />
         <StatCard title="Salidas / Gastos" value={summary?.movementsOut} color="#ef4444" negative />
         <StatCard title="Total Esperado" value={summary?.expectedCash} color="#eab308" highlight />
@@ -516,7 +659,7 @@ function Modal({ children, onClose, title }: any) {
             <div style={{ background: 'var(--modal)', padding: 20, borderRadius: 12, width: 400, maxWidth: '90%', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 15 }}>
                     <h3 style={{ margin: 0 }}>{title}</h3>
-                    <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer' }}>×</button>
+                    <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer' }}>×</button>
                 </div>
                 {children}
             </div>
@@ -532,4 +675,17 @@ function translateMethod(method: string) {
         'CREDIT': 'Crédito'
     }
     return map[method] || method
+}
+
+function formatMoney(value: unknown) {
+    return Number(value || 0).toFixed(2)
+}
+
+function escapeHtml(value: string) {
+    return value
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;')
 }

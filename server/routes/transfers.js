@@ -221,6 +221,33 @@ router.post('/', authMiddleware, roleMiddleware(['ADMIN', 'ALMACEN']), async (re
 
         if (!isValidNumber(quantity)) continue
 
+        const [[productRow]] = await conn.query(
+          'SELECT product_type FROM products WHERE id = ? LIMIT 1',
+          [productId]
+        )
+        if (!productRow) {
+          throw new Error(`Producto no encontrado: ${productId}`)
+        }
+        const productType = String(productRow.product_type || 'GENERAL').toUpperCase()
+
+        if (productType === 'IMEI') {
+          if (!imei) {
+            throw new Error(`Debes indicar el IMEI exacto para transferir el producto ${productId}`)
+          }
+          if (quantity !== 1) {
+            throw new Error(`Los productos con IMEI solo pueden transferirse de una unidad por item (${productId})`)
+          }
+        }
+
+        if (productType === 'SERIAL') {
+          if (!serial) {
+            throw new Error(`Debes indicar la serie exacta para transferir el producto ${productId}`)
+          }
+          if (quantity !== 1) {
+            throw new Error(`Los productos con serie solo pueden transferirse de una unidad por item (${productId})`)
+          }
+        }
+
         if (batchNo) {
              const [batchResult] = await conn.query(
                'UPDATE product_batches SET quantity = quantity - ? WHERE product_id = ? AND batch_no = ? AND warehouse_id = ? AND quantity >= ?',
@@ -334,7 +361,10 @@ router.post('/', authMiddleware, roleMiddleware(['ADMIN', 'ALMACEN']), async (re
       if (err.message && (
         err.message.includes('lote no disponible') ||
         err.message.includes('IMEI no disponible') ||
-        err.message.includes('Serie no disponible')
+        err.message.includes('Serie no disponible') ||
+        err.message.includes('Debes indicar el IMEI exacto') ||
+        err.message.includes('Debes indicar la serie exacta') ||
+        err.message.includes('solo pueden transferirse de una unidad por item')
       )) {
          return res.status(400).json({ error: err.message })
       }

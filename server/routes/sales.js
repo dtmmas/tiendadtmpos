@@ -178,6 +178,7 @@ function getSalesFilters(req, context, forceUserId = null) {
   const search = (req.query.search || '').toString().trim()
   const startDate = (req.query.startDate || '').toString().slice(0, 10)
   const endDate = (req.query.endDate || '').toString().slice(0, 10)
+  const paymentMethod = (req.query.paymentMethod || '').toString().trim().toUpperCase()
   const requestedUserId = Number(req.query.userId || 0)
   const requestedWarehouseId = Number(req.query.warehouseId || 0)
   const isAdmin = isAdminUser(req.user)
@@ -210,6 +211,14 @@ function getSalesFilters(req, context, forceUserId = null) {
   if (effectiveWarehouseId > 0) {
     where.push('s.warehouse_id = ?')
     params.push(effectiveWarehouseId)
+  }
+  if (paymentMethod === 'NON_CREDIT') {
+    where.push(`(COALESCE(s.payment_method, '') <> 'CREDIT' AND COALESCE(s.is_credit, 0) = 0)`)
+  } else if (paymentMethod === 'CREDIT') {
+    where.push(`(s.payment_method = 'CREDIT' OR COALESCE(s.is_credit, 0) = 1)`)
+  } else if (['CASH', 'CARD', 'DEPOSIT'].includes(paymentMethod)) {
+    where.push('s.payment_method = ?')
+    params.push(paymentMethod)
   }
 
   return {
@@ -277,6 +286,27 @@ router.get('/', authMiddleware, async (req, res) => {
       params
     )
 
+    const [summaryByMethodRows] = await pool.query(
+      `
+        SELECT
+          CASE
+            WHEN s.payment_method = 'CREDIT' OR COALESCE(s.is_credit, 0) = 1 THEN 'CREDIT'
+            ELSE COALESCE(s.payment_method, 'N/D')
+          END AS payment_method,
+          COALESCE(SUM(CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE s.total END), 0) AS net_total
+        FROM sales s
+        ${context.baseJoins}
+        ${context.sellerJoin}
+        ${whereClause}
+        GROUP BY
+          CASE
+            WHEN s.payment_method = 'CREDIT' OR COALESCE(s.is_credit, 0) = 1 THEN 'CREDIT'
+            ELSE COALESCE(s.payment_method, 'N/D')
+          END
+      `,
+      params
+    )
+
     const byUserRows = canSeeProfit
       ? (await pool.query(
           `
@@ -311,6 +341,12 @@ router.get('/', authMiddleware, async (req, res) => {
         netTotal: Number(summaryRows?.[0]?.net_total || 0),
         totalProfit: canSeeProfit ? Number(summaryRows?.[0]?.total_profit || 0) : 0,
         cancelledCount: Number(summaryRows?.[0]?.cancelled_count || 0),
+        byMethod: Object.fromEntries(
+          (summaryByMethodRows || []).map(row => [
+            row.payment_method || 'N/D',
+            Number(row.net_total || 0),
+          ])
+        ),
       },
       byUser: (byUserRows || []).map(row => ({
         userId: row.user_id ? Number(row.user_id) : null,
@@ -452,13 +488,14 @@ router.post('/', authMiddleware, async (req, res) => {
       for (const item of items) {
         // item: { productId, quantity, price, imei, serial }
         const [productRows] = await conn.query(
-          'SELECT price, price2, price3 FROM products WHERE id = ? LIMIT 1',
+          'SELECT price, price2, price3, product_type FROM products WHERE id = ? LIMIT 1',
           [item.productId]
         )
         const productPriceRow = productRows?.[0]
         if (!productPriceRow) {
           throw new Error(`Producto no encontrado: ${item.productId}`)
         }
+        const productType = String(productPriceRow.product_type || 'GENERAL').toUpperCase()
 
         const requestedPrice = Number(item.price)
         const originalUnitPrice = Number(productPriceRow.price || 0)
@@ -499,6 +536,28 @@ router.post('/', authMiddleware, async (req, res) => {
         if (requestedPriceSource === 'MANUAL' && !canUseManualPosPrice) {
           await conn.rollback()
           return res.status(403).json({ error: 'Tu usuario no tiene permiso para ingresar precio manual en POS' })
+        }
+
+        if (productType === 'SERIAL') {
+          if (!item.serial) {
+            await conn.rollback()
+            return res.status(400).json({ error: `Debes seleccionar la serie exacta para vender el producto ${item.productId}` })
+          }
+          if (Number(item.quantity) !== 1) {
+            await conn.rollback()
+            return res.status(400).json({ error: `Los productos con serie solo pueden venderse una unidad por item (${item.productId})` })
+          }
+        }
+
+        if (productType === 'IMEI') {
+          if (!item.imei) {
+            await conn.rollback()
+            return res.status(400).json({ error: `Debes seleccionar el IMEI exacto para vender el producto ${item.productId}` })
+          }
+          if (Number(item.quantity) !== 1) {
+            await conn.rollback()
+            return res.status(400).json({ error: `Los productos con IMEI solo pueden venderse una unidad por item (${item.productId})` })
+          }
         }
 
         const itemTotal = Number(item.price) * Number(item.quantity)

@@ -883,6 +883,7 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
     )
     const current = currRows?.[0]
     if (!current) return res.status(404).json({ error: 'Not found' })
+    const currentType = String(current.product_type || 'GENERAL').toUpperCase()
     const has = (v) => v !== undefined && v !== null && !(typeof v === 'string' && v.trim() === '')
     const hasNum = (v) => has(v) && !isNaN(Number(v))
 
@@ -899,11 +900,18 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
     const imeis = rawImeis.map(x => String(x || '').trim()).filter(s => s.length > 0)
     const rawSerials = parseJsonArrayField(req.body, 'serials')
     const serials = rawSerials.map(x => String(x || '').trim()).filter(s => s.length > 0)
-    const nextType = has(productType) ? String(productType).toUpperCase() : (current.product_type || 'GENERAL')
+    const nextType = has(productType) ? String(productType).toUpperCase() : currentType
     let derivedStock = hasNum(stock) ? Number(stock) : Number(current.stock || 0)
     if (nextType === 'MEDICINAL') derivedStock = sumQuantity(batches, 'quantity')
     else if (nextType === 'IMEI') derivedStock = imeis.length
     else if (nextType === 'SERIAL') derivedStock = serials.length
+
+    const immutableTrackedTypes = new Set(['IMEI', 'SERIAL'])
+    if (currentType !== nextType && (immutableTrackedTypes.has(currentType) || immutableTrackedTypes.has(nextType))) {
+      return res.status(400).json({
+        error: 'No puedes cambiar el tipo de un producto con trazabilidad IMEI/SERIAL desde editar producto. Usa un producto nuevo o un proceso controlado de migracion.'
+      })
+    }
 
     const nextName = has(name) ? name : current.name
     const nextSku = has(sku) ? normalizeOptionalIdentifier(sku) : normalizeOptionalIdentifier(current.sku)
@@ -999,8 +1007,12 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
 
 
       await conn.query('DELETE FROM product_batches WHERE product_id = ?', [id])
-      await conn.query('DELETE FROM product_imeis WHERE product_id = ?', [id])
-      await conn.query('DELETE FROM product_serials WHERE product_id = ?', [id])
+      if (nextType !== 'IMEI') {
+        await conn.query('DELETE FROM product_imeis WHERE product_id = ?', [id])
+      }
+      if (nextType !== 'SERIAL') {
+        await conn.query('DELETE FROM product_serials WHERE product_id = ?', [id])
+      }
       await conn.query('DELETE FROM product_variants WHERE product_id = ?', [id])
 
       if (nextType === 'MEDICINAL' && batches.length) {
@@ -1009,9 +1021,9 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
             conn.query('INSERT INTO product_batches (product_id, batch_no, expiry_date, quantity) VALUES (?, ?, ?, ?)', [id, b.batch_no, b.expiry_date, Number(b.quantity || 0)])
           )
         )
-      } else if (nextType === 'IMEI' && imeis.length) {
+      } else if (nextType === 'IMEI' && currentType !== 'IMEI' && imeis.length) {
         await Promise.all(imeis.map(imei => conn.query('INSERT INTO product_imeis (product_id, imei) VALUES (?, ?)', [id, String(imei || '')])))
-      } else if (nextType === 'SERIAL' && serials.length) {
+      } else if (nextType === 'SERIAL' && currentType !== 'SERIAL' && serials.length) {
         await Promise.all(serials.map(serial => conn.query('INSERT INTO product_serials (product_id, serial_no) VALUES (?, ?)', [id, String(serial || '')])))
       }
 

@@ -207,7 +207,7 @@ export async function getSalesSummary(start?: string, end?: string) {
   return data as { total: number; start: string | null; end: string | null }
 }
 
-export async function getSales(params: { page?: number; limit?: number; search?: string; offset?: number; startDate?: string; endDate?: string; userId?: number | string }) {
+export async function getSales(params: { page?: number; limit?: number; search?: string; offset?: number; startDate?: string; endDate?: string; userId?: number | string; paymentMethod?: string }) {
   const { data } = await api.get('/sales', { params })
   return data as {
     data: Array<{
@@ -240,6 +240,7 @@ export async function getSales(params: { page?: number; limit?: number; search?:
       netTotal: number
       totalProfit: number
       cancelledCount: number
+      byMethod: Record<string, number>
     }
     byUser: Array<{
       userId: number | null
@@ -474,6 +475,37 @@ export async function getCashHistoryShifts(params?: { start?: string; end?: stri
       movementsOut: number
       expected: number
       difference: number
+    }>
+  }
+}
+
+export async function getCashHistoryShiftDetail(id: number) {
+  const { data } = await api.get(`/cash-registers/history/shifts/${id}`)
+  return data as {
+    id: number
+    openedBy: number
+    openedByName: string
+    closedBy: number
+    closedByName: string
+    openingBalance: number
+    closingBalance: number
+    openedAt: string
+    closedAt: string
+    salesByMethod: Record<string, number>
+    totalSales: number
+    salesCash: number
+    movementsIn: number
+    movementsOut: number
+    expected: number
+    difference: number
+    movements: Array<{
+      id: number
+      type: 'IN' | 'OUT'
+      amount: number
+      description: string
+      refType: string
+      refId: number | null
+      createdAt: string
     }>
   }
 }

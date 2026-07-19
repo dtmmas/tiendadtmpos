@@ -110,6 +110,116 @@ async function getClosedShifts(pool, { start, end, limit }) {
   return items
 }
 
+async function getClosedShiftDetail(pool, shiftId) {
+  const [rows] = await pool.query(
+    `
+      SELECT
+        s.id,
+        s.opened_by,
+        u1.name AS opened_by_name,
+        s.closed_by,
+        u2.name AS closed_by_name,
+        s.opening_balance,
+        s.closing_balance,
+        s.opened_at,
+        s.closed_at
+      FROM cashbox_shifts s
+      LEFT JOIN users u1 ON u1.id = s.opened_by
+      LEFT JOIN users u2 ON u2.id = s.closed_by
+      WHERE s.id = ? AND s.closed_at IS NOT NULL
+      LIMIT 1
+    `,
+    [shiftId]
+  )
+
+  const shift = rows?.[0]
+  if (!shift) return null
+
+  const [salesStats] = await pool.query(
+    `
+      SELECT
+        payment_method,
+        COALESCE(SUM(total), 0) AS total_sales
+      FROM sales
+      WHERE created_at >= ?
+        AND created_at <= ?
+        AND COALESCE(status, 'COMPLETED') = 'COMPLETED'
+        AND user_id = ?
+      GROUP BY payment_method
+    `,
+    [shift.opened_at, shift.closed_at, shift.opened_by]
+  )
+
+  const [movements] = await pool.query(
+    `
+      SELECT id, type, amount, concept AS description, ref_type, ref_id, created_at
+      FROM cash_movements
+      WHERE shift_id = ?
+      ORDER BY created_at DESC, id DESC
+    `,
+    [shift.id]
+  )
+
+  const [salesCashRows] = await pool.query(
+    `SELECT COALESCE(SUM(amount), 0) AS total
+     FROM cash_movements
+     WHERE shift_id = ? AND ref_type = 'SALE' AND type = 'IN'`,
+    [shift.id]
+  )
+
+  let movementsIn = 0
+  let movementsOut = 0
+  for (const row of movements || []) {
+    if ((row.ref_type === 'MANUAL' || (row.ref_type === 'CREDIT_PAYMENT' && row.type === 'IN')) && row.type === 'IN') {
+      movementsIn += Number(row.amount || 0)
+    }
+    if (row.ref_type === 'MANUAL' && row.type === 'OUT') {
+      movementsOut += Number(row.amount || 0)
+    }
+  }
+
+  const salesByMethod = {}
+  let totalSales = 0
+  for (const row of salesStats || []) {
+    salesByMethod[row.payment_method] = Number(row.total_sales || 0)
+    totalSales += Number(row.total_sales || 0)
+  }
+
+  const openingBalance = Number(shift.opening_balance || 0)
+  const closingBalance = Number(shift.closing_balance || 0)
+  const salesCash = Number(salesCashRows?.[0]?.total || 0)
+  const expected = openingBalance + salesCash + movementsIn - movementsOut
+  const difference = closingBalance - expected
+
+  return {
+    id: shift.id,
+    openedBy: shift.opened_by,
+    openedByName: shift.opened_by_name || '',
+    closedBy: shift.closed_by,
+    closedByName: shift.closed_by_name || '',
+    openingBalance,
+    closingBalance,
+    openedAt: shift.opened_at,
+    closedAt: shift.closed_at,
+    salesByMethod,
+    totalSales,
+    salesCash,
+    movementsIn,
+    movementsOut,
+    expected,
+    difference,
+    movements: (movements || []).map((row) => ({
+      id: row.id,
+      type: row.type,
+      amount: Number(row.amount || 0),
+      description: row.description || '',
+      refType: row.ref_type || '',
+      refId: row.ref_id ?? null,
+      createdAt: row.created_at,
+    })),
+  }
+}
+
 // 1. Get Status (Is Open?)
 router.get('/status', authMiddleware, async (req, res) => {
   try {
@@ -393,6 +503,30 @@ router.get('/history/shifts', authMiddleware, async (req, res) => {
     res.json({ items })
   } catch (err) {
     console.error('Cash history shifts error:', err)
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+router.get('/history/shifts/:id', authMiddleware, async (req, res) => {
+  try {
+    const pool = await getPool()
+    const shiftId = Number(req.params.id || 0)
+    if (!shiftId) {
+      return res.status(400).json({ error: 'ID de cierre inválido' })
+    }
+
+    const detail = await getClosedShiftDetail(pool, shiftId)
+    if (!detail) {
+      return res.status(404).json({ error: 'Cierre no encontrado' })
+    }
+
+    if (req.user.role !== 'ADMIN' && detail.openedBy !== req.user.id) {
+      return res.status(403).json({ error: 'No tienes acceso a este cierre' })
+    }
+
+    res.json(detail)
+  } catch (err) {
+    console.error('Cash history shift detail error:', err)
     res.status(500).json({ error: 'Server error' })
   }
 })

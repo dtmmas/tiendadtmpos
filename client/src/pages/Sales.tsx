@@ -49,6 +49,7 @@ interface SalesSummary {
   netTotal: number
   totalProfit: number
   cancelledCount: number
+  byMethod: Record<string, number>
 }
 
 interface UserSalesSummary {
@@ -73,6 +74,18 @@ const EMPTY_SUMMARY: SalesSummary = {
   netTotal: 0,
   totalProfit: 0,
   cancelledCount: 0,
+  byMethod: {},
+}
+
+type PaymentFilter = 'NON_CREDIT' | 'CASH' | 'CARD' | 'DEPOSIT' | 'CREDIT' | 'ALL'
+
+function getPaymentFilterLabel(filter: PaymentFilter) {
+  if (filter === 'NON_CREDIT') return 'Sin crédito'
+  if (filter === 'CASH') return 'Efectivo'
+  if (filter === 'CARD') return 'Tarjeta'
+  if (filter === 'DEPOSIT') return 'Depósito'
+  if (filter === 'CREDIT') return 'Crédito'
+  return 'Todos'
 }
 
 function pad2(value: number) {
@@ -158,12 +171,14 @@ export default function Sales() {
   const [rangeStart, setRangeStart] = useState(todayString)
   const [rangeEnd, setRangeEnd] = useState(todayString)
   const [selectedUserId, setSelectedUserId] = useState('')
+  const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('NON_CREDIT')
   const [appliedFilters, setAppliedFilters] = useState({
     search: '',
     startDate: todayString,
     endDate: todayString,
     userId: '',
-    label: todayString,
+    paymentMethod: 'NON_CREDIT' as PaymentFilter,
+    label: `${todayString} | Método: ${getPaymentFilterLabel('NON_CREDIT')}`,
   })
   const [selectedSale, setSelectedSale] = useState<SaleDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -221,6 +236,7 @@ export default function Sales() {
         startDate: appliedFilters.startDate || undefined,
         endDate: appliedFilters.endDate || undefined,
         userId: appliedFilters.userId || undefined,
+        paymentMethod: appliedFilters.paymentMethod !== 'ALL' ? appliedFilters.paymentMethod : undefined,
       })
       setSales(res.data)
       setPagination(prev => ({ ...prev, total: res.pagination.total }))
@@ -268,13 +284,15 @@ export default function Sales() {
       startDate: nextStartDate,
       endDate: nextEndDate,
       userId: selectedUserId,
-      label,
+      paymentMethod: paymentFilter,
+      label: `${label} | Método: ${getPaymentFilterLabel(paymentFilter)}`,
     })
   }
 
   const resetFilters = () => {
     setSearchInput('')
     setSelectedUserId('')
+    setPaymentFilter('NON_CREDIT')
     setPeriodMode('day')
     setSelectedDay(todayString)
     setSelectedMonth(currentMonth)
@@ -287,7 +305,8 @@ export default function Sales() {
       startDate: todayString,
       endDate: todayString,
       userId: '',
-      label: todayString,
+      paymentMethod: 'NON_CREDIT',
+      label: `${todayString} | Método: ${getPaymentFilterLabel('NON_CREDIT')}`,
     })
   }
 
@@ -443,6 +462,20 @@ export default function Sales() {
               ))}
             </select>
           )}
+          <DateField label="Método de pago">
+            <select
+              value={paymentFilter}
+              onChange={e => setPaymentFilter(e.target.value as PaymentFilter)}
+              style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}
+            >
+              <option value="NON_CREDIT">Sin crédito</option>
+              <option value="CASH">Efectivo</option>
+              <option value="DEPOSIT">Depósito</option>
+              <option value="CARD">Tarjeta</option>
+              <option value="CREDIT">Crédito</option>
+              <option value="ALL">Todos</option>
+            </select>
+          </DateField>
           <DateField label="Tipo de filtro">
             <select
               value={periodMode}
@@ -530,6 +563,25 @@ export default function Sales() {
         <div style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
           <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 6 }}>Canceladas</div>
           <div style={{ fontWeight: 700, fontSize: 22, color: summary.cancelledCount ? '#ef4444' : 'inherit' }}>{summary.cancelledCount}</div>
+        </div>
+      </div>
+
+      <div className="responsive-form-grid" style={{ marginBottom: 20 }}>
+        <div style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+          <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 6 }}>Efectivo</div>
+          <div style={{ fontWeight: 700, fontSize: 22 }}>{formatMoney(summary.byMethod.CASH)}</div>
+        </div>
+        <div style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+          <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 6 }}>Depósito</div>
+          <div style={{ fontWeight: 700, fontSize: 22 }}>{formatMoney(summary.byMethod.DEPOSIT)}</div>
+        </div>
+        <div style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+          <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 6 }}>Tarjeta</div>
+          <div style={{ fontWeight: 700, fontSize: 22 }}>{formatMoney(summary.byMethod.CARD)}</div>
+        </div>
+        <div style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+          <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 6 }}>Crédito</div>
+          <div style={{ fontWeight: 700, fontSize: 22 }}>{formatMoney(summary.byMethod.CREDIT)}</div>
         </div>
       </div>
 
