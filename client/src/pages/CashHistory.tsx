@@ -59,6 +59,7 @@ export default function CashHistory() {
   const printShiftDetail = (shift: any) => {
     if (!shift) return
     const methods = Object.entries(shift.salesByMethod || {}) as Array<[string, unknown]>
+    const creditMethods = Object.entries(shift.creditPaymentsByMethod || {}) as Array<[string, unknown]>
     const movementRows = (shift.movements || []).map((movement: any) => `
       <tr>
         <td>${escapeHtml(formatDateTime(movement.createdAt))}</td>
@@ -109,6 +110,9 @@ export default function CashHistory() {
           <div class="grid">
             <div class="card"><div class="label">Saldo Inicial</div><div class="value">${formatMoney(Number(shift.openingBalance || 0), currency)}</div></div>
             <div class="card"><div class="label">Ventas (Efectivo)</div><div class="value">${formatMoney(Number(shift.salesCash || 0), currency)}</div></div>
+            <div class="card"><div class="label">Abonos Crédito (Efectivo)</div><div class="value">${formatMoney(Number(shift.creditPaymentsCash || 0), currency)}</div></div>
+            <div class="card"><div class="label">Abonos Crédito (Depósito)</div><div class="value">${formatMoney(Number(shift.creditPaymentsByMethod?.DEPOSIT || 0), currency)}</div></div>
+            <div class="card"><div class="label">Abonos Crédito (Tarjeta)</div><div class="value">${formatMoney(Number(shift.creditPaymentsByMethod?.CARD || 0), currency)}</div></div>
             <div class="card"><div class="label">Entradas Extra</div><div class="value">${formatMoney(Number(shift.movementsIn || 0), currency)}</div></div>
             <div class="card"><div class="label">Salidas / Gastos</div><div class="value">${formatMoney(Number(shift.movementsOut || 0), currency)}</div></div>
             <div class="card"><div class="label">Total Esperado</div><div class="value">${formatMoney(Number(shift.expected || 0), currency)}</div></div>
@@ -136,6 +140,26 @@ export default function CashHistory() {
                   <td><strong>Total Ventas</strong></td>
                   <td style="text-align:right;"><strong>${formatMoney(Number(shift.totalSales || 0), currency)}</strong></td>
                 </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="section">
+            <h3>Abonos a Crédito por Método</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Metodo</th>
+                  <th style="text-align:right;">Monto</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${creditMethods.map(([method, total]) => `
+                  <tr>
+                    <td>${escapeHtml(translateMethod(method))}</td>
+                    <td style="text-align:right;">${formatMoney(Number(total || 0), currency)}</td>
+                  </tr>
+                `).join('') || '<tr><td colspan="2" style="text-align:center;">Sin abonos de crédito</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -315,6 +339,9 @@ export default function CashHistory() {
             <DetailCard label="Cerró" value={selectedShift.closedByName || '-'} />
             <DetailCard label="Saldo Inicial" value={formatMoney(Number(selectedShift.openingBalance || 0), currency)} />
             <DetailCard label="Ventas (Efectivo)" value={formatMoney(Number(selectedShift.salesCash || 0), currency)} />
+            <DetailCard label="Abonos Crédito (Efectivo)" value={formatMoney(Number(selectedShift.creditPaymentsCash || 0), currency)} />
+            <DetailCard label="Abonos Crédito (Depósito)" value={formatMoney(Number(selectedShift.creditPaymentsByMethod?.DEPOSIT || 0), currency)} />
+            <DetailCard label="Abonos Crédito (Tarjeta)" value={formatMoney(Number(selectedShift.creditPaymentsByMethod?.CARD || 0), currency)} />
             <DetailCard label="Entradas Extra" value={formatMoney(Number(selectedShift.movementsIn || 0), currency)} />
             <DetailCard label="Salidas / Gastos" value={formatMoney(Number(selectedShift.movementsOut || 0), currency)} />
             <DetailCard label="Esperado" value={formatMoney(Number(selectedShift.expected || 0), currency)} />
@@ -336,6 +363,28 @@ export default function CashHistory() {
                   <td style={{ padding: 8 }}>Total Ventas</td>
                   <td style={{ padding: 8, textAlign: 'right' }}>{formatMoney(Number(selectedShift.totalSales || 0), currency)}</td>
                 </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="card" style={{ marginBottom: 16 }}>
+            <h4 style={{ marginTop: 0 }}>Abonos a Crédito por Método</h4>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <tbody>
+                {Object.keys(selectedShift.creditPaymentsByMethod || {}).length === 0 ? (
+                  <tr>
+                    <td colSpan={2} style={{ padding: 12, textAlign: 'center', color: 'var(--muted)' }}>
+                      Sin abonos de crédito en este cierre.
+                    </td>
+                  </tr>
+                ) : (
+                  Object.entries(selectedShift.creditPaymentsByMethod || {}).map(([method, total]: any) => (
+                    <tr key={method} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: 8 }}>{translateMethod(method)}</td>
+                      <td style={{ padding: 8, textAlign: 'right' }}>{formatMoney(Number(total || 0), currency)}</td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

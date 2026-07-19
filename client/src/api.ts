@@ -254,7 +254,7 @@ export async function getSales(params: { page?: number; limit?: number; search?:
   }
 }
 
-export async function getMySalesReport(params: { limit?: number; search?: string; offset?: number; startDate?: string; endDate?: string }) {
+export async function getMySalesReport(params: { limit?: number; search?: string; offset?: number; startDate?: string; endDate?: string; paymentMethod?: string }) {
   const { data } = await api.get('/sales/my-report', { params })
   return data as {
     data: Array<{
@@ -422,7 +422,13 @@ export async function openCashRegister(payload: { openingAmount: number; notes?:
 
 export async function closeCashRegister(payload: { closingAmount: number; notes?: string }) {
   const { data } = await api.post('/cash-registers/close', payload)
-  return data as { success: boolean; expected: number; difference: number }
+  return data as {
+    success: boolean
+    expected: number
+    difference: number
+    creditPaymentsByMethod?: Record<string, number>
+    creditPaymentsCash?: number
+  }
 }
 
 export async function getCashSummary(params?: { userId?: number }) {
@@ -435,6 +441,8 @@ export async function getCashSummary(params?: { userId?: number }) {
     salesByMethod: Record<string, number>
     totalSales: number
     salesCash: number
+    creditPaymentsByMethod: Record<string, number>
+    creditPaymentsCash: number
     movementsIn: number
     movementsOut: number
     expectedCash: number
@@ -471,6 +479,8 @@ export async function getCashHistoryShifts(params?: { start?: string; end?: stri
       openedAt: string
       closedAt: string
       salesCash: number
+      creditPaymentsByMethod?: Record<string, number>
+      creditPaymentsCash?: number
       movementsIn: number
       movementsOut: number
       expected: number
@@ -494,6 +504,8 @@ export async function getCashHistoryShiftDetail(id: number) {
     salesByMethod: Record<string, number>
     totalSales: number
     salesCash: number
+    creditPaymentsByMethod: Record<string, number>
+    creditPaymentsCash: number
     movementsIn: number
     movementsOut: number
     expected: number
@@ -522,6 +534,7 @@ export async function getCashHistorySummary(params?: { period?: 'day' | 'month' 
       expected: number
       difference: number
       salesCash: number
+      creditPaymentsCash: number
       movementsIn: number
       movementsOut: number
     }>

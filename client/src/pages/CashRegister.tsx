@@ -41,9 +41,13 @@ export default function CashRegister() {
   const isOwnCash = !selectedUserId || selectedUserId === user?.id
   const cashParams = isAdmin && selectedUserId && selectedUserId !== user?.id ? { userId: selectedUserId } : undefined
   const salesByMethod = summary?.salesByMethod || {}
+  const creditPaymentsByMethod = summary?.creditPaymentsByMethod || {}
   const depositSales = Number(salesByMethod.DEPOSIT || 0)
   const cardSales = Number(salesByMethod.CARD || 0)
   const creditSales = Number(salesByMethod.CREDIT || 0)
+  const creditPaymentCash = Number(creditPaymentsByMethod.CASH || 0)
+  const creditPaymentDeposit = Number(creditPaymentsByMethod.DEPOSIT || 0)
+  const creditPaymentCard = Number(creditPaymentsByMethod.CARD || 0)
 
   const handlePrintReport = () => {
     const reportSummary = summary || null
@@ -102,6 +106,9 @@ export default function CashRegister() {
             <div class="card"><div class="label">Ventas (Deposito)</div><div class="value">${formatMoney(depositSales)}</div></div>
             <div class="card"><div class="label">Ventas (Tarjeta)</div><div class="value">${formatMoney(cardSales)}</div></div>
             <div class="card"><div class="label">Ventas (Credito)</div><div class="value">${formatMoney(creditSales)}</div></div>
+            <div class="card"><div class="label">Abonos Credito (Efectivo)</div><div class="value">${formatMoney(creditPaymentCash)}</div></div>
+            <div class="card"><div class="label">Abonos Credito (Deposito)</div><div class="value">${formatMoney(creditPaymentDeposit)}</div></div>
+            <div class="card"><div class="label">Abonos Credito (Tarjeta)</div><div class="value">${formatMoney(creditPaymentCard)}</div></div>
             <div class="card"><div class="label">Entradas Extra</div><div class="value">${formatMoney(reportSummary?.movementsIn)}</div></div>
             <div class="card"><div class="label">Salidas / Gastos</div><div class="value">${formatMoney(reportSummary?.movementsOut)}</div></div>
             <div class="card"><div class="label">Total Esperado</div><div class="value">${formatMoney(reportSummary?.expectedCash)}</div></div>
@@ -129,6 +136,26 @@ export default function CashRegister() {
                   <td><strong>Total Ventas</strong></td>
                   <td style="text-align:right;"><strong>${formatMoney(reportSummary?.totalSales)}</strong></td>
                 </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="section">
+            <h3>Abonos a Credito por Metodo</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Metodo</th>
+                  <th style="text-align:right;">Monto</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${Object.entries(reportSummary?.creditPaymentsByMethod || {}).map(([method, total]) => `
+                  <tr>
+                    <td>${escapeHtml(translateMethod(method))}</td>
+                    <td style="text-align:right;">${formatMoney(total)}</td>
+                  </tr>
+                `).join('') || '<tr><td colspan="2" style="text-align:center;">Sin abonos de crédito</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -488,6 +515,9 @@ export default function CashRegister() {
         <StatCard title="Ventas (Depósito)" value={depositSales} color="#8b5cf6" />
         <StatCard title="Ventas (Tarjeta)" value={cardSales} color="#06b6d4" />
         <StatCard title="Ventas (Crédito)" value={creditSales} color="#f59e0b" />
+        <StatCard title="Abonos Créd. (Efectivo)" value={creditPaymentCash} color="#14b8a6" />
+        <StatCard title="Abonos Créd. (Depósito)" value={creditPaymentDeposit} color="#7c3aed" />
+        <StatCard title="Abonos Créd. (Tarjeta)" value={creditPaymentCard} color="#0284c7" />
         <StatCard title="Entradas Extra" value={summary?.movementsIn} color="#3b82f6" />
         <StatCard title="Salidas / Gastos" value={summary?.movementsOut} color="#ef4444" negative />
         <StatCard title="Total Esperado" value={summary?.expectedCash} color="#eab308" highlight />
@@ -513,8 +543,27 @@ export default function CashRegister() {
           </table>
         </div>
 
-        {/* Movimientos Recientes */}
         <div className="card">
+          <h3>Abonos a Crédito por Método</h3>
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 16 }}>
+            <tbody>
+              {Object.keys(creditPaymentsByMethod).length === 0 ? (
+                <tr>
+                  <td colSpan={2} style={{ padding: 12, textAlign: 'center', color: 'var(--muted)' }}>
+                    Sin abonos de crédito en este turno.
+                  </td>
+                </tr>
+              ) : (
+                Object.entries(creditPaymentsByMethod).map(([method, total]: any) => (
+                  <tr key={method} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: 8 }}>{translateMethod(method)}</td>
+                    <td style={{ padding: 8, textAlign: 'right' }}>{Number(total).toFixed(2)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+
           <h3>Movimientos de Efectivo</h3>
           <div style={{ maxHeight: 300, overflowY: 'auto' }}>
             {movements.length === 0 ? (

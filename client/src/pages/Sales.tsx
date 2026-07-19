@@ -171,14 +171,14 @@ export default function Sales() {
   const [rangeStart, setRangeStart] = useState(todayString)
   const [rangeEnd, setRangeEnd] = useState(todayString)
   const [selectedUserId, setSelectedUserId] = useState('')
-  const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('NON_CREDIT')
+  const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('ALL')
   const [appliedFilters, setAppliedFilters] = useState({
     search: '',
     startDate: todayString,
     endDate: todayString,
     userId: '',
-    paymentMethod: 'NON_CREDIT' as PaymentFilter,
-    label: `${todayString} | Método: ${getPaymentFilterLabel('NON_CREDIT')}`,
+    paymentMethod: 'ALL' as PaymentFilter,
+    label: `${todayString} | Método: ${getPaymentFilterLabel('ALL')}`,
   })
   const [selectedSale, setSelectedSale] = useState<SaleDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -292,7 +292,7 @@ export default function Sales() {
   const resetFilters = () => {
     setSearchInput('')
     setSelectedUserId('')
-    setPaymentFilter('NON_CREDIT')
+    setPaymentFilter('ALL')
     setPeriodMode('day')
     setSelectedDay(todayString)
     setSelectedMonth(currentMonth)
@@ -305,8 +305,8 @@ export default function Sales() {
       startDate: todayString,
       endDate: todayString,
       userId: '',
-      paymentMethod: 'NON_CREDIT',
-      label: `${todayString} | Método: ${getPaymentFilterLabel('NON_CREDIT')}`,
+      paymentMethod: 'ALL',
+      label: `${todayString} | Método: ${getPaymentFilterLabel('ALL')}`,
     })
   }
 

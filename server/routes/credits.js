@@ -57,6 +57,7 @@ async function getCreditPaymentsSchema(pool) {
     'document_url',
     'received_by',
     'paid_at',
+    'user_id',
   ])
 }
 
@@ -261,6 +262,10 @@ router.post('/pay', authMiddleware, upload.single('document'), async (req, res) 
       if (paymentColumns.has('paid_at')) {
         insertColumns.push('paid_at')
         insertValues.push(finalPaymentDate)
+      }
+      if (paymentColumns.has('user_id')) {
+        insertColumns.push('user_id')
+        insertValues.push(req.user.id)
       }
 
       const [result] = await conn.query(

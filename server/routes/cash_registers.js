@@ -3,6 +3,7 @@ import { authMiddleware, canUserSell } from '../auth.js'
 import { getPool } from '../db.js'
 
 const router = express.Router()
+const schemaCache = new Map()
 
 async function getOpenShift(pool) {
   const [rows] = await pool.query(
@@ -23,6 +24,63 @@ function resolveTargetUserId(req) {
   const requested = Number(req.query.userId || 0)
   if (req.user.role === 'ADMIN' && requested > 0) return requested
   return req.user.id
+}
+
+async function columnExists(pool, table, column) {
+  const cacheKey = `${table}.${column}`
+  if (schemaCache.has(cacheKey)) return schemaCache.get(cacheKey)
+
+  const [rows] = await pool.query(
+    `SELECT COUNT(*) AS c
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+       AND COLUMN_NAME = ?`,
+    [table, column]
+  )
+
+  const exists = Number(rows?.[0]?.c || 0) > 0
+  schemaCache.set(cacheKey, exists)
+  return exists
+}
+
+async function getCreditPaymentsByMethod(pool, { shiftId, userId, startAt, endAt = null }) {
+  const hasPaymentUserId = await columnExists(pool, 'credit_payments', 'user_id')
+
+  if (!hasPaymentUserId) {
+    const [rows] = await pool.query(
+      `
+        SELECT 'CASH' AS payment_method, COALESCE(SUM(amount), 0) AS total_amount
+        FROM cash_movements
+        WHERE shift_id = ?
+          AND ref_type = 'CREDIT_PAYMENT'
+          AND type = 'IN'
+      `,
+      [shiftId]
+    )
+    return rows || []
+  }
+
+  const where = ['cp.user_id = ?', 'cp.paid_at >= ?']
+  const params = [userId, startAt]
+  if (endAt) {
+    where.push('cp.paid_at <= ?')
+    params.push(endAt)
+  }
+
+  const [rows] = await pool.query(
+    `
+      SELECT
+        COALESCE(cp.payment_method, 'CASH') AS payment_method,
+        COALESCE(SUM(cp.amount), 0) AS total_amount
+      FROM credit_payments cp
+      WHERE ${where.join(' AND ')}
+      GROUP BY COALESCE(cp.payment_method, 'CASH')
+    `,
+    params
+  )
+
+  return rows || []
 }
 
 async function getClosedShifts(pool, { start, end, limit }) {
@@ -61,7 +119,7 @@ async function getClosedShifts(pool, { start, end, limit }) {
           SELECT COALESCE(SUM(amount), 0)
           FROM cash_movements m
           WHERE m.shift_id = s.id
-            AND m.ref_type IN ('MANUAL', 'CREDIT_PAYMENT')
+            AND m.ref_type = 'MANUAL'
             AND m.type = 'IN'
         ) AS movements_in,
         (
@@ -81,15 +139,26 @@ async function getClosedShifts(pool, { start, end, limit }) {
     [...params, Math.max(1, Number(limit || 200))]
   )
 
-  const items = (rows || []).map((r) => {
+  const items = []
+  for (const r of rows || []) {
+    const creditPaymentRows = await getCreditPaymentsByMethod(pool, {
+      shiftId: r.id,
+      userId: r.opened_by,
+      startAt: r.opened_at,
+      endAt: r.closed_at,
+    })
+    const creditPaymentsByMethod = Object.fromEntries(
+      (creditPaymentRows || []).map(row => [row.payment_method || 'CASH', Number(row.total_amount || 0)])
+    )
+    const creditPaymentsCash = Number(creditPaymentsByMethod.CASH || 0)
     const opening = Number(r.opening_balance || 0)
     const closing = Number(r.closing_balance || 0)
     const salesCash = Number(r.sales_cash || 0)
     const movementsIn = Number(r.movements_in || 0)
     const movementsOut = Number(r.movements_out || 0)
-    const expected = opening + salesCash + movementsIn - movementsOut
+    const expected = opening + salesCash + creditPaymentsCash + movementsIn - movementsOut
     const difference = closing - expected
-    return {
+    items.push({
       id: r.id,
       openedBy: r.opened_by,
       openedByName: r.opened_by_name || '',
@@ -100,12 +169,14 @@ async function getClosedShifts(pool, { start, end, limit }) {
       openedAt: r.opened_at,
       closedAt: r.closed_at,
       salesCash,
+      creditPaymentsByMethod,
+      creditPaymentsCash,
       movementsIn,
       movementsOut,
       expected,
       difference,
-    }
-  })
+    })
+  }
 
   return items
 }
@@ -160,6 +231,13 @@ async function getClosedShiftDetail(pool, shiftId) {
     [shift.id]
   )
 
+  const creditPaymentRows = await getCreditPaymentsByMethod(pool, {
+    shiftId: shift.id,
+    userId: shift.opened_by,
+    startAt: shift.opened_at,
+    endAt: shift.closed_at,
+  })
+
   const [salesCashRows] = await pool.query(
     `SELECT COALESCE(SUM(amount), 0) AS total
      FROM cash_movements
@@ -170,7 +248,7 @@ async function getClosedShiftDetail(pool, shiftId) {
   let movementsIn = 0
   let movementsOut = 0
   for (const row of movements || []) {
-    if ((row.ref_type === 'MANUAL' || (row.ref_type === 'CREDIT_PAYMENT' && row.type === 'IN')) && row.type === 'IN') {
+    if (row.ref_type === 'MANUAL' && row.type === 'IN') {
       movementsIn += Number(row.amount || 0)
     }
     if (row.ref_type === 'MANUAL' && row.type === 'OUT') {
@@ -185,10 +263,15 @@ async function getClosedShiftDetail(pool, shiftId) {
     totalSales += Number(row.total_sales || 0)
   }
 
+  const creditPaymentsByMethod = Object.fromEntries(
+    (creditPaymentRows || []).map(row => [row.payment_method || 'CASH', Number(row.total_amount || 0)])
+  )
+  const creditPaymentsCash = Number(creditPaymentsByMethod.CASH || 0)
+
   const openingBalance = Number(shift.opening_balance || 0)
   const closingBalance = Number(shift.closing_balance || 0)
   const salesCash = Number(salesCashRows?.[0]?.total || 0)
-  const expected = openingBalance + salesCash + movementsIn - movementsOut
+  const expected = openingBalance + salesCash + creditPaymentsCash + movementsIn - movementsOut
   const difference = closingBalance - expected
 
   return {
@@ -204,6 +287,8 @@ async function getClosedShiftDetail(pool, shiftId) {
     salesByMethod,
     totalSales,
     salesCash,
+    creditPaymentsByMethod,
+    creditPaymentsCash,
     movementsIn,
     movementsOut,
     expected,
@@ -300,14 +385,17 @@ router.get('/summary', authMiddleware, async (req, res) => {
       GROUP BY payment_method
     `, [shift.opened_at, targetUserId])
 
+    const creditPaymentRows = await getCreditPaymentsByMethod(pool, {
+      shiftId: shift.id,
+      userId: targetUserId,
+      startAt: shift.opened_at,
+    })
+
     const [movements] = await pool.query(`
       SELECT type, SUM(amount) as total 
       FROM cash_movements 
       WHERE shift_id = ?
-        AND (
-          ref_type = 'MANUAL'
-          OR (ref_type = 'CREDIT_PAYMENT' AND type = 'IN')
-        )
+        AND ref_type = 'MANUAL'
       GROUP BY type
     `, [shift.id])
 
@@ -329,6 +417,11 @@ router.get('/summary', authMiddleware, async (req, res) => {
       })
     }
 
+    const creditPaymentsByMethod = Object.fromEntries(
+      (creditPaymentRows || []).map(row => [row.payment_method || 'CASH', Number(row.total_amount || 0)])
+    )
+    const creditPaymentsCash = Number(creditPaymentsByMethod.CASH || 0)
+
     let movementsIn = 0
     let movementsOut = 0
 
@@ -340,7 +433,7 @@ router.get('/summary', authMiddleware, async (req, res) => {
     }
 
     const openingAmount = Number(shift.opening_balance || 0)
-    const expectedCash = openingAmount + salesCashReal + movementsIn - movementsOut
+    const expectedCash = openingAmount + salesCashReal + creditPaymentsCash + movementsIn - movementsOut
 
     res.json({
       userId: targetUserId,
@@ -350,6 +443,8 @@ router.get('/summary', authMiddleware, async (req, res) => {
       salesByMethod,
       totalSales,
       salesCash: salesCashReal,
+      creditPaymentsByMethod,
+      creditPaymentsCash,
       movementsIn,
       movementsOut,
       expectedCash
@@ -445,14 +540,17 @@ router.post('/close', authMiddleware, async (req, res) => {
       GROUP BY payment_method
     `, [shift.opened_at, req.user.id])
 
+    const creditPaymentRows = await getCreditPaymentsByMethod(pool, {
+      shiftId: shift.id,
+      userId: req.user.id,
+      startAt: shift.opened_at,
+    })
+
     const [movements] = await pool.query(`
       SELECT type, SUM(amount) as total 
       FROM cash_movements 
       WHERE shift_id = ?
-        AND (
-          ref_type = 'MANUAL'
-          OR (ref_type = 'CREDIT_PAYMENT' AND type = 'IN')
-        )
+        AND ref_type = 'MANUAL'
       GROUP BY type
     `, [shift.id])
 
@@ -464,6 +562,10 @@ router.post('/close', authMiddleware, async (req, res) => {
     )
 
     const salesCash = Number(salesCashRows?.[0]?.total || 0)
+    const creditPaymentsByMethod = Object.fromEntries(
+      (creditPaymentRows || []).map(row => [row.payment_method || 'CASH', Number(row.total_amount || 0)])
+    )
+    const creditPaymentsCash = Number(creditPaymentsByMethod.CASH || 0)
 
     let movementsIn = 0
     let movementsOut = 0
@@ -472,7 +574,7 @@ router.post('/close', authMiddleware, async (req, res) => {
       if (row.type === 'OUT') movementsOut = Number(row.total)
     })
 
-    const expected = Number(shift.opening_balance || 0) + salesCash + movementsIn - movementsOut
+    const expected = Number(shift.opening_balance || 0) + salesCash + creditPaymentsCash + movementsIn - movementsOut
 
     await pool.query(
       `UPDATE cashbox_shifts 
@@ -484,7 +586,9 @@ router.post('/close', authMiddleware, async (req, res) => {
     res.json({ 
       success: true, 
       expected, 
-      difference: finalAmount - expected 
+      difference: finalAmount - expected,
+      creditPaymentsByMethod,
+      creditPaymentsCash,
     })
   } catch (err) {
     console.error('Cash Close Error:', err)
@@ -551,13 +655,14 @@ router.get('/history/summary', authMiddleware, async (req, res) => {
     const map = new Map()
     for (const s of items) {
       const k = keyOf(s.closedAt)
-      const prev = map.get(k) || { period: k, shifts: 0, opening: 0, closing: 0, expected: 0, difference: 0, salesCash: 0, movementsIn: 0, movementsOut: 0 }
+      const prev = map.get(k) || { period: k, shifts: 0, opening: 0, closing: 0, expected: 0, difference: 0, salesCash: 0, creditPaymentsCash: 0, movementsIn: 0, movementsOut: 0 }
       prev.shifts += 1
       prev.opening += s.openingBalance
       prev.closing += s.closingBalance
       prev.expected += s.expected
       prev.difference += s.difference
       prev.salesCash += s.salesCash
+      prev.creditPaymentsCash += Number(s.creditPaymentsCash || 0)
       prev.movementsIn += s.movementsIn
       prev.movementsOut += s.movementsOut
       map.set(k, prev)

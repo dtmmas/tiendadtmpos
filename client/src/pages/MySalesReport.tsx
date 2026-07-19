@@ -43,6 +43,7 @@ interface ReportSummary {
 }
 
 type PeriodMode = 'all' | 'day' | 'month' | 'year' | 'range'
+type PaymentFilter = 'NON_CREDIT' | 'CASH' | 'CARD' | 'DEPOSIT' | 'CREDIT' | 'ALL'
 
 const EMPTY_SUMMARY: ReportSummary = {
   records: 0,
@@ -96,6 +97,15 @@ function getPaymentMethodLabel(method?: string, isCredit?: number) {
   return method || 'N/D'
 }
 
+function getPaymentFilterLabel(filter: PaymentFilter) {
+  if (filter === 'NON_CREDIT') return 'Sin crédito'
+  if (filter === 'CASH') return 'Efectivo'
+  if (filter === 'CARD') return 'Tarjeta'
+  if (filter === 'DEPOSIT') return 'Depósito'
+  if (filter === 'CREDIT') return 'Crédito'
+  return 'Todos'
+}
+
 export default function MySalesReport() {
   const today = new Date()
   const todayString = formatInputDate(today)
@@ -113,11 +123,13 @@ export default function MySalesReport() {
   const [selectedYear, setSelectedYear] = useState(String(today.getFullYear()))
   const [rangeStart, setRangeStart] = useState(todayString)
   const [rangeEnd, setRangeEnd] = useState(todayString)
+  const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('ALL')
   const [appliedFilters, setAppliedFilters] = useState({
     search: '',
     startDate: todayString,
     endDate: todayString,
-    label: todayString,
+    paymentMethod: 'ALL' as PaymentFilter,
+    label: `${todayString} | Método: ${getPaymentFilterLabel('ALL')}`,
   })
   const [selectedSale, setSelectedSale] = useState<SaleDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -139,6 +151,7 @@ export default function MySalesReport() {
         search: appliedFilters.search,
         startDate: appliedFilters.startDate || undefined,
         endDate: appliedFilters.endDate || undefined,
+        paymentMethod: appliedFilters.paymentMethod !== 'ALL' ? appliedFilters.paymentMethod : undefined,
       })
       setSales(res.data)
       setPagination(prev => ({ ...prev, total: res.pagination.total }))
@@ -183,12 +196,14 @@ export default function MySalesReport() {
       search: searchInput.trim(),
       startDate: nextStartDate,
       endDate: nextEndDate,
-      label,
+      paymentMethod: paymentFilter,
+      label: `${label} | Método: ${getPaymentFilterLabel(paymentFilter)}`,
     })
   }
 
   function resetFilters() {
     setSearchInput('')
+    setPaymentFilter('ALL')
     setPeriodMode('day')
     setSelectedDay(todayString)
     setSelectedMonth(currentMonth)
@@ -200,7 +215,8 @@ export default function MySalesReport() {
       search: '',
       startDate: todayString,
       endDate: todayString,
-      label: todayString,
+      paymentMethod: 'ALL',
+      label: `${todayString} | Método: ${getPaymentFilterLabel('ALL')}`,
     })
   }
 
@@ -231,7 +247,7 @@ export default function MySalesReport() {
         <div>
           <h2 style={{ margin: 0 }}>Mi Reporte de Ventas</h2>
           <div style={{ color: 'var(--muted)', fontSize: 13, marginTop: 6 }}>
-            Solo muestra tus ventas. No incluye utilidades.
+            Solo muestra tus ventas. No incluye utilidades. Periodo: {appliedFilters.label}
           </div>
         </div>
         <form onSubmit={applyFilters} className="page-toolbar-actions" style={{ width: '100%' }}>
@@ -242,6 +258,14 @@ export default function MySalesReport() {
             onChange={e => setSearchInput(e.target.value)}
             style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit', minWidth: 220, maxWidth: '100%' }}
           />
+          <select value={paymentFilter} onChange={e => setPaymentFilter(e.target.value as PaymentFilter)} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}>
+            <option value="ALL">Todos</option>
+            <option value="NON_CREDIT">Sin crédito</option>
+            <option value="CASH">Efectivo</option>
+            <option value="DEPOSIT">Depósito</option>
+            <option value="CARD">Tarjeta</option>
+            <option value="CREDIT">Crédito</option>
+          </select>
           <select value={periodMode} onChange={e => setPeriodMode(e.target.value as PeriodMode)} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}>
             <option value="all">Todas las fechas</option>
             <option value="day">Día</option>
