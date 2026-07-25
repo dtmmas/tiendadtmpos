@@ -6,12 +6,14 @@ import { useAuthStore } from '../store/auth'
 import { formatDate, formatDateTime } from '../utils/date'
 import jsPDF from 'jspdf'
 import { formatCompanyName } from '../utils/text'
+import { addLogoToPdf } from '../utils/printBranding'
 
 interface Sale {
   id: number
   doc_no: string
   total: number
   created_at: string
+  credit_fully_paid_at?: string | null
   payment_method: string
   customer_name?: string
   received_amount?: number
@@ -77,7 +79,8 @@ const EMPTY_SUMMARY: SalesSummary = {
   byMethod: {},
 }
 
-type PaymentFilter = 'NON_CREDIT' | 'CASH' | 'CARD' | 'DEPOSIT' | 'CREDIT' | 'ALL'
+type PaymentFilter = 'NON_CREDIT' | 'CASH' | 'CARD' | 'DEPOSIT' | 'CREDIT' | 'CREDIT_PAID' | 'REALIZED' | 'ALL'
+type StatusFilter = 'ACTIVE' | 'CANCELLED' | 'ALL'
 
 function getPaymentFilterLabel(filter: PaymentFilter) {
   if (filter === 'NON_CREDIT') return 'Sin crédito'
@@ -85,7 +88,28 @@ function getPaymentFilterLabel(filter: PaymentFilter) {
   if (filter === 'CARD') return 'Tarjeta'
   if (filter === 'DEPOSIT') return 'Depósito'
   if (filter === 'CREDIT') return 'Crédito'
+  if (filter === 'CREDIT_PAID') return 'Crédito liquidado'
+  if (filter === 'REALIZED') return 'Cobrado + liquidados'
   return 'Todos'
+}
+
+function getStatusFilterLabel(filter: StatusFilter) {
+  if (filter === 'ACTIVE') return 'Activas'
+  if (filter === 'CANCELLED') return 'Canceladas'
+  return 'Todas'
+}
+
+function isCreditSale(sale?: Pick<Sale, 'payment_method' | 'is_credit'> | null) {
+  return sale?.payment_method === 'CREDIT' || Boolean(sale?.is_credit)
+}
+
+function getSaleStatusLabel(sale: Pick<Sale, 'status' | 'payment_method' | 'is_credit' | 'credit_fully_paid'>, filter: PaymentFilter) {
+  if (sale.status === 'CANCELLED') return 'CANCELADO'
+  if (filter === 'CREDIT_PAID') return 'LIQUIDADO'
+  if (filter === 'REALIZED' && isCreditSale(sale)) return 'LIQUIDADO'
+  if (isCreditSale(sale) && !sale.credit_fully_paid) return 'PENDIENTE'
+  if (isCreditSale(sale)) return 'LIQUIDADO'
+  return 'PAGADO'
 }
 
 function pad2(value: number) {
@@ -172,13 +196,15 @@ export default function Sales() {
   const [rangeEnd, setRangeEnd] = useState(todayString)
   const [selectedUserId, setSelectedUserId] = useState('')
   const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('ALL')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('ACTIVE')
   const [appliedFilters, setAppliedFilters] = useState({
     search: '',
     startDate: todayString,
     endDate: todayString,
     userId: '',
     paymentMethod: 'ALL' as PaymentFilter,
-    label: `${todayString} | Método: ${getPaymentFilterLabel('ALL')}`,
+    statusFilter: 'ACTIVE' as StatusFilter,
+    label: `${todayString} | Método: ${getPaymentFilterLabel('ALL')} | Estado: ${getStatusFilterLabel('ACTIVE')}`,
   })
   const [selectedSale, setSelectedSale] = useState<SaleDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -237,6 +263,7 @@ export default function Sales() {
         endDate: appliedFilters.endDate || undefined,
         userId: appliedFilters.userId || undefined,
         paymentMethod: appliedFilters.paymentMethod !== 'ALL' ? appliedFilters.paymentMethod : undefined,
+        statusFilter: appliedFilters.statusFilter,
       })
       setSales(res.data)
       setPagination(prev => ({ ...prev, total: res.pagination.total }))
@@ -285,7 +312,8 @@ export default function Sales() {
       endDate: nextEndDate,
       userId: selectedUserId,
       paymentMethod: paymentFilter,
-      label: `${label} | Método: ${getPaymentFilterLabel(paymentFilter)}`,
+      statusFilter,
+      label: `${label} | Método: ${getPaymentFilterLabel(paymentFilter)} | Estado: ${getStatusFilterLabel(statusFilter)}`,
     })
   }
 
@@ -293,6 +321,7 @@ export default function Sales() {
     setSearchInput('')
     setSelectedUserId('')
     setPaymentFilter('ALL')
+    setStatusFilter('ACTIVE')
     setPeriodMode('day')
     setSelectedDay(todayString)
     setSelectedMonth(currentMonth)
@@ -306,7 +335,8 @@ export default function Sales() {
       endDate: todayString,
       userId: '',
       paymentMethod: 'ALL',
-      label: `${todayString} | Método: ${getPaymentFilterLabel('ALL')}`,
+      statusFilter: 'ACTIVE',
+      label: `${todayString} | Método: ${getPaymentFilterLabel('ALL')} | Estado: ${getStatusFilterLabel('ACTIVE')}`,
     })
   }
 
@@ -359,9 +389,9 @@ export default function Sales() {
     window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000)
   }
 
-  const generateTicket = (sale: SaleDetail) => {
+  const generateTicket = async (sale: SaleDetail) => {
      // Calcular altura dinámica
-     const headerHeight = 40
+     const headerHeight = 58
      const itemHeight = 5
      const footerHeight = 40
      const totalHeight = headerHeight + (sale.items.length * itemHeight) + footerHeight
@@ -372,19 +402,23 @@ export default function Sales() {
        format: [80, Math.max(200, totalHeight)]
      })
  
+     const logoHeight = await addLogoToPdf(doc, config?.logoUrl, { x: 28, y: 4, maxWidth: 24, maxHeight: 18 })
+     const headerTextY = logoHeight > 0 ? 27 : 5
+
      doc.setFontSize(10)
-     doc.text(companyName, 40, 5, { align: 'center' })
+     doc.text(companyName, 40, headerTextY, { align: 'center' })
      doc.setFontSize(8)
-     doc.text(`Fecha: ${formatDateTime(sale.created_at)}`, 5, 15)
-     doc.text(`Venta #${sale.id}`, 5, 20)
+     doc.text(`Fecha: ${formatDateTime(sale.created_at)}`, 5, headerTextY + 10)
+     doc.text(`Venta #${sale.id}`, 5, headerTextY + 15)
      
      if (sale.customer_name) {
-       doc.text(`Cliente: ${sale.customer_name}`, 5, 25)
+       doc.text(`Cliente: ${sale.customer_name}`, 5, headerTextY + 20)
      }
  
-     doc.line(5, 30, 75, 30)
+     const dividerY = headerTextY + (sale.customer_name ? 25 : 20)
+     doc.line(5, dividerY, 75, dividerY)
      
-     let y = 35
+     let y = dividerY + 5
      sale.items.forEach(item => {
        const lineTotal = item.unit_price * item.quantity
        doc.text(`${item.product_name.substring(0, 20)}`, 5, y)
@@ -473,7 +507,20 @@ export default function Sales() {
               <option value="DEPOSIT">Depósito</option>
               <option value="CARD">Tarjeta</option>
               <option value="CREDIT">Crédito</option>
+              <option value="CREDIT_PAID">Crédito liquidado</option>
+              <option value="REALIZED">Efectivo/Depósito/Tarjeta + Créditos liquidados</option>
               <option value="ALL">Todos</option>
+            </select>
+          </DateField>
+          <DateField label="Estado">
+            <select
+              value={statusFilter}
+              onChange={e => setStatusFilter(e.target.value as StatusFilter)}
+              style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}
+            >
+              <option value="ACTIVE">Activas</option>
+              <option value="CANCELLED">Canceladas</option>
+              <option value="ALL">Todas</option>
             </select>
           </DateField>
           <DateField label="Tipo de filtro">
@@ -652,12 +699,19 @@ export default function Sales() {
               sales.map(sale => (
                 <tr key={sale.id} style={{ borderBottom: '1px solid var(--border)' }}>
                   <td style={{ padding: 12 }}>#{sale.id}</td>
-                  <td style={{ padding: 12 }}>{formatDateTime(sale.created_at)}</td>
+                  <td style={{ padding: 12 }}>
+                    <div>{formatDateTime((appliedFilters.paymentMethod === 'CREDIT_PAID' || (appliedFilters.paymentMethod === 'REALIZED' && isCreditSale(sale))) ? (sale.credit_fully_paid_at || sale.created_at) : sale.created_at)}</div>
+                    {isCreditSale(sale) && sale.credit_fully_paid_at && (
+                      <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                        Liquidado: {formatDateTime(sale.credit_fully_paid_at)}
+                      </div>
+                    )}
+                  </td>
                   <td style={{ padding: 12 }}>{sale.seller_name || 'SIN USUARIO'}</td>
                   <td style={{ padding: 12 }}>{sale.customer_name || 'General'}</td>
                   <td style={{ padding: 12 }}>{getPaymentMethodLabel(sale.payment_method, sale.is_credit)}</td>
                   <td style={{ padding: 12, textAlign: 'center' }}>
-                    {sale.status === 'CANCELLED' ? (
+                    {getSaleStatusLabel(sale, appliedFilters.paymentMethod) === 'CANCELADO' ? (
                         <span style={{ 
                             backgroundColor: 'rgba(231, 76, 60, 0.2)', 
                             color: '#e74c3c', 
@@ -669,7 +723,7 @@ export default function Sales() {
                         }}>
                             CANCELADO
                         </span>
-                    ) : (sale.payment_method === 'CREDIT' || sale.is_credit) && !sale.credit_fully_paid ? (
+                    ) : getSaleStatusLabel(sale, appliedFilters.paymentMethod) === 'PENDIENTE' ? (
                         <span style={{ 
                             backgroundColor: 'rgba(231, 76, 60, 0.2)', 
                             color: '#e74c3c', 
@@ -680,6 +734,18 @@ export default function Sales() {
                             border: '1px solid rgba(231, 76, 60, 0.3)'
                         }}>
                             PENDIENTE
+                        </span>
+                    ) : getSaleStatusLabel(sale, appliedFilters.paymentMethod) === 'LIQUIDADO' ? (
+                        <span style={{ 
+                            backgroundColor: 'rgba(46, 204, 113, 0.2)', 
+                            color: '#2ecc71', 
+                            padding: '4px 8px', 
+                            borderRadius: 12, 
+                            fontSize: '0.85rem',
+                            fontWeight: 600,
+                            border: '1px solid rgba(46, 204, 113, 0.3)'
+                        }}>
+                            LIQUIDADO
                         </span>
                     ) : (
                         <span style={{ 
@@ -769,6 +835,12 @@ export default function Sales() {
                     <strong style={{ display: 'block', fontSize: 13, color: 'var(--muted)', marginBottom: 2 }}>Fecha</strong>
                     {formatDate(selectedSale.created_at)}
                   </div>
+                  {isCreditSale(selectedSale) && selectedSale.credit_fully_paid_at && (
+                    <div>
+                      <strong style={{ display: 'block', fontSize: 13, color: 'var(--muted)', marginBottom: 2 }}>Liquidado el</strong>
+                      {formatDateTime(selectedSale.credit_fully_paid_at)}
+                    </div>
+                  )}
                   <div>
                     <strong style={{ display: 'block', fontSize: 13, color: 'var(--muted)', marginBottom: 2 }}>Cliente</strong>
                     {selectedSale.customer_name || 'General'}
@@ -801,8 +873,17 @@ export default function Sales() {
                                 </div>
                             )}
                         </div>
-                    ) : (selectedSale.payment_method === 'CREDIT' || selectedSale.is_credit) && !selectedSale.credit_fully_paid ? (
+                    ) : isCreditSale(selectedSale) && !selectedSale.credit_fully_paid ? (
                         <span style={{ color: '#e74c3c', fontWeight: 600 }}>PENDIENTE DE PAGO</span>
+                    ) : isCreditSale(selectedSale) ? (
+                        <div>
+                          <span style={{ color: '#2ecc71', fontWeight: 600 }}>CRÉDITO LIQUIDADO</span>
+                          {selectedSale.credit_fully_paid_at && (
+                            <div style={{ marginTop: 6, fontSize: 13, color: 'var(--muted)' }}>
+                              Fecha de liquidación: {formatDateTime(selectedSale.credit_fully_paid_at)}
+                            </div>
+                          )}
+                        </div>
                     ) : (
                         <span style={{ color: '#2ecc71', fontWeight: 600 }}>PAGADO</span>
                     )}

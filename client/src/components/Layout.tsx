@@ -40,6 +40,23 @@ export default function Layout() {
     setMobileMenuOpen(false)
   }
 
+  const openQuotationWindow = (event?: React.MouseEvent<HTMLButtonElement>) => {
+    event?.preventDefault()
+    event?.stopPropagation()
+
+    const quotationUrl = new URL('/quotations', window.location.origin).toString()
+    const anchor = document.createElement('a')
+    anchor.href = quotationUrl
+    anchor.target = 'dtmpos-quotation-window'
+    anchor.rel = 'noopener'
+    anchor.style.display = 'none'
+    document.body.appendChild(anchor)
+    anchor.click()
+    document.body.removeChild(anchor)
+
+    setMobileMenuOpen(false)
+  }
+
   return (
     <div className="app">
       <header className="header">
@@ -85,7 +102,7 @@ export default function Layout() {
               <span>CAJA</span>
             </Link>
           )}
-          {(hasPermission('credits:read') || hasPermission('purchases:read')) && (
+          {(canSell() || hasPermission('credits:read') || hasPermission('purchases:read')) && (
             <div className="nav-group">
               <button className="nav-trigger" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -96,6 +113,15 @@ export default function Layout() {
                 <span>PROCESOS</span>
               </button>
               <div className="nav-panel">
+                {canSell() && (
+                  <button
+                    type="button"
+                    onClick={openQuotationWindow}
+                    style={{ background: 'none', border: 'none', padding: 0, color: 'inherit', cursor: 'pointer', textAlign: 'left', width: '100%' }}
+                  >
+                    Cotizaciones
+                  </button>
+                )}
                 {hasPermission('credits:read') && <Link to="/credits">Créditos</Link>}
                 {hasPermission('purchases:read') && <Link to="/purchases">Compras</Link>}
               </div>
@@ -227,9 +253,12 @@ export default function Layout() {
           )}
         </div>
 
-        {(hasPermission('credits:read') || hasPermission('purchases:read')) && (
+        {(canSell() || hasPermission('credits:read') || hasPermission('purchases:read')) && (
           <div className="mobile-menu-section">
             <div className="mobile-menu-title">Procesos</div>
+            {canSell() && (
+              <button type="button" onClick={openQuotationWindow}>Cotizaciones</button>
+            )}
             {hasPermission('credits:read') && <Link to="/credits">Créditos</Link>}
             {hasPermission('purchases:read') && <Link to="/purchases">Compras</Link>}
           </div>

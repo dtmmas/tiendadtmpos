@@ -4,6 +4,7 @@ import { useConfigStore } from '../store/config'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import * as XLSX from 'xlsx'
+import { addLogoToPdf } from '../utils/printBranding'
 
 interface StockItem {
   id: number
@@ -26,7 +27,8 @@ export default function InventoryReport() {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [selectedWarehouse, setSelectedWarehouse] = useState<string>('')
   const [loading, setLoading] = useState(false)
-  const currency = useConfigStore(s => s.config?.currency || '$')
+  const config = useConfigStore(s => s.config)
+  const currency = config?.currency || '$'
 
   // Totals
   const totalItems = items.reduce((acc, item) => acc + Number(item.quantity), 0)
@@ -51,24 +53,27 @@ export default function InventoryReport() {
     }
   }
 
-  const exportToPDF = () => {
+  const exportToPDF = async () => {
     const doc = new jsPDF()
     const now = new Date().toLocaleString()
     const warehouseName = selectedWarehouse 
       ? warehouses.find(w => w.id === Number(selectedWarehouse))?.name || 'Almacén'
       : 'Todos los Almacenes'
 
+    const logoHeight = await addLogoToPdf(doc, config?.logoUrl, { x: 14, y: 10, maxWidth: 28, maxHeight: 18 })
+    const titleY = logoHeight > 0 ? 24 : 22
+
     doc.setFontSize(18)
-    doc.text('Reporte de Inventario Actual', 14, 22)
+    doc.text('Reporte de Inventario Actual', 14, titleY)
     
     doc.setFontSize(11)
-    doc.text(`Fecha: ${now}`, 14, 30)
-    doc.text(`Almacén: ${warehouseName}`, 14, 36)
+    doc.text(`Fecha: ${now}`, 14, titleY + 8)
+    doc.text(`Almacén: ${warehouseName}`, 14, titleY + 14)
     
     // Totals
-    doc.text(`Total Unidades: ${totalItems}`, 14, 46)
-    doc.text(`Total Costo: ${currency} ${totalCost.toFixed(2)}`, 80, 46)
-    doc.text(`Total Venta: ${currency} ${totalPrice.toFixed(2)}`, 150, 46)
+    doc.text(`Total Unidades: ${totalItems}`, 14, titleY + 24)
+    doc.text(`Total Costo: ${currency} ${totalCost.toFixed(2)}`, 80, titleY + 24)
+    doc.text(`Total Venta: ${currency} ${totalPrice.toFixed(2)}`, 150, titleY + 24)
 
     const tableColumn = ["Código", "Producto", "Almacén", "Stock", "Detalle (Lote/IMEI)", "Costo U.", "Total Costo"]
     const tableRows = items.map(item => [
@@ -84,7 +89,7 @@ export default function InventoryReport() {
     autoTable(doc, {
       head: [tableColumn],
       body: tableRows,
-      startY: 52,
+      startY: titleY + 30,
       theme: 'grid',
       styles: { fontSize: 8 },
       headStyles: { fillColor: [66, 66, 66] },

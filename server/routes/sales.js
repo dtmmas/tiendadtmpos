@@ -142,9 +142,19 @@ async function buildSalesContext(db) {
       LEFT JOIN customers c ON s.customer_id = c.id
       LEFT JOIN warehouses sw ON sw.id = s.warehouse_id
       LEFT JOIN (
-        SELECT sale_id, MIN(paid) AS credit_fully_paid
-        FROM installments
-        GROUP BY sale_id
+        SELECT i.sale_id,
+               MIN(i.paid) AS credit_fully_paid,
+               CASE
+                 WHEN MIN(i.paid) = 1 THEN COALESCE(MAX(i.paid_at), MAX(cp.last_paid_at))
+                 ELSE NULL
+               END AS credit_fully_paid_at
+        FROM installments i
+        LEFT JOIN (
+          SELECT installment_id, MAX(paid_at) AS last_paid_at
+          FROM credit_payments
+          GROUP BY installment_id
+        ) cp ON cp.installment_id = i.id
+        GROUP BY i.sale_id
       ) i ON i.sale_id = s.id
       LEFT JOIN (
         SELECT si.sale_id,
@@ -179,12 +189,16 @@ function getSalesFilters(req, context, forceUserId = null) {
   const startDate = (req.query.startDate || '').toString().slice(0, 10)
   const endDate = (req.query.endDate || '').toString().slice(0, 10)
   const paymentMethod = (req.query.paymentMethod || '').toString().trim().toUpperCase()
+  const statusFilter = (req.query.statusFilter || 'ACTIVE').toString().trim().toUpperCase()
   const requestedUserId = Number(req.query.userId || 0)
   const requestedWarehouseId = Number(req.query.warehouseId || 0)
   const isAdmin = isAdminUser(req.user)
   const effectiveUserId = forceUserId || (isAdmin ? requestedUserId : Number(req.user?.id || 0))
   const userWarehouseId = getUserWarehouseId(req.user)
   const effectiveWarehouseId = isAdmin ? requestedWarehouseId : Number(userWarehouseId || 0)
+  const isPaidCreditFilter = paymentMethod === 'CREDIT_PAID'
+  const isRealizedFilter = paymentMethod === 'REALIZED'
+  const dateFieldExpr = isPaidCreditFilter ? 'DATE(i.credit_fully_paid_at)' : 'DATE(s.created_at)'
   const where = []
   const params = []
 
@@ -197,12 +211,46 @@ function getSalesFilters(req, context, forceUserId = null) {
     params.push(`%${search}%`, `%${search}%`, Number(search) || 0, `%${search}%`)
   }
   if (startDate) {
-    where.push('DATE(s.created_at) >= ?')
-    params.push(startDate)
+    if (isRealizedFilter) {
+      where.push(`(
+        (
+          COALESCE(s.payment_method, '') IN ('CASH', 'CARD', 'DEPOSIT')
+          AND COALESCE(s.is_credit, 0) = 0
+          AND DATE(s.created_at) >= ?
+        )
+        OR (
+          (s.payment_method = 'CREDIT' OR COALESCE(s.is_credit, 0) = 1)
+          AND COALESCE(i.credit_fully_paid, 0) = 1
+          AND i.credit_fully_paid_at IS NOT NULL
+          AND DATE(i.credit_fully_paid_at) >= ?
+        )
+      )`)
+      params.push(startDate, startDate)
+    } else {
+      where.push(`${dateFieldExpr} >= ?`)
+      params.push(startDate)
+    }
   }
   if (endDate) {
-    where.push('DATE(s.created_at) <= ?')
-    params.push(endDate)
+    if (isRealizedFilter) {
+      where.push(`(
+        (
+          COALESCE(s.payment_method, '') IN ('CASH', 'CARD', 'DEPOSIT')
+          AND COALESCE(s.is_credit, 0) = 0
+          AND DATE(s.created_at) <= ?
+        )
+        OR (
+          (s.payment_method = 'CREDIT' OR COALESCE(s.is_credit, 0) = 1)
+          AND COALESCE(i.credit_fully_paid, 0) = 1
+          AND i.credit_fully_paid_at IS NOT NULL
+          AND DATE(i.credit_fully_paid_at) <= ?
+        )
+      )`)
+      params.push(endDate, endDate)
+    } else {
+      where.push(`${dateFieldExpr} <= ?`)
+      params.push(endDate)
+    }
   }
   if (effectiveUserId > 0) {
     where.push(`${context.sellerIdExpr} = ?`)
@@ -212,10 +260,31 @@ function getSalesFilters(req, context, forceUserId = null) {
     where.push('s.warehouse_id = ?')
     params.push(effectiveWarehouseId)
   }
+  if (statusFilter === 'CANCELLED') {
+    where.push(`COALESCE(s.status, 'COMPLETED') = 'CANCELLED'`)
+  } else if (statusFilter !== 'ALL') {
+    where.push(`COALESCE(s.status, 'COMPLETED') <> 'CANCELLED'`)
+  }
   if (paymentMethod === 'NON_CREDIT') {
     where.push(`(COALESCE(s.payment_method, '') <> 'CREDIT' AND COALESCE(s.is_credit, 0) = 0)`)
   } else if (paymentMethod === 'CREDIT') {
     where.push(`(s.payment_method = 'CREDIT' OR COALESCE(s.is_credit, 0) = 1)`)
+  } else if (paymentMethod === 'CREDIT_PAID') {
+    where.push(`(s.payment_method = 'CREDIT' OR COALESCE(s.is_credit, 0) = 1)`)
+    where.push('COALESCE(i.credit_fully_paid, 0) = 1')
+    where.push('i.credit_fully_paid_at IS NOT NULL')
+  } else if (paymentMethod === 'REALIZED') {
+    where.push(`(
+      (
+        COALESCE(s.payment_method, '') IN ('CASH', 'CARD', 'DEPOSIT')
+        AND COALESCE(s.is_credit, 0) = 0
+      )
+      OR (
+        (s.payment_method = 'CREDIT' OR COALESCE(s.is_credit, 0) = 1)
+        AND COALESCE(i.credit_fully_paid, 0) = 1
+        AND i.credit_fully_paid_at IS NOT NULL
+      )
+    )`)
   } else if (['CASH', 'CARD', 'DEPOSIT'].includes(paymentMethod)) {
     where.push('s.payment_method = ?')
     params.push(paymentMethod)
@@ -224,6 +293,19 @@ function getSalesFilters(req, context, forceUserId = null) {
   return {
     whereClause: where.length ? `WHERE ${where.join(' AND ')}` : '',
     params,
+    orderByClause: isPaidCreditFilter
+      ? 'ORDER BY i.credit_fully_paid_at DESC, s.created_at DESC'
+      : isRealizedFilter
+        ? `ORDER BY
+             CASE
+               WHEN (s.payment_method = 'CREDIT' OR COALESCE(s.is_credit, 0) = 1)
+                 AND COALESCE(i.credit_fully_paid, 0) = 1
+                 AND i.credit_fully_paid_at IS NOT NULL
+               THEN i.credit_fully_paid_at
+               ELSE s.created_at
+             END DESC,
+             s.created_at DESC`
+        : 'ORDER BY s.created_at DESC',
   }
 }
 
@@ -231,6 +313,7 @@ function buildSalesSelect(context, canSeeProfit) {
   return `
     SELECT s.*, c.name AS customer_name,
            i.credit_fully_paid,
+           i.credit_fully_paid_at,
            sw.name AS warehouse_name,
            ${canSeeProfit ? 'COALESCE(calc.cost_total, 0)' : 'NULL'} AS cost_total,
            ${canSeeProfit ? "CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE COALESCE(calc.profit, 0) END" : 'NULL'} AS profit,
@@ -251,11 +334,11 @@ router.get('/', authMiddleware, async (req, res) => {
     await ensureSalesSchema(pool)
     const context = await buildSalesContext(pool)
     const canSeeProfit = req.user?.role === 'ADMIN'
-    const { whereClause, params } = getSalesFilters(req, context)
+    const { whereClause, params, orderByClause } = getSalesFilters(req, context)
     const query = `
       ${buildSalesSelect(context, canSeeProfit)}
       ${whereClause}
-      ORDER BY s.created_at DESC
+      ${orderByClause}
       LIMIT ? OFFSET ?
     `
     const rowsParams = [...params, limit, offset]
@@ -371,11 +454,11 @@ router.get('/my-report', authMiddleware, async (req, res) => {
     const pool = await getPool()
     await ensureSalesSchema(pool)
     const context = await buildSalesContext(pool)
-    const { whereClause, params } = getSalesFilters(req, context, Number(req.user?.id || 0))
+    const { whereClause, params, orderByClause } = getSalesFilters(req, context, Number(req.user?.id || 0))
     const query = `
       ${buildSalesSelect(context, false)}
       ${whereClause}
-      ORDER BY s.created_at DESC
+      ${orderByClause}
       LIMIT ? OFFSET ?
     `
     const [rows] = await pool.query(query, [...params, limit, offset])
@@ -826,6 +909,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
       `
         SELECT s.*, c.name AS customer_name, c.document AS customer_document, c.address AS customer_address, c.phone AS customer_phone,
                i.credit_fully_paid,
+               i.credit_fully_paid_at,
                ${canSeeProfit ? 'COALESCE(calc.cost_total, 0)' : 'NULL'} AS cost_total,
                ${canSeeProfit ? "CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE COALESCE(calc.profit, 0) END" : 'NULL'} AS profit,
                ${context.sellerIdExpr} AS seller_id,

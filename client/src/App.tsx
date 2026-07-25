@@ -74,6 +74,14 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/quotations"
+          element={
+            <ProtectedRoute>
+              {canSell() ? <POS mode="quote" /> : <Navigate to="/" />}
+            </ProtectedRoute>
+          }
+        />
         <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
           <Route index element={<RootLanding />} />
           <Route path="dashboard" element={<RoleGuard roles={['ADMIN']}><Dashboard /></RoleGuard>} />

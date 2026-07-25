@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom'
 import jsPDF from 'jspdf'
 import { formatDateTime } from '../utils/date'
 import { formatCompanyName } from '../utils/text'
+import { addLogoToPdf, buildPrintLogoHtml } from '../utils/printBranding'
 import MobileBarcodeScannerButton from '../components/MobileBarcodeScannerButton'
 
 interface Product {
@@ -14,6 +15,7 @@ interface Product {
   price: number
   price2?: number
   price3?: number
+  cost?: number
   stock: number
   otherStock?: number
   imageUrl?: string
@@ -79,7 +81,18 @@ type CompletedSale = {
   customer?: Customer
 }
 
-export default function POS() {
+type GeneratedQuote = {
+  quoteNo: string
+  date: string
+  items: CartItem[]
+  total: number
+  customer?: Customer
+}
+
+type POSMode = 'sale' | 'quote'
+
+export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
+  const isQuoteMode = mode === 'quote'
   const productsPerPage = 40
   const [products, setProducts] = useState<Product[]>([])
   const [loadedImages, setLoadedImages] = useState<Record<number, boolean>>({})
@@ -129,9 +142,11 @@ export default function POS() {
   const isAdmin = String(user?.role || '').toUpperCase() === 'ADMIN'
   const canChangePosPrice = hasExplicitPermission('pos:change_price')
   const canUseManualPosPrice = hasExplicitPermission('pos:manual_price')
+  const canViewProjectedProfit = isAdmin || hasPermission('products:sensitive:read')
   // Print Settings
   const [shouldPrintTicket, setShouldPrintTicket] = useState(true)
   const [lastSale, setLastSale] = useState<CompletedSale | null>(null)
+  const [lastQuote, setLastQuote] = useState<GeneratedQuote | null>(null)
   const [heldSales, setHeldSales] = useState<HeldSale[]>([])
   const [heldSalesLoaded, setHeldSalesLoaded] = useState(false)
 
@@ -148,11 +163,18 @@ export default function POS() {
   })
 
   const navigate = useNavigate()
-  const heldSalesStorageKey = `dtmpos_pos_held_sales_${user?.id || 'guest'}`
+  const heldSalesStorageKey = `dtmpos_${isQuoteMode ? 'quotes' : 'pos'}_held_sales_${user?.id || 'guest'}`
+  const currentOrderLabel = isQuoteMode ? 'Cotización Actual' : 'Orden Actual'
+  const heldOrderLabel = isQuoteMode ? 'Cotizaciones En Espera' : 'Ventas En Espera'
+  const emptyHeldOrderLabel = isQuoteMode ? 'No hay cotizaciones guardadas en espera.' : 'No hay ventas guardadas en espera.'
+  const backButtonLabel = isQuoteMode ? 'Cerrar cotizador' : 'Cerrar POS'
+  const scannerTitle = isQuoteMode ? 'Escanear producto en cotización' : 'Escanear producto en POS'
+  const modeChipLabel = isQuoteMode ? 'Modo cotización' : 'Modo venta'
 
   useEffect(() => {
+    if (isQuoteMode) return
     checkCashStatus()
-  }, [])
+  }, [isQuoteMode])
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -194,6 +216,7 @@ export default function POS() {
   }, [heldSales, heldSalesStorageKey, heldSalesLoaded])
 
   useEffect(() => {
+    if (isQuoteMode) return
     const refreshCashStatus = () => {
       checkCashStatus()
     }
@@ -214,7 +237,7 @@ export default function POS() {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.clearInterval(intervalId)
     }
-  }, [])
+  }, [isQuoteMode])
 
   const checkCashStatus = async () => {
     try {
@@ -248,7 +271,7 @@ export default function POS() {
           categoryId: effectiveCategoryId,
           brandId: selectedBrand,
           departmentId: selectedDepartment,
-          stockFilter: 'with_stock',
+          stockFilter: isQuoteMode ? undefined : 'with_stock',
           warehouseId: wId,
         }),
         api.get('/categories'),
@@ -286,10 +309,25 @@ export default function POS() {
   }
 
   const addToCart = async (product: Product) => {
-    if (product.stock <= 0) {
+    if (!isQuoteMode && product.stock <= 0) {
       alert('Producto sin stock disponible')
       return
     }
+
+        if (isQuoteMode) {
+            setCart(prev => {
+              const existing = prev.find(item => item.id === product.id && !item.batchNo && !item.imei && !item.serial)
+              if (existing) {
+                return prev.map(item =>
+                  (item.id === product.id && !item.batchNo && !item.imei && !item.serial)
+                    ? { ...item, quantity: item.quantity + 1 }
+                    : item
+                )
+              }
+              return [...prev, { ...product, quantity: 1, originalPrice: product.price, priceSource: 'BASE' }]
+            })
+            return
+        }
 
         if (product.productType === 'MEDICINAL') {
             setLoadingBatches(true)
@@ -445,7 +483,7 @@ export default function POS() {
           page: 1,
           limit: 10,
           search: scannedValue,
-          stockFilter: 'with_stock',
+          stockFilter: isQuoteMode ? undefined : 'with_stock',
           warehouseId: wId,
         })
         const remoteProducts = Array.isArray(response?.data) ? response.data : []
@@ -565,6 +603,10 @@ export default function POS() {
         const newQty = item.quantity + delta
         if (newQty < 1) return item
 
+        if (isQuoteMode) {
+          return { ...item, quantity: newQty }
+        }
+
         const limit = item.maxQuantity || item.stock
         if (newQty > limit) {
           alert(`Stock insuficiente. Solo hay ${limit} disponibles.`)
@@ -588,6 +630,10 @@ export default function POS() {
 
       if (isTarget) {
         if (newQty < 1) return item
+
+        if (isQuoteMode) {
+          return { ...item, quantity: newQty }
+        }
 
         const limit = item.maxQuantity || item.stock
         if (newQty > limit) {
@@ -623,6 +669,23 @@ export default function POS() {
     return cart.reduce((sum, item) => sum + (item.price * item.quantity), 0)
   }, [cart])
 
+  const projectedCostTotal = useMemo(() => {
+    if (!canViewProjectedProfit) return 0
+    return cart.reduce((sum, item) => sum + (Number(item.cost || 0) * item.quantity), 0)
+  }, [canViewProjectedProfit, cart])
+
+  const projectedProfitTotal = useMemo(() => {
+    if (!canViewProjectedProfit) return 0
+    return total - projectedCostTotal
+  }, [canViewProjectedProfit, total, projectedCostTotal])
+
+  const projectedMargin = useMemo(() => {
+    if (!canViewProjectedProfit || total <= 0) return 0
+    return (projectedProfitTotal / total) * 100
+  }, [canViewProjectedProfit, total, projectedProfitTotal])
+
+  const formatMoney = (value: number) => `${config?.currency || ''} ${Number(value || 0).toFixed(2)}`
+
   const resetCurrentSale = () => {
     setCart([])
     setSelectedCustomer(null)
@@ -649,6 +712,13 @@ export default function POS() {
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;')
 
+  const getPriceSourceLabel = (source?: CartItem['priceSource']) => {
+    if (source === 'PRICE2') return 'P2'
+    if (source === 'PRICE3') return 'P3'
+    if (source === 'MANUAL') return 'Manual'
+    return 'Base'
+  }
+
   const buildPrintableTicketHtml = (
     saleId: number,
     date: string,
@@ -657,6 +727,7 @@ export default function POS() {
     paymentDetails?: any,
     customer?: Customer
   ) => {
+    const logoBlock = buildPrintLogoHtml(config?.logoUrl, companyName, { maxWidth: 110, maxHeight: 40, marginBottom: 4 })
     const paymentLines: string[] = []
     if (paymentDetails?.paymentMethod === 'CASH') {
       paymentLines.push(`Efectivo: ${Number(paymentDetails.receivedAmount || 0).toFixed(2)}`)
@@ -710,6 +781,7 @@ export default function POS() {
   </head>
   <body>
     <div class="ticket">
+      ${logoBlock}
       <div class="center"><strong>${escapeHtml(companyName)}</strong></div>
       <div class="center muted">Fecha: ${escapeHtml(date)}</div>
       <div class="center muted">Venta #${escapeHtml(saleId)}</div>
@@ -796,6 +868,168 @@ export default function POS() {
     }
   }
 
+  const buildQuoteNo = () => {
+    const now = new Date()
+    return `COT-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`
+  }
+
+  const buildPrintableQuoteHtml = (
+    quoteNo: string,
+    date: string,
+    items: CartItem[],
+    totalAmount: number,
+    customer?: Customer
+  ) => {
+    const logoBlock = buildPrintLogoHtml(config?.logoUrl, companyName, { maxWidth: 160, maxHeight: 60, marginBottom: 10, align: 'left' })
+    const itemsHtml = items
+      .map(item => {
+        const lineTotal = item.price * item.quantity
+        return `
+          <tr>
+            <td>${escapeHtml(item.name)}</td>
+            <td>${escapeHtml(item.sku || item.productCode || '')}</td>
+            <td style="text-align:center;">${escapeHtml(item.quantity)}</td>
+            <td style="text-align:right;">${escapeHtml(item.price.toFixed(2))}</td>
+            <td style="text-align:right;">${escapeHtml(lineTotal.toFixed(2))}</td>
+          </tr>
+        `
+      })
+      .join('')
+
+    return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Cotizacion ${escapeHtml(quoteNo)}</title>
+    <style>
+      @page { size: A4; margin: 12mm; }
+      html, body { margin: 0; padding: 0; background: #fff; color: #111827; font-family: Arial, sans-serif; }
+      body { font-size: 12px; }
+      .sheet { max-width: 180mm; margin: 0 auto; padding: 8mm 0; }
+      .header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+      .title { font-size: 24px; font-weight: 700; margin: 0 0 4px; }
+      .company { font-size: 18px; font-weight: 700; margin: 0 0 6px; }
+      .meta, .note { color: #4b5563; }
+      .note { margin-top: 14px; padding: 10px 12px; border-radius: 10px; background: #f3f4f6; }
+      table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+      th, td { border-bottom: 1px solid #e5e7eb; padding: 8px; vertical-align: top; }
+      th { background: #f9fafb; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+      .summary { margin-top: 18px; margin-left: auto; width: 90mm; }
+      .summary-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #e5e7eb; }
+      .summary-row.total { font-size: 16px; font-weight: 700; }
+      .footer { margin-top: 26px; color: #6b7280; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <div class="sheet">
+      <div class="header">
+        <div>
+          ${logoBlock}
+          <div class="company">${escapeHtml(companyName)}</div>
+          <h1 class="title">Cotizacion</h1>
+          <div class="meta">Cliente: ${escapeHtml(customer?.name || 'CLIENTE GENERAL')}</div>
+          <div class="meta">Fecha: ${escapeHtml(date)}</div>
+        </div>
+        <div>
+          <div class="meta"><strong>No.:</strong> ${escapeHtml(quoteNo)}</div>
+          <div class="meta"><strong>Tienda:</strong> ${escapeHtml(user?.warehouseName || 'GENERAL')}</div>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Producto</th>
+            <th>SKU/COD</th>
+            <th>Cant.</th>
+            <th>Precio</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsHtml}
+        </tbody>
+      </table>
+
+      <div class="summary">
+        <div class="summary-row total"><span>Total cotizado</span><span>${escapeHtml(totalAmount.toFixed(2))}</span></div>
+      </div>
+
+      <div class="note">Esta cotizacion es informativa y no afecta inventario ni caja. El documento muestra unicamente informacion comercial apta para entregar al cliente.</div>
+      <div class="footer">Documento generado desde POS.</div>
+    </div>
+    <script>
+      window.onload = function () {
+        setTimeout(function () {
+          try {
+            window.focus();
+            window.print();
+          } catch (error) {}
+        }, 150);
+      };
+    </script>
+  </body>
+</html>`
+  }
+
+  const printQuoteHtml = (quoteNo: string, date: string, items: CartItem[], totalAmount: number, customer?: Customer) => {
+    const printableHtml = buildPrintableQuoteHtml(quoteNo, date, items, totalAmount, customer)
+    const printWindow = window.open('', `dtmpos-quote-${Date.now()}`, 'width=960,height=720,left=120,top=80')
+
+    if (printWindow && !printWindow.closed) {
+      try {
+        printWindow.document.open()
+        printWindow.document.write(printableHtml)
+        printWindow.document.close()
+        return
+      } catch (error) {
+        try {
+          printWindow.close()
+        } catch {}
+      }
+    }
+
+    const iframe = iframeRef.current
+    const frameWindow = iframe?.contentWindow
+    const frameDocument = frameWindow?.document
+
+    if (!iframe || !frameWindow || !frameDocument) {
+      alert('No se pudo abrir la impresion de la cotizacion. Intenta permitir ventanas emergentes.')
+      return
+    }
+
+    try {
+      frameDocument.open()
+      frameDocument.write(printableHtml)
+      frameDocument.close()
+      window.setTimeout(() => {
+        try {
+          frameWindow.focus()
+          frameWindow.print()
+        } catch (error) {
+          alert('No se pudo imprimir la cotizacion.')
+        }
+      }, 300)
+    } catch (error) {
+      alert('No se pudo generar la cotizacion.')
+    }
+  }
+
+  const handleGenerateQuote = () => {
+    if (cart.length === 0) return
+
+    const quoteData: GeneratedQuote = {
+      quoteNo: buildQuoteNo(),
+      date: formatDateTime(new Date()),
+      items: [...cart],
+      total,
+      customer: selectedCustomer ? customers.find(c => c.id === selectedCustomer) : undefined,
+    }
+
+    setLastQuote(quoteData)
+    printQuoteHtml(quoteData.quoteNo, quoteData.date, quoteData.items, quoteData.total, quoteData.customer)
+  }
+
   const buildHeldSale = (): HeldSale => {
     const customer = selectedCustomer ? customers.find(c => c.id === selectedCustomer) : undefined
     const now = new Date()
@@ -815,7 +1049,7 @@ export default function POS() {
 
   const holdCurrentSale = (silent = false) => {
     if (cart.length === 0) {
-      if (!silent) alert('No hay una venta activa para poner en espera')
+      if (!silent) alert(`No hay una ${isQuoteMode ? 'cotización' : 'venta'} activa para poner en espera`)
       return false
     }
 
@@ -824,7 +1058,7 @@ export default function POS() {
     resetCurrentSale()
 
     if (!silent) {
-      alert(`Venta guardada en espera: ${heldSale.name}`)
+      alert(`${isQuoteMode ? 'Cotización' : 'Venta'} guardada en espera: ${heldSale.name}`)
     }
     return true
   }
@@ -854,12 +1088,12 @@ export default function POS() {
     setPaymentMethod(heldSale.paymentMethod)
     setReceivedAmount(heldSale.receivedAmount)
     setReferenceNumber(heldSale.referenceNumber)
-    alert(`Venta retomada: ${heldSale.name}`)
+    alert(`${isQuoteMode ? 'Cotización' : 'Venta'} retomada: ${heldSale.name}`)
   }
 
-  const generateTicket = (saleId: number, date: string, items: CartItem[], totalAmount: number, paymentDetails?: any, customer?: Customer, printWindow?: Window | null) => {
+  const generateTicket = async (saleId: number, date: string, items: CartItem[], totalAmount: number, paymentDetails?: any, customer?: Customer, printWindow?: Window | null) => {
     // Calcular altura dinámica
-    const headerHeight = 40
+    const headerHeight = 58
     const itemHeight = 5
     const footerHeight = 40
     const totalHeight = headerHeight + (items.length * itemHeight) + footerHeight
@@ -870,19 +1104,23 @@ export default function POS() {
       format: [80, Math.max(200, totalHeight)]
     })
 
+    const logoHeight = await addLogoToPdf(doc, config?.logoUrl, { x: 28, y: 4, maxWidth: 24, maxHeight: 18 })
+    const headerTextY = logoHeight > 0 ? 27 : 5
+
     doc.setFontSize(10)
-    doc.text(companyName, 40, 5, { align: 'center' })
+    doc.text(companyName, 40, headerTextY, { align: 'center' })
     doc.setFontSize(8)
-    doc.text(`Fecha: ${date}`, 5, 15)
-    doc.text(`Venta #${saleId}`, 5, 20)
+    doc.text(`Fecha: ${date}`, 5, headerTextY + 10)
+    doc.text(`Venta #${saleId}`, 5, headerTextY + 15)
 
     if (customer) {
-      doc.text(`Cliente: ${customer.name}`, 5, 25)
+      doc.text(`Cliente: ${customer.name}`, 5, headerTextY + 20)
     }
 
-    doc.line(5, 30, 75, 30)
+    const dividerY = headerTextY + (customer ? 25 : 20)
+    doc.line(5, dividerY, 75, dividerY)
 
-    let y = 35
+    let y = dividerY + 5
     items.forEach(item => {
       const lineTotal = item.price * item.quantity
       doc.text(`${item.name.substring(0, 20)}`, 5, y)
@@ -1010,7 +1248,7 @@ export default function POS() {
 
         setLastSale(saleData)
         if (shouldPrintTicket) {
-          generateTicket(
+          await generateTicket(
             saleData.saleId,
             saleData.date,
             saleData.items,
@@ -1076,31 +1314,23 @@ export default function POS() {
 
   return (
     <div className="pos-container">
-      <div className="pos-floating-actions">
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={() => navigate('/')}
-          style={{ padding: '10px 14px' }}
-        >
-          Volver
-        </button>
-        <button
-          type="button"
-          className="btn-danger"
-          onClick={() => {
-            window.close()
-            setTimeout(() => navigate('/'), 200)
-          }}
-          style={{ padding: '10px 14px' }}
-        >
-          Cerrar POS
-        </button>
-      </div>
       {/* Left: Products */}
       <div className="pos-left-panel">
         {/* Header: Search & Filter */}
         <div className="pos-filters">
+          <div style={{ flexBasis: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text)' }}>
+                {isQuoteMode ? 'Cotizador' : 'Ventas / POS'}
+              </div>
+              <div style={{ fontSize: '0.9rem', color: 'var(--muted)' }}>
+                {isQuoteMode ? 'Prepara cotizaciones sin afectar caja ni inventario.' : 'Procesa ventas y emite ticket desde el punto de venta.'}
+              </div>
+            </div>
+            <div style={{ padding: '8px 12px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--modal)', color: 'var(--text)', fontWeight: 700 }}>
+              {modeChipLabel}
+            </div>
+          </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flex: '1 1 250px' }}>
             <div style={{ position: 'relative', flex: 1 }}>
               <svg
@@ -1145,7 +1375,7 @@ export default function POS() {
             </div>
             <MobileBarcodeScannerButton
               buttonLabel="Escanear"
-              modalTitle="Escanear producto en POS"
+              modalTitle={scannerTitle}
               onDetected={value => {
                 void handleScannedProductCode(value)
               }}
@@ -1258,154 +1488,183 @@ export default function POS() {
           </button>
         </div>
 
-        {/* Grid */}
-        <div className="pos-grid">
-          {products.map(p => (
-            <div
-              key={p.id}
-              onClick={() => addToCart(p)}
-              style={{
-                border: '1px solid var(--border)',
-                borderRadius: 16,
-                padding: 16,
-                cursor: 'pointer',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'space-between',
-                backgroundColor: 'var(--modal)',
-                transition: 'transform 0.1s',
-                height: '100%',
-                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)'
-              }}
-              className="product-card"
-            >
-              <div style={{ position: 'relative', width: '100%', height: 140, marginBottom: 12, borderRadius: 12, background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {p.imageUrl ? (
-                  <>
-                    {!loadedImages[p.id] && (
-                      <div
+        <div className="pos-products-scroll">
+          {/* Grid */}
+          <div className="pos-grid">
+            {products.map(p => (
+              <div
+                key={p.id}
+                onClick={() => addToCart(p)}
+                style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: 16,
+                  padding: 16,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  backgroundColor: 'var(--modal)',
+                  transition: 'transform 0.1s',
+                  height: '100%',
+                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)'
+                }}
+                className="product-card"
+              >
+                <div style={{ position: 'relative', width: '100%', height: 140, marginBottom: 12, borderRadius: 12, background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {p.imageUrl ? (
+                    <>
+                      {!loadedImages[p.id] && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            borderRadius: 12,
+                            background: 'linear-gradient(90deg, var(--bg) 0%, var(--surface) 50%, var(--bg) 100%)'
+                          }}
+                          aria-hidden="true"
+                        />
+                      )}
+                      <img
+                        src={p.imageUrl}
+                        alt={p.name}
+                        loading="lazy"
+                        onLoad={() => setLoadedImages(prev => ({ ...prev, [p.id]: true }))}
                         style={{
-                          position: 'absolute',
-                          inset: 0,
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'contain',
                           borderRadius: 12,
-                          background: 'linear-gradient(90deg, var(--bg) 0%, var(--surface) 50%, var(--bg) 100%)'
+                          opacity: loadedImages[p.id] ? 1 : 0,
+                          transition: 'opacity 200ms'
                         }}
-                        aria-hidden="true"
                       />
-                    )}
-                    <img
-                      src={p.imageUrl}
-                      alt={p.name}
-                      loading="lazy"
-                      onLoad={() => setLoadedImages(prev => ({ ...prev, [p.id]: true }))}
-                      style={{
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'contain',
-                        borderRadius: 12,
-                        opacity: loadedImages[p.id] ? 1 : 0,
-                        transition: 'opacity 200ms'
-                      }}
-                    />
-                  </>
-                ) : (
-                  <div style={{ color: 'var(--muted)' }}>Sin Imagen</div>
-                )}
-              </div>
-              <div>
-                <div
-                  style={{
-                    fontWeight: 600,
-                    fontSize: '1rem',
-                    marginBottom: 4,
-                    color: 'var(--text)',
-                    lineHeight: 1.3,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
-                  }}
-                  title={p.name}
-                >
-                  {p.name}
+                    </>
+                  ) : (
+                    <div style={{ color: 'var(--muted)' }}>Sin Imagen</div>
+                  )}
                 </div>
-                <div style={{ color: 'var(--muted)', fontSize: '0.9rem', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                     <span>Stock ({user?.warehouseName || 'Tienda'}): {p.stock}</span>
-                     <button
-                        onClick={(e) => handleViewStock(e, p)}
-                        style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 0, color: 'var(--accent)', display: 'flex', alignItems: 'center' }}
-                        title="Ver detalle"
-                     >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M3 21h18"/>
-                          <path d="M5 21V7l8-4 8 4v14"/>
-                          <path d="M13 21V11"/>
-                        </svg>
-                     </button>
+                <div>
+                  <div
+                    style={{
+                      fontWeight: 600,
+                      fontSize: '1rem',
+                      marginBottom: 4,
+                      color: 'var(--text)',
+                      lineHeight: 1.3,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}
+                    title={p.name}
+                  >
+                    {p.name}
                   </div>
-                  <div>Otras tiendas: {Number(p.otherStock ?? 0)}</div>
+                  <div style={{ color: 'var(--muted)', fontSize: '0.9rem', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>{isQuoteMode ? `Stock actual (${user?.warehouseName || 'Tienda'}): ${p.stock}` : `Stock (${user?.warehouseName || 'Tienda'}): ${p.stock}`}</span>
+                       <button
+                          onClick={(e) => handleViewStock(e, p)}
+                          style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 0, color: 'var(--accent)', display: 'flex', alignItems: 'center' }}
+                          title="Ver detalle"
+                       >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M3 21h18"/>
+                            <path d="M5 21V7l8-4 8 4v14"/>
+                            <path d="M13 21V11"/>
+                          </svg>
+                       </button>
+                    </div>
+                    <div>Otras tiendas: {Number(p.otherStock ?? 0)}</div>
+                  </div>
+                  <div style={{ color: 'var(--accent)', fontWeight: 700, fontSize: '1.1rem', marginTop: 8 }}>{config?.currency} {p.price.toFixed(2)}</div>
                 </div>
-                <div style={{ color: 'var(--accent)', fontWeight: 700, fontSize: '1.1rem', marginTop: 8 }}>{config?.currency} {p.price.toFixed(2)}</div>
+              </div>
+            ))}
+          </div>
+          {products.length === 0 && !loading && (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)' }}>
+              No se encontraron productos para los filtros actuales.
+            </div>
+          )}
+          {totalProducts > productsPerPage && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginTop: 20, padding: '14px 16px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--modal)' }}>
+              <div style={{ color: 'var(--muted)', fontSize: 13 }}>
+                Mostrando {products.length} de {totalProducts} productos. Pagina {currentPage} de {totalPages}
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
+                <button
+                  className="icon-btn"
+                  disabled={currentPage === 1 || loading}
+                  onClick={() => setCurrentPage(1)}
+                  style={{ minWidth: 88, padding: '10px 14px', borderRadius: 10, opacity: currentPage === 1 || loading ? 0.5 : 1 }}
+                >
+                  Primera
+                </button>
+                <button
+                  className="icon-btn"
+                  disabled={currentPage === 1 || loading}
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  style={{ minWidth: 88, padding: '10px 14px', borderRadius: 10, opacity: currentPage === 1 || loading ? 0.5 : 1 }}
+                >
+                  Anterior
+                </button>
+                <div style={{ minWidth: 110, padding: '10px 14px', borderRadius: 10, background: 'var(--bg)', border: '1px solid var(--border)', textAlign: 'center', fontWeight: 600, color: 'var(--text)' }}>
+                  {currentPage} / {totalPages}
+                </div>
+                <button
+                  className="icon-btn"
+                  disabled={currentPage >= totalPages || loading}
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  style={{ minWidth: 88, padding: '10px 14px', borderRadius: 10, opacity: currentPage >= totalPages || loading ? 0.5 : 1 }}
+                >
+                  Siguiente
+                </button>
+                <button
+                  className="icon-btn"
+                  disabled={currentPage >= totalPages || loading}
+                  onClick={() => setCurrentPage(totalPages)}
+                  style={{ minWidth: 88, padding: '10px 14px', borderRadius: 10, opacity: currentPage >= totalPages || loading ? 0.5 : 1 }}
+                >
+                  Ultima
+                </button>
               </div>
             </div>
-          ))}
+          )}
         </div>
-        {products.length === 0 && !loading && (
-          <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)' }}>
-            No se encontraron productos para los filtros actuales.
-          </div>
-        )}
-        {totalProducts > productsPerPage && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginTop: 20, padding: '14px 16px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--modal)' }}>
-            <div style={{ color: 'var(--muted)', fontSize: 13 }}>
-              Mostrando {products.length} de {totalProducts} productos. Pagina {currentPage} de {totalPages}
-            </div>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
-              <button
-                className="icon-btn"
-                disabled={currentPage === 1 || loading}
-                onClick={() => setCurrentPage(1)}
-                style={{ minWidth: 88, padding: '10px 14px', borderRadius: 10, opacity: currentPage === 1 || loading ? 0.5 : 1 }}
-              >
-                Primera
-              </button>
-              <button
-                className="icon-btn"
-                disabled={currentPage === 1 || loading}
-                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                style={{ minWidth: 88, padding: '10px 14px', borderRadius: 10, opacity: currentPage === 1 || loading ? 0.5 : 1 }}
-              >
-                Anterior
-              </button>
-              <div style={{ minWidth: 110, padding: '10px 14px', borderRadius: 10, background: 'var(--bg)', border: '1px solid var(--border)', textAlign: 'center', fontWeight: 600, color: 'var(--text)' }}>
-                {currentPage} / {totalPages}
-              </div>
-              <button
-                className="icon-btn"
-                disabled={currentPage >= totalPages || loading}
-                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                style={{ minWidth: 88, padding: '10px 14px', borderRadius: 10, opacity: currentPage >= totalPages || loading ? 0.5 : 1 }}
-              >
-                Siguiente
-              </button>
-              <button
-                className="icon-btn"
-                disabled={currentPage >= totalPages || loading}
-                onClick={() => setCurrentPage(totalPages)}
-                style={{ minWidth: 88, padding: '10px 14px', borderRadius: 10, opacity: currentPage >= totalPages || loading ? 0.5 : 1 }}
-              >
-                Ultima
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Right: Cart */}
       <div className="pos-cart">
-        <div style={{ padding: 16, borderBottom: '1px solid var(--border)', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-          <span style={{ fontWeight: 600, fontSize: '1.2rem', color: 'var(--text)' }}>Orden Actual</span>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <div style={{ padding: 16, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 600, fontSize: '1.2rem', color: 'var(--text)' }}>{currentOrderLabel}</span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => navigate('/')}
+                style={{ padding: '8px 12px' }}
+              >
+                Volver
+              </button>
+              <button
+                type="button"
+                className="btn-danger"
+                onClick={() => {
+                  window.close()
+                  setTimeout(() => navigate('/'), 200)
+                }}
+                style={{ padding: '8px 12px' }}
+              >
+                {backButtonLabel}
+              </button>
+            </div>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: '0.92rem', color: 'var(--muted)', fontWeight: 600 }}>
+              {isQuoteMode ? 'Administra la cotización actual sin mezclarla con las ventas.' : 'Administra la venta actual y sus acciones rápidas.'}
+            </div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <button
               onClick={() => holdCurrentSale()}
               disabled={cart.length === 0}
@@ -1420,6 +1679,7 @@ export default function POS() {
               En espera
             </button>
             <button onClick={resetCurrentSale} style={{color: '#ef4444', background:'none', border:'none', cursor:'pointer', fontWeight: 600}}>Vaciar</button>
+          </div>
           </div>
         </div>
 
@@ -1461,12 +1721,12 @@ export default function POS() {
 
         <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: heldSales.length ? 10 : 0 }}>
-            <div style={{ fontWeight: 700, color: 'var(--text)' }}>Ventas En Espera</div>
+            <div style={{ fontWeight: 700, color: 'var(--text)' }}>{heldOrderLabel}</div>
             <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{heldSales.length}</div>
           </div>
           {heldSales.length === 0 ? (
             <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
-              No hay ventas guardadas en espera.
+              {emptyHeldOrderLabel}
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 170, overflowY: 'auto' }}>
@@ -1589,6 +1849,13 @@ export default function POS() {
                       )}
                     </div>
                   )}
+                  {isQuoteMode && canViewProjectedProfit && (
+                    <div style={{ marginTop: 6, display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: '0.75rem', color: '#22c55e' }}>
+                      <span>Costo: {formatMoney(Number(item.cost || 0) * item.quantity)}</span>
+                      <span>Utilidad: {formatMoney((item.price * item.quantity) - (Number(item.cost || 0) * item.quantity))}</span>
+                      <span>Margen: {((item.price * item.quantity) > 0 ? ((((item.price * item.quantity) - (Number(item.cost || 0) * item.quantity)) / (item.price * item.quantity)) * 100) : 0).toFixed(2)}%</span>
+                    </div>
+                  )}
                   {item.batchNo && (
                      <div style={{ fontSize: '0.75rem', color: '#3b82f6', marginTop: 2 }}>
                         Lote: {item.batchNo} (Vence: {item.expiryDate})
@@ -1628,7 +1895,7 @@ export default function POS() {
                   <input
                     type="number"
                     min="1"
-                    max={item.maxQuantity || item.stock}
+                    max={isQuoteMode ? undefined : (item.maxQuantity || item.stock)}
                     value={item.quantity}
                     onChange={(e) => handleQuantityChange(item.id, e.target.value, item.batchNo, item.imei, item.serial)}
                     style={{
@@ -1687,12 +1954,38 @@ export default function POS() {
         <div style={{ padding: 16, borderTop: '1px solid var(--border)', backgroundColor: 'var(--bg)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.2rem', fontWeight: 'bold', marginBottom: 16, color: 'var(--text)' }}>
             <span>Total:</span>
-            <span>{config?.currency} {total.toFixed(2)}</span>
+            <span>{formatMoney(total)}</span>
           </div>
 
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', marginBottom: 8, fontWeight: 'bold', color: 'var(--muted)' }}>Método de Pago:</label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          {isQuoteMode && (
+            <div style={{ marginBottom: 16, padding: 12, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--modal)' }}>
+              <div style={{ fontWeight: 700, marginBottom: 6, color: 'var(--text)' }}>Cotización</div>
+              <div style={{ fontSize: '0.9rem', color: 'var(--muted)' }}>
+                La cotización usa los precios actuales del carrito, incluidos precios manuales, y no afecta inventario ni caja.
+              </div>
+              {canViewProjectedProfit && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10, marginTop: 12 }}>
+                  <div style={{ padding: 10, borderRadius: 8, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Costo proyectado</div>
+                    <div style={{ fontWeight: 700, color: 'var(--text)', marginTop: 4 }}>{formatMoney(projectedCostTotal)}</div>
+                  </div>
+                  <div style={{ padding: 10, borderRadius: 8, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Utilidad proyectada</div>
+                    <div style={{ fontWeight: 700, color: projectedProfitTotal >= 0 ? '#22c55e' : '#ef4444', marginTop: 4 }}>{formatMoney(projectedProfitTotal)}</div>
+                  </div>
+                  <div style={{ padding: 10, borderRadius: 8, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Margen proyectado</div>
+                    <div style={{ fontWeight: 700, color: 'var(--text)', marginTop: 4 }}>{projectedMargin.toFixed(2)}%</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!isQuoteMode && (
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', marginBottom: 8, fontWeight: 'bold', color: 'var(--muted)' }}>Método de Pago:</label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               <button
                 onClick={() => setPaymentMethod('CASH')}
                 style={{
@@ -1799,42 +2092,68 @@ export default function POS() {
                 </div>
               )}
             </div>
-          </div>
+            </div>
+          )}
 
-          <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, fontSize: '0.95rem', color: 'var(--text)', cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={shouldPrintTicket}
-              onChange={e => setShouldPrintTicket(e.target.checked)}
-            />
-            Imprimir ticket automaticamente al completar la venta
-          </label>
+          {!isQuoteMode && (
+            <>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, fontSize: '0.95rem', color: 'var(--text)', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={shouldPrintTicket}
+                  onChange={e => setShouldPrintTicket(e.target.checked)}
+                />
+                Imprimir ticket automaticamente al completar la venta
+              </label>
 
-          <div style={{ marginBottom: 16, fontSize: '0.92rem', color: 'var(--muted)' }}>
-            Al pagar se abre el dialogo de impresion. Si el entorno lo bloquea, el sistema descarga el PDF del ticket como respaldo.
-          </div>
+              <div style={{ marginBottom: 16, fontSize: '0.92rem', color: 'var(--muted)' }}>
+                Al pagar se abre el dialogo de impresion. Si el entorno lo bloquea, el sistema descarga el PDF del ticket como respaldo.
+              </div>
+            </>
+          )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <button
-              onClick={handleCheckout}
-              disabled={cart.length === 0 || loading}
-              style={{
-                width: '100%',
-                padding: 16,
-                backgroundColor: '#16a34a',
-                color: 'white',
-                border: 'none',
-                borderRadius: 6,
-                fontSize: '1.1rem',
-                fontWeight: 'bold',
-                cursor: cart.length === 0 || loading ? 'not-allowed' : 'pointer',
-                opacity: cart.length === 0 || loading ? 0.7 : 1
-              }}
-            >
-              {loading ? 'Procesando...' : 'Pagar'}
-            </button>
+            {isQuoteMode ? (
+              <button
+                onClick={handleGenerateQuote}
+                disabled={cart.length === 0 || loading}
+                style={{
+                  width: '100%',
+                  padding: 15,
+                  backgroundColor: '#2563eb',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 6,
+                  fontSize: '1.05rem',
+                  fontWeight: 'bold',
+                  cursor: cart.length === 0 || loading ? 'not-allowed' : 'pointer',
+                  opacity: cart.length === 0 || loading ? 0.7 : 1
+                }}
+              >
+                {loading ? 'Generando...' : 'Generar cotización'}
+              </button>
+            ) : (
+              <button
+                onClick={handleCheckout}
+                disabled={cart.length === 0 || loading}
+                style={{
+                  width: '100%',
+                  padding: 16,
+                  backgroundColor: '#16a34a',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 6,
+                  fontSize: '1.1rem',
+                  fontWeight: 'bold',
+                  cursor: cart.length === 0 || loading ? 'not-allowed' : 'pointer',
+                  opacity: cart.length === 0 || loading ? 0.7 : 1
+                }}
+              >
+                {loading ? 'Procesando...' : 'Pagar'}
+              </button>
+            )}
 
-            {lastSale && (
+            {!isQuoteMode && lastSale && (
                 <div
                   style={{
                     width: '100%',
@@ -1850,6 +2169,23 @@ export default function POS() {
                 >
                    Ultima venta registrada: #{lastSale.saleId}
                 </div>
+            )}
+            {isQuoteMode && lastQuote && (
+              <div
+                style={{
+                  width: '100%',
+                  padding: 12,
+                  backgroundColor: 'transparent',
+                  color: 'var(--muted)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 6,
+                  fontSize: '0.95rem',
+                  fontWeight: 600,
+                  textAlign: 'center'
+                }}
+              >
+                Ultima cotización generada: {lastQuote.quoteNo}
+              </div>
             )}
           </div>
         </div>

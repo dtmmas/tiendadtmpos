@@ -9,10 +9,13 @@ import {
   getCashMovements 
 } from '../api'
 import { useAuthStore } from '../store/auth'
+import { useConfigStore } from '../store/config'
 import { formatDateTime } from '../utils/date'
+import { buildPrintLogoHtml } from '../utils/printBranding'
 
 export default function CashRegister() {
   const { user } = useAuthStore()
+  const config = useConfigStore(s => s.config)
   const isAdmin = user?.role === 'ADMIN'
   const [loading, setLoading] = useState(true)
   const [openingCash, setOpeningCash] = useState(false)
@@ -55,6 +58,7 @@ export default function CashRegister() {
     const reportUser = isOwnCash ? `${user?.name || '-'} (${user?.role || '-'})` : (selectedUser?.name || '-')
     const openedAt = reportSummary?.openingTime ? formatDateTime(new Date(reportSummary.openingTime)) : '-'
     const printedAt = formatDateTime(new Date())
+    const logoBlock = buildPrintLogoHtml(config?.logoUrl, config?.name || 'Logo empresa', { maxWidth: 150, maxHeight: 56, marginBottom: 8, align: 'left' })
     const methods = Object.entries(reportSummary?.salesByMethod || {}) as Array<[string, unknown]>
     const movementsRows = movements.map(m => `
       <tr>
@@ -93,6 +97,7 @@ export default function CashRegister() {
           </style>
         </head>
         <body>
+          ${logoBlock}
           <h1>${escapeHtml(reportTitle)}</h1>
           <div class="meta">
             <div><strong>Responsable:</strong> ${escapeHtml(reportUser)}</div>

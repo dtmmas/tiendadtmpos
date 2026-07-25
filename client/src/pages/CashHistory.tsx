@@ -3,6 +3,7 @@ import { getCashHistoryShiftDetail, getCashHistoryShifts, getCashHistorySummary 
 import { useConfigStore } from '../store/config'
 import { formatMoney } from '../utils/currency'
 import { formatDateTime } from '../utils/date'
+import { buildPrintLogoHtml } from '../utils/printBranding'
 
 type Period = 'day' | 'month' | 'year'
 
@@ -11,7 +12,8 @@ function isoDate(d: Date) {
 }
 
 export default function CashHistory() {
-  const currency = useConfigStore(s => s.config?.currency || 'USD')
+  const config = useConfigStore(s => s.config)
+  const currency = config?.currency || 'USD'
   const [period, setPeriod] = useState<Period>('day')
   const [start, setStart] = useState(() => {
     const now = new Date()
@@ -58,6 +60,7 @@ export default function CashHistory() {
 
   const printShiftDetail = (shift: any) => {
     if (!shift) return
+    const logoBlock = buildPrintLogoHtml(config?.logoUrl, config?.name || 'Logo empresa', { maxWidth: 150, maxHeight: 56, marginBottom: 8, align: 'left' })
     const methods = Object.entries(shift.salesByMethod || {}) as Array<[string, unknown]>
     const creditMethods = Object.entries(shift.creditPaymentsByMethod || {}) as Array<[string, unknown]>
     const movementRows = (shift.movements || []).map((movement: any) => `
@@ -98,6 +101,7 @@ export default function CashHistory() {
           </style>
         </head>
         <body>
+          ${logoBlock}
           <h1>Detalle de Cierre de Caja</h1>
           <div class="meta">
             <div><strong>Cierre:</strong> ${escapeHtml(formatDateTime(shift.closedAt))}</div>

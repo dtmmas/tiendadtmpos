@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
 import { useAuthStore } from '../store/auth'
+import { useConfigStore } from '../store/config'
 import { formatDateTime } from '../utils/date'
+import { buildPrintLogoHtml } from '../utils/printBranding'
 import MobileBarcodeScannerButton from '../components/MobileBarcodeScannerButton'
 
 function escapePrintHtml(value: string) {
@@ -152,6 +154,7 @@ export default function Transfers() {
 
   const printTransferDetail = (detail: TransferDetail) => {
     if (typeof window === 'undefined') return
+    const logoBlock = buildPrintLogoHtml(config?.logoUrl, config?.name || 'Logo empresa', { maxWidth: 150, maxHeight: 56, marginBottom: 8, align: 'left' })
 
     const printWindow = window.open('', '_blank', 'width=1100,height=800')
     if (!printWindow) {
@@ -211,6 +214,7 @@ export default function Transfers() {
           </style>
         </head>
         <body>
+          ${logoBlock}
           <h1>Detalle de Transferencia #${detail.id}</h1>
           <div class="subtitle">${escapePrintHtml(detail.source_warehouse_name)} -> ${escapePrintHtml(detail.destination_warehouse_name)} | ${escapePrintHtml(formatDateTime(detail.created_at))}</div>
 
@@ -281,6 +285,7 @@ export default function Transfers() {
   })
 
   const user = useAuthStore(s => s.user)
+  const config = useConfigStore(s => s.config)
   const isAdmin = String(user?.role || '').toUpperCase() === 'ADMIN'
   const userWarehouseId = user?.warehouseId ? Number(user.warehouseId) : null
   const filterWarehouses = isAdmin

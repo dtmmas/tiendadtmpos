@@ -816,18 +816,11 @@ input[type="file"]:focus {
 
 .pos-container {
   display: flex;
-  height: 100%;
+  height: 100vh;
   gap: 20px;
   padding: 20px;
-}
-
-.pos-floating-actions {
-  position: fixed;
-  top: 12px;
-  right: 12px;
-  display: flex;
-  gap: 10px;
-  z-index: 3000;
+  overflow: hidden;
+  align-items: stretch;
 }
 
 .pos-left-panel {
@@ -836,6 +829,8 @@ input[type="file"]:focus {
   flex-direction: column;
   gap: 20px;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .pos-filters {
@@ -849,28 +844,38 @@ input[type="file"]:focus {
   align-items: center;
 }
 
+.pos-products-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 8px;
+}
+
 .pos-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 16px;
   justify-items: stretch;
-  overflow-y: auto;
-  padding-right: 8px;
-  flex: 1;
-  min-height: 0;
   align-items: start;
   align-content: start;
   grid-auto-rows: 280px;
 }
 
 .pos-cart {
-  width: 360px;
+  width: 520px;
   background-color: var(--modal);
   border: 1px solid var(--border);
   border-radius: 12px;
   display: flex;
   flex-direction: column;
   box-shadow: -2px 0 10px rgba(0,0,0,0.05);
+  flex-shrink: 0;
+  position: sticky;
+  top: 20px;
+  height: calc(100vh - 40px);
+  max-height: calc(100vh - 40px);
+  overflow: hidden;
 }
 
 .products-grid {
@@ -1034,14 +1039,7 @@ input[type="file"]:focus {
     flex-direction: column;
     height: auto;
     padding: 14px;
-    padding-top: 74px;
-  }
-
-  .pos-floating-actions {
-    left: 12px;
-    right: 12px;
-    top: 12px;
-    justify-content: flex-end;
+    overflow: visible;
   }
 
   .pos-left-panel {
@@ -1061,12 +1059,18 @@ input[type="file"]:focus {
   .pos-grid {
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     grid-auto-rows: auto;
-    overflow-y: visible;
+  }
+
+  .pos-products-scroll {
+    overflow: visible;
     padding-right: 0;
   }
 
   .pos-cart {
     width: 100%;
+    position: static;
+    height: auto;
+    max-height: none;
   }
 
   .products-grid {

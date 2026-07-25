@@ -207,7 +207,7 @@ export async function getSalesSummary(start?: string, end?: string) {
   return data as { total: number; start: string | null; end: string | null }
 }
 
-export async function getSales(params: { page?: number; limit?: number; search?: string; offset?: number; startDate?: string; endDate?: string; userId?: number | string; paymentMethod?: string }) {
+export async function getSales(params: { page?: number; limit?: number; search?: string; offset?: number; startDate?: string; endDate?: string; userId?: number | string; paymentMethod?: string; statusFilter?: string }) {
   const { data } = await api.get('/sales', { params })
   return data as {
     data: Array<{
@@ -215,6 +215,7 @@ export async function getSales(params: { page?: number; limit?: number; search?:
       doc_no: string
       total: number
       created_at: string
+      credit_fully_paid_at?: string | null
       payment_method: string
       customer_name?: string
       received_amount?: number
@@ -254,7 +255,7 @@ export async function getSales(params: { page?: number; limit?: number; search?:
   }
 }
 
-export async function getMySalesReport(params: { limit?: number; search?: string; offset?: number; startDate?: string; endDate?: string; paymentMethod?: string }) {
+export async function getMySalesReport(params: { limit?: number; search?: string; offset?: number; startDate?: string; endDate?: string; paymentMethod?: string; statusFilter?: string }) {
   const { data } = await api.get('/sales/my-report', { params })
   return data as {
     data: Array<{
@@ -262,6 +263,7 @@ export async function getMySalesReport(params: { limit?: number; search?: string
       doc_no: string
       total: number
       created_at: string
+      credit_fully_paid_at?: string | null
       payment_method: string
       customer_name?: string
       received_amount?: number

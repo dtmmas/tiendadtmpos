@@ -8,6 +8,7 @@ interface Sale {
   doc_no: string
   total: number
   created_at: string
+  credit_fully_paid_at?: string | null
   payment_method: string
   customer_name?: string
   received_amount?: number
@@ -43,7 +44,8 @@ interface ReportSummary {
 }
 
 type PeriodMode = 'all' | 'day' | 'month' | 'year' | 'range'
-type PaymentFilter = 'NON_CREDIT' | 'CASH' | 'CARD' | 'DEPOSIT' | 'CREDIT' | 'ALL'
+type PaymentFilter = 'NON_CREDIT' | 'CASH' | 'CARD' | 'DEPOSIT' | 'CREDIT' | 'CREDIT_PAID' | 'REALIZED' | 'ALL'
+type StatusFilter = 'ACTIVE' | 'CANCELLED' | 'ALL'
 
 const EMPTY_SUMMARY: ReportSummary = {
   records: 0,
@@ -103,7 +105,28 @@ function getPaymentFilterLabel(filter: PaymentFilter) {
   if (filter === 'CARD') return 'Tarjeta'
   if (filter === 'DEPOSIT') return 'Depósito'
   if (filter === 'CREDIT') return 'Crédito'
+  if (filter === 'CREDIT_PAID') return 'Crédito liquidado'
+  if (filter === 'REALIZED') return 'Cobrado + liquidados'
   return 'Todos'
+}
+
+function getStatusFilterLabel(filter: StatusFilter) {
+  if (filter === 'ACTIVE') return 'Activas'
+  if (filter === 'CANCELLED') return 'Canceladas'
+  return 'Todas'
+}
+
+function isCreditSale(sale?: Pick<Sale, 'payment_method' | 'is_credit'> | null) {
+  return sale?.payment_method === 'CREDIT' || Boolean(sale?.is_credit)
+}
+
+function getSaleStatusLabel(sale: Pick<Sale, 'status' | 'payment_method' | 'is_credit' | 'credit_fully_paid'>, filter: PaymentFilter) {
+  if (sale.status === 'CANCELLED') return 'CANCELADO'
+  if (filter === 'CREDIT_PAID') return 'LIQUIDADO'
+  if (filter === 'REALIZED' && isCreditSale(sale)) return 'LIQUIDADO'
+  if (isCreditSale(sale) && !sale.credit_fully_paid) return 'PENDIENTE'
+  if (isCreditSale(sale)) return 'LIQUIDADO'
+  return 'PAGADO'
 }
 
 export default function MySalesReport() {
@@ -124,12 +147,14 @@ export default function MySalesReport() {
   const [rangeStart, setRangeStart] = useState(todayString)
   const [rangeEnd, setRangeEnd] = useState(todayString)
   const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('ALL')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('ACTIVE')
   const [appliedFilters, setAppliedFilters] = useState({
     search: '',
     startDate: todayString,
     endDate: todayString,
     paymentMethod: 'ALL' as PaymentFilter,
-    label: `${todayString} | Método: ${getPaymentFilterLabel('ALL')}`,
+    statusFilter: 'ACTIVE' as StatusFilter,
+    label: `${todayString} | Método: ${getPaymentFilterLabel('ALL')} | Estado: ${getStatusFilterLabel('ACTIVE')}`,
   })
   const [selectedSale, setSelectedSale] = useState<SaleDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -152,6 +177,7 @@ export default function MySalesReport() {
         startDate: appliedFilters.startDate || undefined,
         endDate: appliedFilters.endDate || undefined,
         paymentMethod: appliedFilters.paymentMethod !== 'ALL' ? appliedFilters.paymentMethod : undefined,
+        statusFilter: appliedFilters.statusFilter,
       })
       setSales(res.data)
       setPagination(prev => ({ ...prev, total: res.pagination.total }))
@@ -197,13 +223,15 @@ export default function MySalesReport() {
       startDate: nextStartDate,
       endDate: nextEndDate,
       paymentMethod: paymentFilter,
-      label: `${label} | Método: ${getPaymentFilterLabel(paymentFilter)}`,
+      statusFilter,
+      label: `${label} | Método: ${getPaymentFilterLabel(paymentFilter)} | Estado: ${getStatusFilterLabel(statusFilter)}`,
     })
   }
 
   function resetFilters() {
     setSearchInput('')
     setPaymentFilter('ALL')
+    setStatusFilter('ACTIVE')
     setPeriodMode('day')
     setSelectedDay(todayString)
     setSelectedMonth(currentMonth)
@@ -216,7 +244,8 @@ export default function MySalesReport() {
       startDate: todayString,
       endDate: todayString,
       paymentMethod: 'ALL',
-      label: `${todayString} | Método: ${getPaymentFilterLabel('ALL')}`,
+      statusFilter: 'ACTIVE',
+      label: `${todayString} | Método: ${getPaymentFilterLabel('ALL')} | Estado: ${getStatusFilterLabel('ACTIVE')}`,
     })
   }
 
@@ -265,6 +294,13 @@ export default function MySalesReport() {
             <option value="DEPOSIT">Depósito</option>
             <option value="CARD">Tarjeta</option>
             <option value="CREDIT">Crédito</option>
+            <option value="CREDIT_PAID">Crédito liquidado</option>
+            <option value="REALIZED">Efectivo/Depósito/Tarjeta + Créditos liquidados</option>
+          </select>
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as StatusFilter)} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}>
+            <option value="ACTIVE">Activas</option>
+            <option value="CANCELLED">Canceladas</option>
+            <option value="ALL">Todas</option>
           </select>
           <select value={periodMode} onChange={e => setPeriodMode(e.target.value as PeriodMode)} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}>
             <option value="all">Todas las fechas</option>
@@ -324,11 +360,18 @@ export default function MySalesReport() {
               sales.map(sale => (
                 <tr key={sale.id} style={{ borderBottom: '1px solid var(--border)' }}>
                   <td style={{ padding: 12 }}>#{sale.id}</td>
-                  <td style={{ padding: 12 }}>{formatDateTime(sale.created_at)}</td>
+                  <td style={{ padding: 12 }}>
+                    <div>{formatDateTime((appliedFilters.paymentMethod === 'CREDIT_PAID' || (appliedFilters.paymentMethod === 'REALIZED' && isCreditSale(sale))) ? (sale.credit_fully_paid_at || sale.created_at) : sale.created_at)}</div>
+                    {isCreditSale(sale) && sale.credit_fully_paid_at && (
+                      <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                        Liquidado: {formatDateTime(sale.credit_fully_paid_at)}
+                      </div>
+                    )}
+                  </td>
                   <td style={{ padding: 12 }}>{sale.customer_name || 'General'}</td>
                   <td style={{ padding: 12 }}>{getPaymentMethodLabel(sale.payment_method, sale.is_credit)}</td>
                   <td style={{ padding: 12, textAlign: 'center' }}>
-                    {sale.status === 'CANCELLED' ? 'CANCELADO' : ((sale.payment_method === 'CREDIT' || sale.is_credit) && !sale.credit_fully_paid ? 'PENDIENTE' : 'PAGADO')}
+                    {getSaleStatusLabel(sale, appliedFilters.paymentMethod)}
                   </td>
                   <td style={{ padding: 12, textAlign: 'right', fontWeight: 600 }}>{formatMoney(sale.total)}</td>
                   <td style={{ padding: 12, textAlign: 'center' }}>

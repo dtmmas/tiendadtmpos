@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { getCredits, payCredit, getConfig, getCreditPayments } from '../api'
 import { formatDate, formatDateTime } from '../utils/date'
+import { buildPrintLogoHtml } from '../utils/printBranding'
 import CameraCaptureButton from '../components/CameraCaptureButton'
 
 interface Credit {
@@ -27,6 +28,8 @@ interface Payment {
 
 interface Config {
   currency: string
+  name?: string
+  logoUrl?: string
 }
 
 export default function Credits() {
@@ -124,6 +127,7 @@ export default function Credits() {
   function printPayment(payment: Payment, credit: Credit) {
     const printWindow = window.open('', '_blank', 'width=400,height=600')
     if (!printWindow) return
+    const logoBlock = buildPrintLogoHtml(config?.logoUrl, config?.name || 'Logo empresa', { maxWidth: 120, maxHeight: 42, marginBottom: 8 })
 
     const html = `
       <html>
@@ -139,6 +143,7 @@ export default function Credits() {
         </head>
         <body>
           <div class="header">
+            ${logoBlock}
             <h3>COMPROBANTE DE PAGO</h3>
             <p>${formatDateTime(payment.created_at)}</p>
           </div>

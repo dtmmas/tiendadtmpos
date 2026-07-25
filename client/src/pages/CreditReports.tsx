@@ -4,6 +4,7 @@ import { useConfigStore } from '../store/config'
 import { formatDate } from '../utils/date'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import { addLogoToPdf } from '../utils/printBranding'
 
 interface Credit {
   id: number
@@ -80,17 +81,20 @@ export default function CreditReports() {
     }
   }
 
-  const exportPDF = () => {
+  const exportPDF = async () => {
     try {
       const doc = new jsPDF()
+      const logoHeight = await addLogoToPdf(doc, config?.logoUrl, { x: 14, y: 10, maxWidth: 28, maxHeight: 18 })
+      const titleY = logoHeight > 0 ? 24 : 22
+
       doc.setFontSize(18)
-      doc.text('Reporte de Créditos', 14, 22)
+      doc.text('Reporte de Créditos', 14, titleY)
       
       doc.setFontSize(11)
       const statusText = status === 'PENDIENTE' ? 'Pendientes' : status === 'PAGADO' ? 'Pagados' : 'Todos'
-      doc.text(`Estado: ${statusText}`, 14, 30)
+      doc.text(`Estado: ${statusText}`, 14, titleY + 8)
       if (startDate || endDate) {
-        doc.text(`Fecha: ${startDate || 'Inicio'} - ${endDate || 'Fin'}`, 14, 36)
+        doc.text(`Fecha: ${startDate || 'Inicio'} - ${endDate || 'Fin'}`, 14, titleY + 14)
       }
 
       const tableColumn = ["Fecha Venta", "Cliente", "Folio", "Estado", "Total", "Pagado", "Pendiente"]
@@ -119,7 +123,7 @@ export default function CreditReports() {
       autoTable(doc, {
         head: [tableColumn],
         body: tableRows,
-        startY: 45,
+        startY: titleY + 22,
       })
 
       const finalY = (doc as any).lastAutoTable.finalY + 10
