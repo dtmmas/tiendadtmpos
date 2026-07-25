@@ -10,6 +10,16 @@ function isValidNumber(n) {
   return typeof n === 'number' && !isNaN(n) && n > 0
 }
 
+function normalizeTrackedValue(value) {
+  return String(value || '').trim().toUpperCase()
+}
+
+function findTrackedValueMatch(allowedValues, requestedValue) {
+  const target = normalizeTrackedValue(requestedValue)
+  if (!target) return null
+  return (allowedValues || []).find(value => normalizeTrackedValue(value) === target) || null
+}
+
 async function ensureTransferItemsDestinationTypeColumn(conn) {
   const [rows] = await conn.query(`SHOW COLUMNS FROM transfer_items LIKE 'destination_movement_type'`)
   if (!Array.isArray(rows) || rows.length === 0) {
@@ -263,12 +273,13 @@ router.post('/', authMiddleware, roleMiddleware(['ADMIN', 'ALMACEN']), async (re
                table: 'product_imeis',
                valueColumn: 'imei'
              })
-             if (!allowedImeis.includes(imei)) {
+             const matchedImei = findTrackedValueMatch(allowedImeis, imei)
+             if (!matchedImei) {
                throw new Error(`IMEI no disponible para transferir en la tienda origen para el producto ${productId}`)
              }
              const [imeiResult] = await conn.query(
                'UPDATE product_imeis SET warehouse_id = ? WHERE product_id = ? AND imei = ? AND warehouse_id = ? AND status = "AVAILABLE"',
-               [finalDestinationWarehouseId, productId, imei, finalSourceWarehouseId]
+               [finalDestinationWarehouseId, productId, matchedImei, finalSourceWarehouseId]
              )
              if (!imeiResult.affectedRows) {
                throw new Error(`IMEI no disponible en la tienda origen para el producto ${productId}`)
@@ -280,12 +291,13 @@ router.post('/', authMiddleware, roleMiddleware(['ADMIN', 'ALMACEN']), async (re
                table: 'product_serials',
                valueColumn: 'serial_no'
              })
-             if (!allowedSerials.includes(serial)) {
+             const matchedSerial = findTrackedValueMatch(allowedSerials, serial)
+             if (!matchedSerial) {
                throw new Error(`Serie no disponible para transferir en la tienda origen para el producto ${productId}`)
              }
              const [serialResult] = await conn.query(
                'UPDATE product_serials SET warehouse_id = ? WHERE product_id = ? AND serial_no = ? AND warehouse_id = ? AND status = "AVAILABLE"',
-               [finalDestinationWarehouseId, productId, serial, finalSourceWarehouseId]
+               [finalDestinationWarehouseId, productId, matchedSerial, finalSourceWarehouseId]
              )
              if (!serialResult.affectedRows) {
                throw new Error(`Serie no disponible en la tienda origen para el producto ${productId}`)

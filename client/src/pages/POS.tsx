@@ -114,6 +114,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
   const [receivedAmount, setReceivedAmount] = useState<string>('')
   const [referenceNumber, setReferenceNumber] = useState<string>('')
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false)
+  const [isMobileCartOpen, setIsMobileCartOpen] = useState(false)
 
   // Batch Selection State
   const [selectedProductForBatch, setSelectedProductForBatch] = useState<Product | null>(null)
@@ -175,6 +176,25 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
     if (isQuoteMode) return
     checkCashStatus()
   }, [isQuoteMode])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)')
+    const syncMobileCart = (event?: MediaQueryListEvent) => {
+      const isMobile = event ? event.matches : mediaQuery.matches
+      if (!isMobile) {
+        setIsMobileCartOpen(false)
+      }
+    }
+
+    syncMobileCart()
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', syncMobileCart)
+      return () => mediaQuery.removeEventListener('change', syncMobileCart)
+    }
+
+    mediaQuery.addListener(syncMobileCart)
+    return () => mediaQuery.removeListener(syncMobileCart)
+  }, [])
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -1314,6 +1334,24 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
 
   return (
     <div className="pos-container">
+      <button
+        type="button"
+        className="pos-mobile-cart-toggle"
+        onClick={() => setIsMobileCartOpen(true)}
+      >
+        <span>{isQuoteMode ? 'Cotización' : 'Carrito'}</span>
+        <strong>{cart.length}</strong>
+      </button>
+
+      {isMobileCartOpen && (
+        <button
+          type="button"
+          className="pos-cart-backdrop"
+          onClick={() => setIsMobileCartOpen(false)}
+          aria-label="Cerrar panel lateral"
+        />
+      )}
+
       {/* Left: Products */}
       <div className="pos-left-panel">
         {/* Header: Search & Filter */}
@@ -1634,10 +1672,19 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
       </div>
 
       {/* Right: Cart */}
-      <div className="pos-cart">
+      <div className={`pos-cart ${isMobileCartOpen ? 'open' : ''}`}>
         <div style={{ padding: 16, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 600, fontSize: '1.2rem', color: 'var(--text)' }}>{currentOrderLabel}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: 600, fontSize: '1.2rem', color: 'var(--text)' }}>{currentOrderLabel}</span>
+              <button
+                type="button"
+                className="pos-mobile-cart-close"
+                onClick={() => setIsMobileCartOpen(false)}
+              >
+                Cerrar
+              </button>
+            </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <button
                 type="button"

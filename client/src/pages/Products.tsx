@@ -97,6 +97,8 @@ export default function Products() {
   const [totalProducts, setTotalProducts] = useState(0)
   const [catalogTotal, setCatalogTotal] = useState(0)
   const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [isCompactCatalogFilters, setIsCompactCatalogFilters] = useState(false)
+  const [isCatalogFiltersOpen, setIsCatalogFiltersOpen] = useState(false)
 
   // Quick add: estados para agregar catálogo desde el modal de producto
   const [quickAddModal, setQuickAddModal] = useState<'none' | 'category' | 'subcategory' | 'brand' | 'supplier' | 'unit' | 'department'>('none')
@@ -581,6 +583,17 @@ export default function Products() {
   const hasActiveFilters = useMemo(() => {
     return (selectedSubcategoryId !== null) || (selectedCategoryId !== null) || (selectedBrandId !== null) || (selectedSupplierId !== null) || (selectedDepartmentId !== null) || (selectedStockFilter !== 'with_stock') || (query.trim() !== '')
   }, [selectedSubcategoryId, selectedCategoryId, selectedBrandId, selectedSupplierId, selectedDepartmentId, selectedStockFilter, query])
+
+  const activeCatalogFiltersCount = useMemo(() => {
+    return [
+      selectedDepartmentId !== null,
+      selectedCategoryId !== null,
+      selectedSubcategoryId !== null,
+      selectedBrandId !== null,
+      selectedSupplierId !== null,
+      selectedStockFilter !== 'with_stock',
+    ].filter(Boolean).length
+  }, [selectedDepartmentId, selectedCategoryId, selectedSubcategoryId, selectedBrandId, selectedSupplierId, selectedStockFilter])
   
   function clearFilters() {
     setSelectedCategoryId(null)
@@ -590,7 +603,36 @@ export default function Products() {
     setSelectedDepartmentId(null)
     setSelectedStockFilter('with_stock')
     setQuery('')
+    setIsCatalogFiltersOpen(false)
   }
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 1024px)')
+    const syncCompactCatalog = (event?: MediaQueryListEvent) => {
+      const compact = event ? event.matches : mediaQuery.matches
+      setIsCompactCatalogFilters(compact)
+      if (!compact) {
+        setIsCatalogFiltersOpen(false)
+      }
+    }
+
+    syncCompactCatalog()
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', syncCompactCatalog)
+      return () => mediaQuery.removeEventListener('change', syncCompactCatalog)
+    }
+
+    mediaQuery.addListener(syncCompactCatalog)
+    return () => mediaQuery.removeListener(syncCompactCatalog)
+  }, [])
+
+  useEffect(() => {
+    if (!isCompactCatalogFilters) return
+    if (query.trim() || activeCatalogFiltersCount > 0) {
+      setIsCatalogFiltersOpen(false)
+    }
+  }, [isCompactCatalogFilters, query, activeCatalogFiltersCount, selectedDepartmentId, selectedCategoryId, selectedSubcategoryId, selectedBrandId, selectedSupplierId, selectedStockFilter])
 
   // Al cambiar el filtro de departamento, limpiar selección de categoría para evitar estados inconsistentes
   useEffect(() => {
@@ -1075,6 +1117,16 @@ export default function Products() {
               modalTitle="Escanear producto"
               onDetected={value => setQuery(value)}
             />
+            {isCompactCatalogFilters && (
+              <button
+                type="button"
+                className={`catalog-filters-toggle ${isCatalogFiltersOpen ? 'open' : ''}`}
+                onClick={() => setIsCatalogFiltersOpen(prev => !prev)}
+              >
+                <span>Filtros</span>
+                {activeCatalogFiltersCount > 0 && <strong>{activeCatalogFiltersCount}</strong>}
+              </button>
+            )}
           </div>
           <div style={{ fontSize: 12, color: 'var(--muted)' }}>
             Mostrando {paginatedProducts.length > 0 ? ((currentPage - 1) * productsPerPage) + 1 : 0}
@@ -1121,6 +1173,7 @@ export default function Products() {
       </div>
 
       {(brands.length > 0 || suppliers.length > 0 || departments.length > 0) && (
+        <div className={`catalog-filters-panel ${isCompactCatalogFilters ? 'compact' : ''} ${isCatalogFiltersOpen ? 'open' : ''}`}>
         <div className="filters-row">
           {departments.length > 0 && (
             <div>
@@ -1188,6 +1241,7 @@ export default function Products() {
               🧹 Limpiar filtros
             </button>
           </div>
+        </div>
         </div>
       )}
 
