@@ -925,6 +925,10 @@ input[type="file"]:focus {
   overflow: hidden;
 }
 
+.pos-cart-items {
+  min-height: 0;
+}
+
 .products-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -1194,6 +1198,18 @@ input[type="file"]:focus {
 
   .pos-cart.open {
     transform: translateX(0);
+  }
+
+  .pos-cart-items {
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .pos-cart-summary {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    box-shadow: 0 -10px 24px rgba(15, 23, 42, 0.18);
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)) !important;
   }
 
   .pos-mobile-cart-close {

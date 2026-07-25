@@ -1832,7 +1832,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
           )}
         </div>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+        <div className="pos-cart-items" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16 }}>
           {cart.length === 0 ? (
             <div style={{ textAlign: 'center', color: 'var(--muted)', marginTop: 32 }}>
               Carrito vacío
@@ -1998,7 +1998,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
           )}
         </div>
 
-        <div style={{ padding: 16, borderTop: '1px solid var(--border)', backgroundColor: 'var(--bg)' }}>
+        <div className="pos-cart-summary" style={{ padding: 16, borderTop: '1px solid var(--border)', backgroundColor: 'var(--bg)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.2rem', fontWeight: 'bold', marginBottom: 16, color: 'var(--text)' }}>
             <span>Total:</span>
             <span>{formatMoney(total)}</span>
