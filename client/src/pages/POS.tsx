@@ -115,6 +115,8 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
   const [referenceNumber, setReferenceNumber] = useState<string>('')
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false)
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false)
+  const [isPhoneViewport, setIsPhoneViewport] = useState(false)
+  const [isPhonePaymentPanelOpen, setIsPhonePaymentPanelOpen] = useState(false)
 
   // Batch Selection State
   const [selectedProductForBatch, setSelectedProductForBatch] = useState<Product | null>(null)
@@ -195,6 +197,32 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
     mediaQuery.addListener(syncMobileCart)
     return () => mediaQuery.removeListener(syncMobileCart)
   }, [])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 480px)')
+    const syncPhoneViewport = (event?: MediaQueryListEvent) => {
+      const isPhone = event ? event.matches : mediaQuery.matches
+      setIsPhoneViewport(isPhone)
+      if (!isPhone) {
+        setIsPhonePaymentPanelOpen(false)
+      }
+    }
+
+    syncPhoneViewport()
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', syncPhoneViewport)
+      return () => mediaQuery.removeEventListener('change', syncPhoneViewport)
+    }
+
+    mediaQuery.addListener(syncPhoneViewport)
+    return () => mediaQuery.removeListener(syncPhoneViewport)
+  }, [])
+
+  useEffect(() => {
+    if (cart.length === 0) {
+      setIsPhonePaymentPanelOpen(false)
+    }
+  }, [cart.length])
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -689,6 +717,15 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
     return cart.reduce((sum, item) => sum + (item.price * item.quantity), 0)
   }, [cart])
 
+  const totalUnits = useMemo(() => {
+    return cart.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+  }, [cart])
+
+  const shouldCollapsePhonePayment = !isQuoteMode && isPhoneViewport
+  const showPhoneProductsOnly = shouldCollapsePhonePayment && !isPhonePaymentPanelOpen
+  const showPhoneCheckoutContext = !showPhoneProductsOnly
+  const showExpandedPaymentPanel = !shouldCollapsePhonePayment || isPhonePaymentPanelOpen
+
   const projectedCostTotal = useMemo(() => {
     if (!canViewProjectedProfit) return 0
     return cart.reduce((sum, item) => sum + (Number(item.cost || 0) * item.quantity), 0)
@@ -712,6 +749,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
     setPaymentMethod('CASH')
     setReceivedAmount('')
     setReferenceNumber('')
+    setIsPhonePaymentPanelOpen(false)
   }
 
   const downloadTicketPdf = (blobUrl: string, saleId: number) => {
@@ -1673,336 +1711,426 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
 
       {/* Right: Cart */}
       <div className={`pos-cart ${isMobileCartOpen ? 'open' : ''}`}>
-        <div style={{ padding: 16, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span style={{ fontWeight: 600, fontSize: '1.2rem', color: 'var(--text)' }}>{currentOrderLabel}</span>
-              <button
-                type="button"
-                className="pos-mobile-cart-close"
-                onClick={() => setIsMobileCartOpen(false)}
-              >
-                Cerrar
-              </button>
-            </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => navigate('/')}
-                style={{ padding: '8px 12px' }}
-              >
-                Volver
-              </button>
-              <button
-                type="button"
-                className="btn-danger"
-                onClick={() => {
-                  window.close()
-                  setTimeout(() => navigate('/'), 200)
-                }}
-                style={{ padding: '8px 12px' }}
-              >
-                {backButtonLabel}
-              </button>
-            </div>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <div style={{ fontSize: '0.92rem', color: 'var(--muted)', fontWeight: 600 }}>
-              {isQuoteMode ? 'Administra la cotización actual sin mezclarla con las ventas.' : 'Administra la venta actual y sus acciones rápidas.'}
-            </div>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button
-              onClick={() => holdCurrentSale()}
-              disabled={cart.length === 0}
-              style={{
-                color: cart.length === 0 ? 'var(--muted)' : '#f59e0b',
-                background: 'none',
-                border: 'none',
-                cursor: cart.length === 0 ? 'not-allowed' : 'pointer',
-                fontWeight: 600
-              }}
-            >
-              En espera
-            </button>
-            <button onClick={resetCurrentSale} style={{color: '#ef4444', background:'none', border:'none', cursor:'pointer', fontWeight: 600}}>Vaciar</button>
-          </div>
-          </div>
-        </div>
-
-        {/* Customer Selection */}
-        <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg)', display: 'flex', gap: 8 }}>
-           <select
-             style={{
-               flex: 1,
-               padding: 8,
-               borderRadius: 6,
-               border: '1px solid var(--border)',
-               background: 'var(--modal)',
-               color: 'var(--text)'
-             }}
-             value={selectedCustomer || ''}
-             onChange={e => setSelectedCustomer(e.target.value ? Number(e.target.value) : null)}
-           >
-             <option value="">Seleccionar Cliente (General)</option>
-             {customers.map(c => (
-               <option key={c.id} value={c.id}>{c.name}</option>
-             ))}
-           </select>
-           <button
-             onClick={() => setIsCustomerModalOpen(true)}
-             className="icon-btn primary"
-             style={{
-               width: 38,
-               height: 38,
-               borderRadius: 6
-             }}
-             title="Agregar Cliente"
-           >
-             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-               <line x1="12" y1="5" x2="12" y2="19"></line>
-               <line x1="5" y1="12" x2="19" y2="12"></line>
-             </svg>
-           </button>
-        </div>
-
-        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: heldSales.length ? 10 : 0 }}>
-            <div style={{ fontWeight: 700, color: 'var(--text)' }}>{heldOrderLabel}</div>
-            <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{heldSales.length}</div>
-          </div>
-          {heldSales.length === 0 ? (
-            <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
-              {emptyHeldOrderLabel}
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 170, overflowY: 'auto' }}>
-              {heldSales.map(sale => (
-                <div key={sale.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, background: 'var(--modal)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
-                    <div>
-                      <div style={{ fontWeight: 700, color: 'var(--text)' }}>{sale.name}</div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
-                        {sale.customerName || 'Cliente general'} | {sale.cart.length} item(s)
-                      </div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
-                        {formatDateTime(new Date(sale.savedAt))}
-                      </div>
-                    </div>
-                    <div style={{ fontWeight: 700, color: 'var(--accent)' }}>
-                      {config?.currency} {sale.total.toFixed(2)}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                    <button
-                      type="button"
-                      onClick={() => resumeHeldSale(sale.id)}
-                      style={{
-                        flex: 1,
-                        padding: '8px 10px',
-                        borderRadius: 6,
-                        border: '1px solid var(--border)',
-                        background: 'var(--surface)',
-                        color: 'var(--text)',
-                        cursor: 'pointer',
-                        fontWeight: 600
-                      }}
-                    >
-                      Retomar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => deleteHeldSale(sale.id)}
-                      style={{
-                        padding: '8px 10px',
-                        borderRadius: 6,
-                        border: '1px solid rgba(239, 68, 68, 0.35)',
-                        background: 'transparent',
-                        color: '#ef4444',
-                        cursor: 'pointer',
-                        fontWeight: 600
-                      }}
-                    >
-                      Eliminar
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="pos-cart-items" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16 }}>
-          {cart.length === 0 ? (
-            <div style={{ textAlign: 'center', color: 'var(--muted)', marginTop: 32 }}>
-              Carrito vacío
-            </div>
-          ) : (
-            cart.map(item => (
-              <div key={`${item.id}-${item.batchNo || ''}-${item.imei || ''}-${item.serial || ''}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 500, color: 'var(--text)' }}>{item.name}</div>
-                  <div style={{ fontSize: '0.85rem', color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <span>{config?.currency}</span>
-                    {(item.price2 || item.price3) && canChangePosPrice ? (
-                        <select
-                            value={item.priceSource === 'MANUAL' ? (item.originalPrice ?? item.price) : item.price}
-                            onChange={(e) => {
-                              const nextPrice = Number(e.target.value)
-                              let nextSource: CartItem['priceSource'] = 'BASE'
-                              if (item.price2 && Math.abs(nextPrice - Number(item.price2)) <= 0.0001) nextSource = 'PRICE2'
-                              else if (item.price3 && Math.abs(nextPrice - Number(item.price3)) <= 0.0001) nextSource = 'PRICE3'
-                              updatePrice(item.id, nextPrice, item.batchNo, item.imei, item.serial, nextSource)
-                            }}
-                            style={{
-                                background: 'var(--modal)',
-                                border: '1px solid var(--border)',
-                                borderRadius: 4,
-                                color: 'var(--text)',
-                                fontSize: '0.85rem',
-                                padding: '0 2px',
-                                cursor: 'pointer'
-                            }}
-                        >
-                            <option value={item.originalPrice ?? item.price}>{Number(item.originalPrice ?? item.price).toFixed(2)}</option>
-                            {item.price2 && <option value={item.price2}>{Number(item.price2).toFixed(2)} (P2)</option>}
-                            {item.price3 && <option value={item.price3}>{Number(item.price3).toFixed(2)} (P3)</option>}
-                        </select>
-                    ) : (
-                        <span>{item.price.toFixed(2)}</span>
-                    )}
-                    <span>x {item.quantity}</span>
-                  </div>
-                  {canUseManualPosPrice && (
-                    <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Precio manual:</span>
-                      <input
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        defaultValue={item.priceSource === 'MANUAL' ? item.price.toFixed(2) : ''}
-                        placeholder="0.00"
-                        onBlur={(e) => handleManualPriceChange(item.id, e.target.value, item.batchNo, item.imei, item.serial)}
-                        style={{
-                          width: 96,
-                          padding: '4px 8px',
-                          fontSize: '0.8rem'
-                        }}
-                      />
-                      {item.priceSource === 'MANUAL' && (
-                        <span style={{ fontSize: '0.75rem', color: '#f59e0b', fontWeight: 700 }}>
-                          Manual
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  {isQuoteMode && canViewProjectedProfit && (
-                    <div style={{ marginTop: 6, display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: '0.75rem', color: '#22c55e' }}>
-                      <span>Costo: {formatMoney(Number(item.cost || 0) * item.quantity)}</span>
-                      <span>Utilidad: {formatMoney((item.price * item.quantity) - (Number(item.cost || 0) * item.quantity))}</span>
-                      <span>Margen: {((item.price * item.quantity) > 0 ? ((((item.price * item.quantity) - (Number(item.cost || 0) * item.quantity)) / (item.price * item.quantity)) * 100) : 0).toFixed(2)}%</span>
-                    </div>
-                  )}
-                  {item.batchNo && (
-                     <div style={{ fontSize: '0.75rem', color: '#3b82f6', marginTop: 2 }}>
-                        Lote: {item.batchNo} (Vence: {item.expiryDate})
-                     </div>
-                  )}
-                  {item.imei && (
-                     <div style={{ fontSize: '0.75rem', color: '#8b5cf6', marginTop: 2 }}>
-                        IMEI: {item.imei}
-                     </div>
-                  )}
-                  {item.serial && (
-                     <div style={{ fontSize: '0.75rem', color: '#ec4899', marginTop: 2 }}>
-                        Serial: {item.serial}
-                     </div>
-                  )}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {showPhoneCheckoutContext && (
+          <>
+            <div style={{ padding: 16, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 600, fontSize: '1.2rem', color: 'var(--text)' }}>{currentOrderLabel}</span>
                   <button
-                    onClick={() => updateQuantity(item.id, -1, item.batchNo, item.imei, item.serial)}
-                    style={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: '50%',
-                      border: '1px solid var(--border)',
-                      background: 'var(--surface)',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: 'var(--text)'
-                    }}
+                    type="button"
+                    className="pos-mobile-cart-close"
+                    onClick={() => setIsMobileCartOpen(false)}
                   >
-                    <svg width="12" height="2" viewBox="0 0 12 2" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M0 1H12" stroke="currentColor" strokeWidth="2"/>
-                    </svg>
+                    Cerrar
                   </button>
-                  <input
-                    type="number"
-                    min="1"
-                    max={isQuoteMode ? undefined : (item.maxQuantity || item.stock)}
-                    value={item.quantity}
-                    onChange={(e) => handleQuantityChange(item.id, e.target.value, item.batchNo, item.imei, item.serial)}
-                    style={{
-                      width: 40,
-                      height: 28,
-                      textAlign: 'center',
-                      border: 'none',
-                      background: 'transparent',
-                      fontWeight: 'bold',
-                      fontSize: '1rem',
-                      padding: 0,
-                      margin: 0,
-                      color: 'var(--text)'
-                    }}
-                  />
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <button
-                    onClick={() => updateQuantity(item.id, 1, item.batchNo, item.imei, item.serial)}
-                    style={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: '50%',
-                      border: '1px solid var(--border)',
-                      background: 'var(--surface)',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: 'var(--text)'
-                    }}
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => navigate('/')}
+                    style={{ padding: '8px 12px' }}
                   >
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M6 0V12M0 6H12" stroke="currentColor" strokeWidth="2"/>
-                    </svg>
+                    Volver
                   </button>
                   <button
-                    onClick={() => removeFromCart(item.id, item.batchNo, item.imei, item.serial)}
-                    className="icon-btn danger"
-                    style={{
-                      marginLeft: 8,
-                      width: 32,
-                      height: 32,
-                      borderRadius: 8
+                    type="button"
+                    className="btn-danger"
+                    onClick={() => {
+                      window.close()
+                      setTimeout(() => navigate('/'), 200)
                     }}
+                    style={{ padding: '8px 12px' }}
                   >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <line x1="18" y1="6" x2="6" y2="18"></line>
-                      <line x1="6" y1="6" x2="18" y2="18"></line>
-                    </svg>
+                    {backButtonLabel}
                   </button>
                 </div>
               </div>
-            ))
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ fontSize: '0.92rem', color: 'var(--muted)', fontWeight: 600 }}>
+                  {isQuoteMode ? 'Administra la cotización actual sin mezclarla con las ventas.' : 'Administra la venta actual y sus acciones rápidas.'}
+                </div>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => holdCurrentSale()}
+                    disabled={cart.length === 0}
+                    style={{
+                      color: cart.length === 0 ? 'var(--muted)' : '#f59e0b',
+                      background: 'none',
+                      border: 'none',
+                      cursor: cart.length === 0 ? 'not-allowed' : 'pointer',
+                      fontWeight: 600
+                    }}
+                  >
+                    En espera
+                  </button>
+                  <button onClick={resetCurrentSale} style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Vaciar</button>
+                </div>
+              </div>
+            </div>
+
+            {/* Customer Selection */}
+            <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg)', display: 'flex', gap: 8 }}>
+              <select
+                style={{
+                  flex: 1,
+                  padding: 8,
+                  borderRadius: 6,
+                  border: '1px solid var(--border)',
+                  background: 'var(--modal)',
+                  color: 'var(--text)'
+                }}
+                value={selectedCustomer || ''}
+                onChange={e => setSelectedCustomer(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">Seleccionar Cliente (General)</option>
+                {customers.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => setIsCustomerModalOpen(true)}
+                className="icon-btn primary"
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 6
+                }}
+                title="Agregar Cliente"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+              </button>
+            </div>
+
+            <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: heldSales.length ? 10 : 0 }}>
+                <div style={{ fontWeight: 700, color: 'var(--text)' }}>{heldOrderLabel}</div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{heldSales.length}</div>
+              </div>
+              {heldSales.length === 0 ? (
+                <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
+                  {emptyHeldOrderLabel}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 170, overflowY: 'auto' }}>
+                  {heldSales.map(sale => (
+                    <div key={sale.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, background: 'var(--modal)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+                        <div>
+                          <div style={{ fontWeight: 700, color: 'var(--text)' }}>{sale.name}</div>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
+                            {sale.customerName || 'Cliente general'} | {sale.cart.length} item(s)
+                          </div>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
+                            {formatDateTime(new Date(sale.savedAt))}
+                          </div>
+                        </div>
+                        <div style={{ fontWeight: 700, color: 'var(--accent)' }}>
+                          {config?.currency} {sale.total.toFixed(2)}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                        <button
+                          type="button"
+                          onClick={() => resumeHeldSale(sale.id)}
+                          style={{
+                            flex: 1,
+                            padding: '8px 10px',
+                            borderRadius: 6,
+                            border: '1px solid var(--border)',
+                            background: 'var(--surface)',
+                            color: 'var(--text)',
+                            cursor: 'pointer',
+                            fontWeight: 600
+                          }}
+                        >
+                          Retomar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteHeldSale(sale.id)}
+                          style={{
+                            padding: '8px 10px',
+                            borderRadius: 6,
+                            border: '1px solid rgba(239, 68, 68, 0.35)',
+                            background: 'transparent',
+                            color: '#ef4444',
+                            cursor: 'pointer',
+                            fontWeight: 600
+                          }}
+                        >
+                          Eliminar
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        <div className="pos-cart-items" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16 }}>
+          {cart.length === 0 ? (
+            <>
+              {showPhoneProductsOnly && (
+                <div
+                  className="pos-cart-list-header"
+                  style={{ marginBottom: 16 }}
+                >
+                  <div>
+                    <div className="pos-cart-list-title">{currentOrderLabel}</div>
+                    <div className="pos-cart-list-subtitle">Aun no hay productos agregados</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      className="pos-mobile-cart-close"
+                      onClick={() => setIsMobileCartOpen(false)}
+                    >
+                      Cerrar
+                    </button>
+                  </div>
+                </div>
+              )}
+              <div style={{ textAlign: 'center', color: 'var(--muted)', marginTop: showPhoneProductsOnly ? 0 : 32 }}>
+                Carrito vacío
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="pos-cart-list-header">
+                <div>
+                  <div className="pos-cart-list-title">Productos agregados</div>
+                  <div className="pos-cart-list-subtitle">
+                    {cart.length} producto(s) | {totalUnits} unidad(es)
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <div className="pos-cart-list-total">{formatMoney(total)}</div>
+                  {showPhoneProductsOnly && (
+                    <button
+                      type="button"
+                      className="pos-mobile-cart-close"
+                      onClick={() => setIsMobileCartOpen(false)}
+                    >
+                      Cerrar
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="pos-cart-list">
+                {cart.map(item => (
+                  <div key={`${item.id}-${item.batchNo || ''}-${item.imei || ''}-${item.serial || ''}`} className="pos-cart-item-card">
+                    <div className="pos-cart-item-head">
+                      <div className="pos-cart-item-title-wrap">
+                        <div className="pos-cart-item-name">{item.name}</div>
+                        <div className="pos-cart-item-line">
+                          <span>{config?.currency}</span>
+                          {(item.price2 || item.price3) && canChangePosPrice ? (
+                              <select
+                                  value={item.priceSource === 'MANUAL' ? (item.originalPrice ?? item.price) : item.price}
+                                  onChange={(e) => {
+                                    const nextPrice = Number(e.target.value)
+                                    let nextSource: CartItem['priceSource'] = 'BASE'
+                                    if (item.price2 && Math.abs(nextPrice - Number(item.price2)) <= 0.0001) nextSource = 'PRICE2'
+                                    else if (item.price3 && Math.abs(nextPrice - Number(item.price3)) <= 0.0001) nextSource = 'PRICE3'
+                                    updatePrice(item.id, nextPrice, item.batchNo, item.imei, item.serial, nextSource)
+                                  }}
+                                  style={{
+                                      background: 'var(--bg)',
+                                      border: '1px solid var(--border)',
+                                      borderRadius: 8,
+                                      color: 'var(--text)',
+                                      fontSize: '0.85rem',
+                                      padding: '3px 8px',
+                                      cursor: 'pointer',
+                                      maxWidth: 110
+                                  }}
+                              >
+                                  <option value={item.originalPrice ?? item.price}>{Number(item.originalPrice ?? item.price).toFixed(2)}</option>
+                                  {item.price2 && <option value={item.price2}>{Number(item.price2).toFixed(2)} (P2)</option>}
+                                  {item.price3 && <option value={item.price3}>{Number(item.price3).toFixed(2)} (P3)</option>}
+                              </select>
+                          ) : (
+                              <span>{item.price.toFixed(2)}</span>
+                          )}
+                          <span>x {item.quantity}</span>
+                        </div>
+                      </div>
+                      <div className="pos-cart-item-total">{formatMoney(item.price * item.quantity)}</div>
+                    </div>
+
+                    {canUseManualPosPrice && (
+                      <div className="pos-cart-item-manual">
+                        <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Precio manual:</span>
+                        <input
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          defaultValue={item.priceSource === 'MANUAL' ? item.price.toFixed(2) : ''}
+                          placeholder="0.00"
+                          onBlur={(e) => handleManualPriceChange(item.id, e.target.value, item.batchNo, item.imei, item.serial)}
+                          style={{
+                            width: 96,
+                            padding: '4px 8px',
+                            fontSize: '0.8rem'
+                          }}
+                        />
+                        {item.priceSource === 'MANUAL' && (
+                          <span className="pos-cart-chip pos-cart-chip-warning">
+                            Manual
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {isQuoteMode && canViewProjectedProfit && (
+                      <div className="pos-cart-item-profit">
+                        <span>Costo: {formatMoney(Number(item.cost || 0) * item.quantity)}</span>
+                        <span>Utilidad: {formatMoney((item.price * item.quantity) - (Number(item.cost || 0) * item.quantity))}</span>
+                        <span>Margen: {((item.price * item.quantity) > 0 ? ((((item.price * item.quantity) - (Number(item.cost || 0) * item.quantity)) / (item.price * item.quantity)) * 100) : 0).toFixed(2)}%</span>
+                      </div>
+                    )}
+
+                    {(item.batchNo || item.imei || item.serial) && (
+                      <div className="pos-cart-chips">
+                        {item.batchNo && (
+                          <span className="pos-cart-chip pos-cart-chip-batch">
+                            Lote: {item.batchNo} {item.expiryDate ? `(Vence: ${item.expiryDate})` : ''}
+                          </span>
+                        )}
+                        {item.imei && (
+                          <span className="pos-cart-chip pos-cart-chip-imei">
+                            IMEI: {item.imei}
+                          </span>
+                        )}
+                        {item.serial && (
+                          <span className="pos-cart-chip pos-cart-chip-serial">
+                            Serial: {item.serial}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="pos-cart-item-actions">
+                      <div className="pos-cart-qty-group">
+                        <button
+                          onClick={() => updateQuantity(item.id, -1, item.batchNo, item.imei, item.serial)}
+                          style={{
+                            width: 32,
+                            height: 32,
+                            borderRadius: '50%',
+                            border: '1px solid var(--border)',
+                            background: 'var(--surface)',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'var(--text)'
+                          }}
+                        >
+                          <svg width="12" height="2" viewBox="0 0 12 2" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M0 1H12" stroke="currentColor" strokeWidth="2"/>
+                          </svg>
+                        </button>
+                        <input
+                          type="number"
+                          min="1"
+                          max={isQuoteMode ? undefined : (item.maxQuantity || item.stock)}
+                          value={item.quantity}
+                          onChange={(e) => handleQuantityChange(item.id, e.target.value, item.batchNo, item.imei, item.serial)}
+                          className="pos-cart-qty-input"
+                          style={{
+                            width: 56,
+                            height: 32,
+                            textAlign: 'center',
+                            border: 'none',
+                            background: 'transparent',
+                            fontWeight: 'bold',
+                            fontSize: '1rem',
+                            padding: 0,
+                            margin: 0,
+                            color: 'var(--text)'
+                          }}
+                        />
+                        <button
+                          onClick={() => updateQuantity(item.id, 1, item.batchNo, item.imei, item.serial)}
+                          style={{
+                            width: 32,
+                            height: 32,
+                            borderRadius: '50%',
+                            border: '1px solid var(--border)',
+                            background: 'var(--surface)',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'var(--text)'
+                          }}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M6 0V12M0 6H12" stroke="currentColor" strokeWidth="2"/>
+                          </svg>
+                        </button>
+                      </div>
+                      <button
+                        onClick={() => removeFromCart(item.id, item.batchNo, item.imei, item.serial)}
+                        className="icon-btn danger"
+                        style={{
+                          minWidth: 112,
+                          height: 36,
+                          borderRadius: 10,
+                          marginLeft: 0
+                        }}
+                      >
+                        Quitar
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
 
-        <div className="pos-cart-summary" style={{ padding: 16, borderTop: '1px solid var(--border)', backgroundColor: 'var(--bg)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.2rem', fontWeight: 'bold', marginBottom: 16, color: 'var(--text)' }}>
-            <span>Total:</span>
-            <span>{formatMoney(total)}</span>
-          </div>
+        <div className={`pos-cart-summary${shouldCollapsePhonePayment && !isPhonePaymentPanelOpen ? ' phone-collapsed' : ''}`} style={{ padding: 16, borderTop: '1px solid var(--border)', backgroundColor: 'var(--bg)' }}>
+          {showPhoneCheckoutContext && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.2rem', fontWeight: 'bold', marginBottom: 16, color: 'var(--text)' }}>
+              <span>Total:</span>
+              <span>{formatMoney(total)}</span>
+            </div>
+          )}
+
+          {!isQuoteMode && shouldCollapsePhonePayment && (
+            <div className="pos-phone-payment-toggle">
+              {!isPhonePaymentPanelOpen ? (
+                <button
+                  type="button"
+                  onClick={() => setIsPhonePaymentPanelOpen(true)}
+                  disabled={cart.length === 0 || loading}
+                  className="primary-btn"
+                  style={{ width: '100%' }}
+                >
+                  Confirmar pago
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setIsPhonePaymentPanelOpen(false)}
+                  className="secondary-btn"
+                  style={{ width: '100%' }}
+                >
+                  Volver a productos
+                </button>
+              )}
+            </div>
+          )}
 
           {isQuoteMode && (
             <div style={{ marginBottom: 16, padding: 12, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--modal)' }}>
@@ -2029,7 +2157,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
             </div>
           )}
 
-          {!isQuoteMode && (
+          {!isQuoteMode && showExpandedPaymentPanel && (
             <div style={{ marginBottom: 16 }}>
               <label style={{ display: 'block', marginBottom: 8, fontWeight: 'bold', color: 'var(--muted)' }}>Método de Pago:</label>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
@@ -2142,7 +2270,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
             </div>
           )}
 
-          {!isQuoteMode && (
+          {!isQuoteMode && showExpandedPaymentPanel && (
             <>
               <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, fontSize: '0.95rem', color: 'var(--text)', cursor: 'pointer' }}>
                 <input
@@ -2179,7 +2307,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
               >
                 {loading ? 'Generando...' : 'Generar cotización'}
               </button>
-            ) : (
+            ) : showExpandedPaymentPanel ? (
               <button
                 onClick={handleCheckout}
                 disabled={cart.length === 0 || loading}
@@ -2198,9 +2326,9 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
               >
                 {loading ? 'Procesando...' : 'Pagar'}
               </button>
-            )}
+            ) : null}
 
-            {!isQuoteMode && lastSale && (
+            {!isQuoteMode && lastSale && showExpandedPaymentPanel && (
                 <div
                   style={{
                     width: '100%',
