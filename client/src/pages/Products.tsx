@@ -49,6 +49,12 @@ interface Batch {
   quantity: string
 }
 
+interface WarehouseStockRow {
+  warehouseId: number
+  warehouseName: string
+  quantity: number
+}
+
 export default function Products() {
   const user = useAuthStore(s => s.user)
   const hasPermission = useAuthStore(s => s.hasPermission)
@@ -65,7 +71,7 @@ export default function Products() {
   // Stock por almacén
   const [warehouses, setWarehouses] = useState<Array<{ id: number; name: string }>>([])
   const [shelves, setShelves] = useState<Array<{ id: number; name: string; warehouseId?: number | null; warehouseIds?: number[] }>>([])
-  const [warehouseStock, setWarehouseStock] = useState<Array<{ warehouseId: number; warehouseName: string; quantity: number }>>([])
+  const [warehouseStock, setWarehouseStock] = useState<WarehouseStockRow[]>([])
 
   const [showWarehouseStock, setShowWarehouseStock] = useState(true)
   const warehouseTotal = useMemo(() => warehouseStock.reduce((sum, x) => sum + Number(x.quantity || 0), 0), [warehouseStock])
@@ -85,6 +91,10 @@ export default function Products() {
   
   // Visualizador de imagen (lightbox)
   const [imageViewer, setImageViewer] = useState<{ url: string | null; name: string | null } | null>(null)
+  const [catalogStockProduct, setCatalogStockProduct] = useState<Product | null>(null)
+  const [catalogWarehouseStock, setCatalogWarehouseStock] = useState<WarehouseStockRow[]>([])
+  const [catalogStockLoading, setCatalogStockLoading] = useState(false)
+  const [catalogStockError, setCatalogStockError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null)
   const [selectedSubcategoryId, setSelectedSubcategoryId] = useState<number | null>(null)
@@ -538,6 +548,23 @@ export default function Products() {
     return deptId ? (departmentMap[deptId] || null) : null
   }, [details, categoryById, departmentMap])
 
+  const currentWarehouseId = user?.warehouseId ? Number(user.warehouseId) : null
+
+  const catalogCurrentWarehouseStock = useMemo(() => {
+    if (!currentWarehouseId) return null
+    return catalogWarehouseStock.find(item => Number(item.warehouseId) === currentWarehouseId) || null
+  }, [catalogWarehouseStock, currentWarehouseId])
+
+  const catalogOtherWarehouseStock = useMemo(() => {
+    if (!currentWarehouseId) return catalogWarehouseStock
+    return catalogWarehouseStock.filter(item => Number(item.warehouseId) !== currentWarehouseId)
+  }, [catalogWarehouseStock, currentWarehouseId])
+
+  const catalogOtherWarehouseTotal = useMemo(
+    () => catalogOtherWarehouseStock.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
+    [catalogOtherWarehouseStock]
+  )
+
   const detailImeis = useMemo(() => {
     if (Array.isArray(details?.imeiDetails) && details.imeiDetails.length > 0) {
       return details.imeiDetails
@@ -864,6 +891,21 @@ export default function Products() {
       setWarehouseStock(Array.isArray(whStock) ? whStock : [])
     } catch (e) {
       console.warn('Refresh warehouse stock failed:', e)
+    }
+  }
+
+  async function openCatalogStock(product: Product) {
+    setCatalogStockProduct(product)
+    setCatalogWarehouseStock([])
+    setCatalogStockError(null)
+    setCatalogStockLoading(true)
+    try {
+      const whStock = await getProductWarehouseStock(product.id)
+      setCatalogWarehouseStock(Array.isArray(whStock) ? whStock : [])
+    } catch (err: any) {
+      setCatalogStockError(err?.response?.data?.message || err?.message || 'Error al cargar existencias por tienda')
+    } finally {
+      setCatalogStockLoading(false)
     }
   }
   
@@ -1311,7 +1353,11 @@ export default function Products() {
                       onClick={() => setImageViewer({ url: p.imageUrl || 'https://via.placeholder.com/800x600?text=IMG', name: p.name })}
                       onKeyDown={e => { if (e.key === 'Enter') setImageViewer({ url: p.imageUrl || 'https://via.placeholder.com/800x600?text=IMG', name: p.name }) }}
                     />
-                    <div
+                    <button
+                      type="button"
+                      onClick={() => void openCatalogStock(p)}
+                      title="Ver existencias por tienda"
+                      aria-label={`Ver existencias por tienda de ${p.name}`}
                       style={{
                         position: 'absolute',
                         top: 20,
@@ -1323,6 +1369,7 @@ export default function Products() {
                         background: 'rgba(255,255,255,0.88)',
                         color: '#0f172a',
                         fontWeight: 700,
+                        cursor: 'pointer',
                         boxShadow: '0 8px 20px rgba(15, 23, 42, 0.12)',
                         ...(p.minStock !== undefined && p.minStock !== null
                           ? (Number(p.stock ?? 0) < Number(p.minStock)
@@ -1334,7 +1381,7 @@ export default function Products() {
                       }}
                     >
                       Stock: {p.stock}
-                    </div>
+                    </button>
                   </div>
 
                   <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10, flex: 1 }}>
@@ -1512,11 +1559,16 @@ export default function Products() {
                       <td style={{ padding: 8 }}>{resolveUnitName(unitNameByCode, p.unit)}</td>
                       <td style={{ padding: 8 }}>{p.minStock ?? '-'}</td>
                       <td style={{ padding: 8 }}>
-                        <span
+                        <button
+                          type="button"
+                          onClick={() => void openCatalogStock(p)}
+                          title="Ver existencias por tienda"
+                          aria-label={`Ver existencias por tienda de ${p.name}`}
                           style={{
                             fontSize: 12,
                             padding: '2px 6px',
                             borderRadius: 10,
+                            cursor: 'pointer',
                             ...(p.minStock !== undefined && p.minStock !== null
                               ? (Number(p.stock ?? 0) < Number(p.minStock)
                                   ? { border: '1px solid #FCA5A5', background: '#FEE2E2', color: '#991B1B', fontWeight: 600 }
@@ -1527,7 +1579,7 @@ export default function Products() {
                           }}
                         >
                           {p.stock}
-                        </span>
+                        </button>
                         <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
                           Otras tiendas: {Number(p.otherStock ?? 0)}
                         </div>
@@ -2286,6 +2338,114 @@ export default function Products() {
             </div>
           </div>
         </>
+      )}
+
+      {catalogStockProduct && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200, padding: 16 }}
+          onClick={() => {
+            setCatalogStockProduct(null)
+            setCatalogStockError(null)
+            setCatalogWarehouseStock([])
+          }}
+        >
+          <div
+            style={{ width: 560, maxWidth: '96vw', maxHeight: '85vh', overflowY: 'auto', background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 22, padding: 18, boxShadow: '0 20px 54px rgba(15, 23, 42, 0.2)' }}
+            onClick={event => event.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 22 }}>Existencias por tienda</h3>
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                  {catalogStockProduct.name}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setCatalogStockProduct(null)
+                  setCatalogStockError(null)
+                  setCatalogWarehouseStock([])
+                }}
+                style={{ width: 38, height: 38, borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
+                aria-label="Cerrar existencias por tienda"
+                title="Cerrar"
+              >
+                ×
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 14 }}>
+              <div style={{ padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Tienda actual</div>
+                <div style={{ fontWeight: 800, fontSize: 18, color: 'var(--text)' }}>
+                  {catalogCurrentWarehouseStock?.quantity ?? catalogStockProduct.stock ?? 0}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                  {user?.warehouseName || 'Tienda asignada'}
+                </div>
+              </div>
+              <div style={{ padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Otras tiendas</div>
+                <div style={{ fontWeight: 800, fontSize: 18, color: 'var(--text)' }}>{catalogOtherWarehouseTotal}</div>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>Existencia fuera de la tienda actual</div>
+              </div>
+            </div>
+
+            {catalogStockLoading && <div style={{ color: 'var(--muted)' }}>Cargando existencias...</div>}
+            {catalogStockError && <div style={{ color: '#ef4444' }}>{catalogStockError}</div>}
+
+            {!catalogStockLoading && !catalogStockError && (
+              <>
+                {catalogWarehouseStock.length === 0 ? (
+                  <div style={{ fontSize: 13, color: 'var(--muted)' }}>No hay existencias registradas por tienda para este producto.</div>
+                ) : (
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    {catalogWarehouseStock.map(item => {
+                      const isCurrentWarehouse = currentWarehouseId !== null && Number(item.warehouseId) === currentWarehouseId
+                      return (
+                        <div
+                          key={item.warehouseId}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 12,
+                            padding: '12px 14px',
+                            borderRadius: 14,
+                            border: `1px solid ${isCurrentWarehouse ? 'rgba(37, 99, 235, 0.28)' : 'var(--border)'}`,
+                            background: isCurrentWarehouse ? 'rgba(37, 99, 235, 0.08)' : 'var(--bg)'
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 700, color: 'var(--text)' }}>
+                              {item.warehouseName}
+                              {isCurrentWarehouse && (
+                                <span style={{ marginLeft: 8, fontSize: 11, color: '#2563eb' }}>(Actual)</span>
+                              )}
+                            </div>
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
+                              {Number(item.quantity || 0) > 0 ? 'Con existencia disponible' : 'Sin existencia disponible'}
+                            </div>
+                          </div>
+                          <div style={{ fontWeight: 800, fontSize: 18, color: Number(item.quantity || 0) > 0 ? '#059669' : '#dc2626' }}>
+                            {item.quantity}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {currentWarehouseId !== null && !catalogCurrentWarehouseStock && (
+                  <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 12 }}>
+                    La tienda actual no apareció en el desglose devuelto por el servidor.
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
       )}
 
       {deleteTarget && (
