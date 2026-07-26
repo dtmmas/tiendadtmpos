@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { getCredits, payCredit, getConfig, getCreditPayments } from '../api'
 import { formatDate, formatDateTime } from '../utils/date'
+import { formatMoney as formatCurrency } from '../utils/currency'
 import { buildPrintLogoHtml } from '../utils/printBranding'
 import CameraCaptureButton from '../components/CameraCaptureButton'
 
@@ -59,6 +60,8 @@ export default function Credits() {
     loadCredits()
     getConfig().then(setConfig)
   }, [])
+
+  const formatMoney = (value?: number | string) => formatCurrency(Number(value || 0), config?.currency)
 
   async function loadCredits() {
     setLoading(true)
@@ -165,7 +168,7 @@ export default function Credits() {
           
           <div class="row">
             <strong>MONTO ABONADO:</strong>
-            <strong>${config?.currency || '$'} ${Number(payment.amount).toFixed(2)}</strong>
+            <strong>${formatMoney(payment.amount)}</strong>
           </div>
           
           <div class="divider"></div>
@@ -189,7 +192,7 @@ export default function Credits() {
           
           <div class="row">
             <span>Deuda Total:</span>
-            <span>${config?.currency || '$'} ${Number(credit.total_amount).toFixed(2)}</span>
+            <span>${formatMoney(credit.total_amount)}</span>
           </div>
           
           <div class="footer">
@@ -324,13 +327,13 @@ export default function Credits() {
                       <td style={{ padding: 12, fontWeight: 600 }}>{credit.customer_name || 'Consumidor Final'}</td>
                       <td style={{ padding: 12 }}>{credit.doc_no || `#${credit.sale_id}`}</td>
                       <td style={{ padding: 12, textAlign: 'right' }}>
-                        {config?.currency} {total.toFixed(2)}
+                        {formatMoney(total)}
                       </td>
                       <td style={{ padding: 12, textAlign: 'right', color: '#22c55e' }}>
-                        {config?.currency} {paid.toFixed(2)}
+                        {formatMoney(paid)}
                       </td>
                       <td style={{ padding: 12, textAlign: 'right', color: isFullyPaid ? '#22c55e' : '#ef4444', fontWeight: 600 }}>
-                        {isFullyPaid ? 'COMPLETADO' : `${config?.currency} ${pending.toFixed(2)}`}
+                        {isFullyPaid ? 'COMPLETADO' : formatMoney(pending)}
                       </td>
                       <td style={{ padding: 12, textAlign: 'center', display: 'flex', gap: 8, justifyContent: 'center' }}>
                         <button
@@ -388,10 +391,10 @@ export default function Credits() {
             <div style={{ marginBottom: 20, lineHeight: '1.6' }}>
               <p><strong>Cliente:</strong> {selectedCredit.customer_name}</p>
               <p><strong>Documento:</strong> {selectedCredit.doc_no || `#${selectedCredit.sale_id}`}</p>
-              <p><strong>Total Deuda:</strong> {config?.currency} {Number(selectedCredit.total_amount).toFixed(2)}</p>
-              <p><strong>Pagado:</strong> {config?.currency} {Number(selectedCredit.paid_amount).toFixed(2)}</p>
+              <p><strong>Total Deuda:</strong> {formatMoney(selectedCredit.total_amount)}</p>
+              <p><strong>Pagado:</strong> {formatMoney(selectedCredit.paid_amount)}</p>
               <p style={{ fontSize: '1.2rem', color: '#ef4444' }}>
-                <strong>Pendiente: {config?.currency} {(Number(selectedCredit.total_amount) - Number(selectedCredit.paid_amount)).toFixed(2)}</strong>
+                <strong>Pendiente: {formatMoney(Number(selectedCredit.total_amount) - Number(selectedCredit.paid_amount))}</strong>
               </p>
             </div>
 
@@ -611,7 +614,7 @@ export default function Credits() {
                           {formatDate(payment.created_at)}
                         </td>
                         <td style={{ padding: '1rem', textAlign: 'right', fontWeight: 'bold' }}>
-                          {config?.currency} {Number(payment.amount).toFixed(2)}
+                          {formatMoney(payment.amount)}
                         </td>
                         <td style={{ padding: '1rem', textAlign: 'center' }}>
                           <span style={{

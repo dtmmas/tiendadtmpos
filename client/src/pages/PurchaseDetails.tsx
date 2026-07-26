@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { useConfigStore } from '../store/config'
+import { formatMoney } from '../utils/currency'
 
 interface PurchaseItem {
   id: number
@@ -99,8 +100,8 @@ export default function PurchaseDetails() {
                   )}
                 </td>
                 <td style={{ padding: 12, textAlign: 'center' }}>{item.quantity}</td>
-                <td style={{ padding: 12, textAlign: 'right' }}>{config?.currency} {Number(item.unit_cost).toFixed(2)}</td>
-                <td style={{ padding: 12, textAlign: 'right' }}>{config?.currency} {Number(item.total_cost).toFixed(2)}</td>
+                <td style={{ padding: 12, textAlign: 'right' }}>{formatMoney(Number(item.unit_cost), config?.currency)}</td>
+                <td style={{ padding: 12, textAlign: 'right' }}>{formatMoney(Number(item.total_cost), config?.currency)}</td>
               </tr>
             ))}
           </tbody>
@@ -108,7 +109,7 @@ export default function PurchaseDetails() {
             <tr>
               <td colSpan={3} style={{ padding: 12, textAlign: 'right', fontWeight: 'bold' }}>Total:</td>
               <td style={{ padding: 12, textAlign: 'right', fontWeight: 'bold', fontSize: '1.2rem', color: 'var(--accent)' }}>
-                {config?.currency} {Number(purchase.total).toFixed(2)}
+                {formatMoney(Number(purchase.total), config?.currency)}
               </td>
             </tr>
           </tfoot>

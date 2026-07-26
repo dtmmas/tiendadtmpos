@@ -13,10 +13,39 @@ export default function Layout() {
   const { mode, setMode } = useThemeStore()
   const companyName = formatCompanyName(config?.name)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [mobileMenuSections, setMobileMenuSections] = useState<Record<string, boolean>>({
+    principal: true,
+    procesos: false,
+    catalogo: false,
+    inventario: false,
+    almacenes: false,
+    reportes: false,
+    sistema: false
+  })
+  const closeMobileMenu = () => setMobileMenuOpen(false)
 
   useEffect(() => {
     setMobileMenuOpen(false)
   }, [location.pathname])
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return
+
+    const previousOverflow = document.body.style.overflow
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMobileMenuOpen(false)
+      }
+    }
+
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [mobileMenuOpen])
 
   const isAdmin = String(user?.role || '').toUpperCase() === 'ADMIN'
   const canManageProducts = String(user?.role || '').toUpperCase() === 'ADMIN' || hasPermission('products:write')
@@ -55,6 +84,147 @@ export default function Layout() {
     document.body.removeChild(anchor)
 
     setMobileMenuOpen(false)
+  }
+
+  const renderMobileMenuIcon = (kind: string) => {
+    switch (kind) {
+      case 'dashboard':
+        return (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+            <polyline points="9 22 9 12 15 12 15 22"></polyline>
+          </svg>
+        )
+      case 'pos':
+        return (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <path d="M16 10a4 4 0 0 1-8 0"></path>
+          </svg>
+        )
+      case 'cash':
+        return (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+            <circle cx="12" cy="12" r="2"></circle>
+            <path d="M6 12h.01M18 12h.01"></path>
+          </svg>
+        )
+      case 'layers':
+        return (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+            <polyline points="2 17 12 22 22 17"></polyline>
+            <polyline points="2 12 12 17 22 12"></polyline>
+          </svg>
+        )
+      case 'catalog':
+        return (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+          </svg>
+        )
+      case 'inventory':
+        return (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="21 8 21 21 3 21 3 8"></polyline>
+            <rect x="1" y="3" width="22" height="5"></rect>
+            <line x1="10" y1="12" x2="14" y2="12"></line>
+          </svg>
+        )
+      case 'warehouse':
+        return (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 21v-8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v8"></path>
+            <path d="M5 11V7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v4"></path>
+            <path d="M9 7v4"></path>
+            <path d="M15 7v4"></path>
+          </svg>
+        )
+      case 'reports':
+        return (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="20" x2="18" y2="10"></line>
+            <line x1="12" y1="20" x2="12" y2="4"></line>
+            <line x1="6" y1="20" x2="6" y2="14"></line>
+          </svg>
+        )
+      case 'settings':
+        return (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        )
+      case 'user':
+        return (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 21a8 8 0 1 0-16 0"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+          </svg>
+        )
+      default:
+        return (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+          </svg>
+        )
+    }
+  }
+
+  const renderMobileMenuLinkCard = (to: string, label: string, description: string, icon: string) => (
+    <Link to={to} className="mobile-menu-card" onClick={closeMobileMenu}>
+      <span className="mobile-menu-card-icon">{renderMobileMenuIcon(icon)}</span>
+      <span className="mobile-menu-card-title">{label}</span>
+      <span className="mobile-menu-card-description">{description}</span>
+    </Link>
+  )
+
+  const renderMobileMenuActionCard = (label: string, description: string, icon: string, onClick: () => void) => (
+    <button type="button" className="mobile-menu-card" onClick={onClick}>
+      <span className="mobile-menu-card-icon">{renderMobileMenuIcon(icon)}</span>
+      <span className="mobile-menu-card-title">{label}</span>
+      <span className="mobile-menu-card-description">{description}</span>
+    </button>
+  )
+
+  const toggleMobileMenuSection = (section: string) => {
+    setMobileMenuSections(prev => ({
+      ...prev,
+      [section]: !prev[section]
+    }))
+  }
+
+  const renderMobileMenuSection = (section: string, title: string, icon: string, children: React.ReactNode) => {
+    const isOpen = Boolean(mobileMenuSections[section])
+
+    return (
+      <div className={`mobile-menu-group${isOpen ? ' open' : ''}`}>
+        <button
+          type="button"
+          className="mobile-menu-section-trigger"
+          onClick={() => toggleMobileMenuSection(section)}
+          aria-expanded={isOpen}
+        >
+          <span className="mobile-menu-section-trigger-main">
+            <span className="mobile-menu-card-icon mobile-menu-section-icon">{renderMobileMenuIcon(icon)}</span>
+            <span className="mobile-menu-title">{title}</span>
+          </span>
+          <span className={`mobile-menu-section-chevron${isOpen ? ' open' : ''}`}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </span>
+        </button>
+        {isOpen && (
+          <div className="mobile-menu-cards">
+            {children}
+          </div>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -117,7 +287,7 @@ export default function Layout() {
                   <button
                     type="button"
                     onClick={openQuotationWindow}
-                    style={{ background: 'none', border: 'none', padding: 0, color: 'inherit', cursor: 'pointer', textAlign: 'left', width: '100%' }}
+                    style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', textAlign: 'left', width: '100%' }}
                   >
                     Cotizaciones
                   </button>
@@ -242,81 +412,122 @@ export default function Layout() {
           </button>
         </div>
       </header>
-      <div className={`mobile-menu ${mobileMenuOpen ? 'open' : ''}`}>
-        <div className="mobile-menu-section">
-          {isAdmin && <Link to="/dashboard">Dashboard</Link>}
-          {canSell() && (
-            <button type="button" onClick={openPOSWindow}>Ventas / POS</button>
-          )}
-          {(hasPermission('cash:view') || hasPermission('cash:open') || hasPermission('cash:movements') || hasPermission('cash:close') || hasPermission('sales:create')) && (
-            <Link to="/cash-register">Caja</Link>
-          )}
+      {mobileMenuOpen && (
+        <div className="mobile-menu-backdrop" onClick={closeMobileMenu}>
+          <div
+            className="mobile-menu-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Menu principal"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="mobile-menu-dialog-header">
+              <div>
+                <div className="mobile-menu-dialog-title">Menú</div>
+                <div className="mobile-menu-dialog-subtitle">Accesos rápidos del sistema</div>
+              </div>
+              <button type="button" className="mobile-menu-dialog-close" onClick={closeMobileMenu} aria-label="Cerrar menu">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+
+            <div className="mobile-menu-dialog-body">
+              <div className="mobile-menu-grid">
+                {renderMobileMenuSection('principal', 'Principal', 'dashboard', (
+                  <>
+                    {isAdmin && renderMobileMenuLinkCard('/dashboard', 'Dashboard', 'Resumen general', 'dashboard')}
+                    {canSell() && renderMobileMenuActionCard('Ventas / POS', 'Abrir punto de venta', 'pos', () => openPOSWindow())}
+                    {(hasPermission('cash:view') || hasPermission('cash:open') || hasPermission('cash:movements') || hasPermission('cash:close') || hasPermission('sales:create')) &&
+                      renderMobileMenuLinkCard('/cash-register', 'Caja', 'Operaciones de caja', 'cash')}
+                  </>
+                ))}
+
+                {(canSell() || hasPermission('credits:read') || hasPermission('purchases:read')) && (
+                  renderMobileMenuSection('procesos', 'Procesos', 'layers', (
+                    <>
+                      {canSell() && renderMobileMenuActionCard('Cotizaciones', 'Abrir cotizador', 'layers', () => openQuotationWindow())}
+                      {hasPermission('credits:read') && renderMobileMenuLinkCard('/credits', 'Créditos', 'Gestionar cobros', 'layers')}
+                      {hasPermission('purchases:read') && renderMobileMenuLinkCard('/purchases', 'Compras', 'Registrar entradas', 'layers')}
+                    </>
+                  ))
+                )}
+
+                {(hasPermission('products:read') || hasPermission('customers:read') || hasPermission('categories:read') || hasPermission('brands:read') || hasPermission('departments:read') || hasPermission('units:read') || hasPermission('suppliers:read')) && (
+                  renderMobileMenuSection('catalogo', 'Catálogo', 'catalog', (
+                    <>
+                      {hasPermission('products:read') && renderMobileMenuLinkCard('/products', productsMenuLabel, 'Listado principal', 'catalog')}
+                      {hasPermission('customers:read') && renderMobileMenuLinkCard('/customers', 'Clientes', 'Gestionar clientes', 'catalog')}
+                      {hasPermission('categories:read') && renderMobileMenuLinkCard('/categories', 'Categorías', 'Organizar productos', 'catalog')}
+                      {hasPermission('brands:read') && renderMobileMenuLinkCard('/brands', 'Marcas', 'Gestionar marcas', 'catalog')}
+                      {hasPermission('departments:read') && renderMobileMenuLinkCard('/departments', 'Departamentos', 'Clasificación interna', 'catalog')}
+                      {hasPermission('units:read') && renderMobileMenuLinkCard('/units', 'Unidades', 'Medidas de venta', 'catalog')}
+                      {hasPermission('suppliers:read') && renderMobileMenuLinkCard('/suppliers', 'Proveedores', 'Relación comercial', 'catalog')}
+                    </>
+                  ))
+                )}
+
+                {hasPermission('inventory:read') && (
+                  renderMobileMenuSection('inventario', 'Inventario', 'inventory', (
+                    <>
+                      {renderMobileMenuLinkCard('/inventory', 'Movimientos', 'Entradas y ajustes', 'inventory')}
+                      {renderMobileMenuLinkCard('/inventory/report', 'Reporte stock', 'Resumen de existencias', 'inventory')}
+                    </>
+                  ))
+                )}
+
+                {(hasPermission('shelves:read') || hasPermission('warehouses:read') || true) && (
+                  renderMobileMenuSection('almacenes', 'Almacenes', 'warehouse', (
+                    <>
+                      {renderMobileMenuLinkCard('/warehouses', 'Almacenes', 'Tiendas y bodegas', 'warehouse')}
+                      {renderMobileMenuLinkCard('/transfers', 'Traslados', 'Mover existencias', 'warehouse')}
+                      {hasPermission('shelves:read') && renderMobileMenuLinkCard('/shelves', 'Ubicaciones', 'Estantes y zonas', 'warehouse')}
+                    </>
+                  ))
+                )}
+
+                {(hasPermission('sales:read') || hasPermission('credits:read') || hasPermission('cash:view') || hasPermission('cash:close')) && (
+                  renderMobileMenuSection('reportes', 'Reportes', 'reports', (
+                    <>
+                      {hasPermission('sales:read') &&
+                        (user?.role === 'ADMIN'
+                          ? renderMobileMenuLinkCard('/sales', 'Historial ventas', 'Ventas registradas', 'reports')
+                          : renderMobileMenuLinkCard('/my-sales', 'Mis ventas', 'Historial personal', 'reports'))}
+                      {hasPermission('credits:read') && renderMobileMenuLinkCard('/credit-reports', 'Créditos', 'Reporte de cobros', 'reports')}
+                      {(hasPermission('cash:view') || hasPermission('cash:close')) &&
+                        renderMobileMenuLinkCard('/cash-history', 'Cierres caja', 'Historial de cierres', 'reports')}
+                    </>
+                  ))
+                )}
+
+                {renderMobileMenuSection('sistema', 'Sistema', 'settings', (
+                  <>
+                    {hasPermission('config:read') && renderMobileMenuLinkCard('/config', 'Config', 'Ajustes del sistema', 'settings')}
+                    {hasPermission('logs:read') && renderMobileMenuLinkCard('/logs', 'Logs', 'Registro de eventos', 'settings')}
+                    {hasPermission('users:read') && renderMobileMenuLinkCard('/users', 'Usuarios', 'Accesos y cuentas', 'settings')}
+                    {hasPermission('roles:read') && renderMobileMenuLinkCard('/roles', 'Roles', 'Permisos del sistema', 'settings')}
+                  </>
+                ))}
+              </div>
+
+              <div className="mobile-menu-session">
+                <div className="mobile-menu-session-info">
+                  <span className="mobile-menu-card-icon">{renderMobileMenuIcon('user')}</span>
+                  <div>
+                    <div className="mobile-menu-session-name">{user?.name}</div>
+                    <div className="mobile-menu-session-role">{user?.role}</div>
+                  </div>
+                </div>
+                <button type="button" className="mobile-menu-session-logout" onClick={() => { logout(); closeMobileMenu() }}>
+                  Salir
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
-
-        {(canSell() || hasPermission('credits:read') || hasPermission('purchases:read')) && (
-          <div className="mobile-menu-section">
-            <div className="mobile-menu-title">Procesos</div>
-            {canSell() && (
-              <button type="button" onClick={openQuotationWindow}>Cotizaciones</button>
-            )}
-            {hasPermission('credits:read') && <Link to="/credits">Créditos</Link>}
-            {hasPermission('purchases:read') && <Link to="/purchases">Compras</Link>}
-          </div>
-        )}
-
-        {(hasPermission('products:read') || hasPermission('customers:read') || hasPermission('categories:read') || hasPermission('brands:read') || hasPermission('departments:read') || hasPermission('units:read') || hasPermission('suppliers:read')) && (
-          <div className="mobile-menu-section">
-            <div className="mobile-menu-title">Catalogo</div>
-            {hasPermission('products:read') && <Link to="/products">{productsMenuLabel}</Link>}
-            {hasPermission('customers:read') && <Link to="/customers">Clientes</Link>}
-            {hasPermission('categories:read') && <Link to="/categories">Categorías</Link>}
-            {hasPermission('brands:read') && <Link to="/brands">Marcas</Link>}
-            {hasPermission('departments:read') && <Link to="/departments">Departamentos</Link>}
-            {hasPermission('units:read') && <Link to="/units">Unidades</Link>}
-            {hasPermission('suppliers:read') && <Link to="/suppliers">Proveedores</Link>}
-          </div>
-        )}
-
-        {hasPermission('inventory:read') && (
-          <div className="mobile-menu-section">
-            <div className="mobile-menu-title">Inventario</div>
-            <Link to="/inventory">Movimientos</Link>
-            <Link to="/inventory/report">Reporte stock</Link>
-          </div>
-        )}
-
-        {(hasPermission('shelves:read') || hasPermission('warehouses:read') || true) && (
-          <div className="mobile-menu-section">
-            <div className="mobile-menu-title">Almacenes</div>
-            <Link to="/warehouses">Almacenes / Tiendas</Link>
-            <Link to="/transfers">Traslados</Link>
-            {hasPermission('shelves:read') && <Link to="/shelves">Ubicaciones</Link>}
-          </div>
-        )}
-
-        {(hasPermission('sales:read') || hasPermission('credits:read') || hasPermission('cash:view') || hasPermission('cash:close')) && (
-          <div className="mobile-menu-section">
-            <div className="mobile-menu-title">Reportes</div>
-            {hasPermission('sales:read') && (user?.role === 'ADMIN' ? <Link to="/sales">Historial ventas</Link> : <Link to="/my-sales">Mis ventas</Link>)}
-            {hasPermission('credits:read') && <Link to="/credit-reports">Reporte créditos</Link>}
-            {(hasPermission('cash:view') || hasPermission('cash:close')) && <Link to="/cash-history">Cierres de caja</Link>}
-          </div>
-        )}
-
-        <div className="mobile-menu-section">
-          <div className="mobile-menu-title">Sistema</div>
-          {hasPermission('config:read') && <Link to="/config">Config</Link>}
-          {hasPermission('logs:read') && <Link to="/logs">Logs</Link>}
-          {hasPermission('users:read') && <Link to="/users">Usuarios</Link>}
-          {hasPermission('roles:read') && <Link to="/roles">Roles</Link>}
-        </div>
-
-        <div className="mobile-menu-section">
-          <div className="mobile-menu-title">Sesion</div>
-          <div className="mobile-menu-user">{user?.name} ({user?.role})</div>
-          <button type="button" onClick={logout}>Salir</button>
-        </div>
-      </div>
+      )}
       <main className="main">
         <Outlet />
       </main>

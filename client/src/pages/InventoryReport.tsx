@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { useConfigStore } from '../store/config'
+import { formatMoney, formatNumber } from '../utils/currency'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import * as XLSX from 'xlsx'
@@ -71,9 +72,9 @@ export default function InventoryReport() {
     doc.text(`Almacén: ${warehouseName}`, 14, titleY + 14)
     
     // Totals
-    doc.text(`Total Unidades: ${totalItems}`, 14, titleY + 24)
-    doc.text(`Total Costo: ${currency} ${totalCost.toFixed(2)}`, 80, titleY + 24)
-    doc.text(`Total Venta: ${currency} ${totalPrice.toFixed(2)}`, 150, titleY + 24)
+    doc.text(`Total Unidades: ${formatNumber(totalItems, 0)}`, 14, titleY + 24)
+    doc.text(`Total Costo: ${formatMoney(totalCost, currency)}`, 80, titleY + 24)
+    doc.text(`Total Venta: ${formatMoney(totalPrice, currency)}`, 150, titleY + 24)
 
     const tableColumn = ["Código", "Producto", "Almacén", "Stock", "Detalle (Lote/IMEI)", "Costo U.", "Total Costo"]
     const tableRows = items.map(item => [
@@ -82,8 +83,8 @@ export default function InventoryReport() {
       item.warehouse_name,
       item.quantity,
       item.details || '-',
-      `${currency} ${Number(item.cost || 0).toFixed(2)}`,
-      `${currency} ${(Number(item.quantity) * Number(item.cost || 0)).toFixed(2)}`
+      formatMoney(Number(item.cost || 0), currency),
+      formatMoney(Number(item.quantity) * Number(item.cost || 0), currency)
     ])
 
     autoTable(doc, {
@@ -160,11 +161,11 @@ export default function InventoryReport() {
         </div>
         <div className="kpi-card" style={{ background: 'var(--surface)', padding: 15, borderRadius: 8, border: '1px solid var(--border)' }}>
           <div style={{ fontSize: 14, color: 'gray' }}>Valor Costo Total</div>
-          <div style={{ fontSize: 24, fontWeight: 'bold', color: '#1565c0' }}>{currency} {totalCost.toFixed(2)}</div>
+          <div style={{ fontSize: 24, fontWeight: 'bold', color: '#1565c0' }}>{formatMoney(totalCost, currency)}</div>
         </div>
         <div className="kpi-card" style={{ background: 'var(--surface)', padding: 15, borderRadius: 8, border: '1px solid var(--border)' }}>
           <div style={{ fontSize: 14, color: 'gray' }}>Valor Venta Total</div>
-          <div style={{ fontSize: 24, fontWeight: 'bold', color: '#2e7d32' }}>{currency} {totalPrice.toFixed(2)}</div>
+          <div style={{ fontSize: 24, fontWeight: 'bold', color: '#2e7d32' }}>{formatMoney(totalPrice, currency)}</div>
         </div>
       </div>
 
@@ -215,10 +216,10 @@ export default function InventoryReport() {
                   {item.quantity}
                 </td>
                 <td style={{ padding: '10px 16px', verticalAlign: 'top', textAlign: 'right', color: '#64748b' }}>
-                  {currency} {Number(item.cost || 0).toFixed(2)}
+                  {formatMoney(Number(item.cost || 0), currency)}
                 </td>
                 <td style={{ padding: '10px 16px', verticalAlign: 'top', textAlign: 'right', fontWeight: 600, color: '#0f172a' }}>
-                  {currency} {(Number(item.quantity) * Number(item.cost || 0)).toFixed(2)}
+                  {formatMoney(Number(item.quantity) * Number(item.cost || 0), currency)}
                 </td>
               </tr>
             ))}

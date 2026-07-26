@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { getCredits } from '../api'
 import { useConfigStore } from '../store/config'
 import { formatDate } from '../utils/date'
+import { formatNumber } from '../utils/currency'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { addLogoToPdf } from '../utils/printBranding'
@@ -77,7 +78,7 @@ export default function CreditReports() {
     try {
       return new Intl.NumberFormat('es-GT', { style: 'currency', currency: 'GTQ' }).format(Number(amount))
     } catch (e) {
-      return `Q${Number(amount).toFixed(2)}`
+      return `Q${formatNumber(Number(amount))}`
     }
   }
 

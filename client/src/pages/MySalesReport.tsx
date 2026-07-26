@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { getMySalesReport, getSaleDetails } from '../api'
 import { useConfigStore } from '../store/config'
 import { formatDate, formatDateTime } from '../utils/date'
+import { formatMoney as formatCurrency, formatNumber } from '../utils/currency'
 
 interface Sale {
   id: number
@@ -266,7 +267,7 @@ export default function MySalesReport() {
 
   const totalPages = Math.ceil(pagination.total / pagination.limit)
   const currentPage = Math.floor(pagination.offset / pagination.limit) + 1
-  const formatMoney = (value?: number) => `${config?.currency ?? '$'} ${Number(value || 0).toFixed(2)}`
+  const formatMoney = (value?: number) => formatCurrency(Number(value || 0), config?.currency)
 
   return (
     <div className="page-shell">
@@ -424,8 +425,8 @@ export default function MySalesReport() {
                         <tr key={item.id} style={{ borderBottom: '1px solid var(--border)' }}>
                           <td style={{ padding: '10px 16px' }}>{item.product_name}</td>
                           <td style={{ padding: '10px 16px', textAlign: 'right' }}>{item.quantity}</td>
-                          <td style={{ padding: '10px 16px', textAlign: 'right' }}>{Number(item.unit_price).toFixed(2)}</td>
-                          <td style={{ padding: '10px 16px', textAlign: 'right' }}>{Number(item.total).toFixed(2)}</td>
+                          <td style={{ padding: '10px 16px', textAlign: 'right' }}>{formatNumber(Number(item.unit_price))}</td>
+                          <td style={{ padding: '10px 16px', textAlign: 'right' }}>{formatNumber(Number(item.total))}</td>
                         </tr>
                       ))}
                     </tbody>

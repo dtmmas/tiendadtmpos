@@ -4,6 +4,7 @@ import { api, getSales, getSaleDetails, cancelSale } from '../api'
 import { useConfigStore } from '../store/config'
 import { useAuthStore } from '../store/auth'
 import { formatDate, formatDateTime } from '../utils/date'
+import { formatMoney as formatCurrency, formatNumber } from '../utils/currency'
 import jsPDF from 'jspdf'
 import { formatCompanyName } from '../utils/text'
 import { addLogoToPdf } from '../utils/printBranding'
@@ -377,7 +378,7 @@ export default function Sales() {
     }
   }
 
-  const formatMoney = (value?: number) => `${config?.currency ?? '$'} ${Number(value || 0).toFixed(2)}`
+  const formatMoney = (value?: number) => formatCurrency(Number(value || 0), config?.currency)
 
   const downloadTicketPdf = (blobUrl: string, saleId: number) => {
     const link = document.createElement('a')
@@ -422,23 +423,23 @@ export default function Sales() {
      sale.items.forEach(item => {
        const lineTotal = item.unit_price * item.quantity
        doc.text(`${item.product_name.substring(0, 20)}`, 5, y)
-       doc.text(`${item.quantity} x ${Number(item.unit_price).toFixed(2)}`, 50, y, { align: 'right' })
-       doc.text(`${Number(lineTotal).toFixed(2)}`, 75, y, { align: 'right' })
+       doc.text(`${formatNumber(Number(item.quantity), 0)} x ${formatNumber(Number(item.unit_price))}`, 50, y, { align: 'right' })
+       doc.text(formatNumber(Number(lineTotal)), 75, y, { align: 'right' })
        y += 5
      })
  
      doc.line(5, y, 75, y)
      y += 5
      doc.setFontSize(10)
-     doc.text(`TOTAL: ${config?.currency} ${Number(sale.total).toFixed(2)}`, 75, y, { align: 'right' })
+     doc.text(`TOTAL: ${formatMoney(Number(sale.total))}`, 75, y, { align: 'right' })
      
      y += 5
      doc.setFontSize(8)
      
     if (sale.payment_method === 'CASH') {
-        doc.text(`Efectivo: ${Number(sale.received_amount || 0).toFixed(2)}`, 5, y)
+        doc.text(`Efectivo: ${formatNumber(Number(sale.received_amount || 0))}`, 5, y)
         y += 4
-        doc.text(`Cambio: ${Number(sale.change_amount || 0).toFixed(2)}`, 5, y)
+        doc.text(`Cambio: ${formatNumber(Number(sale.change_amount || 0))}`, 5, y)
     } else if (sale.payment_method === 'CARD') {
         doc.text(`Tarjeta Ref: ${sale.reference_number || ''}`, 5, y)
     } else if (sale.payment_method === 'DEPOSIT') {
@@ -905,8 +906,8 @@ export default function Sales() {
                         <tr key={item.id} style={{ borderBottom: '1px solid var(--border)' }}>
                           <td style={{ padding: '10px 16px' }}>{item.product_name}</td>
                           <td style={{ padding: '10px 16px', textAlign: 'right' }}>{item.quantity}</td>
-                          <td style={{ padding: '10px 16px', textAlign: 'right' }}>{Number(item.unit_price).toFixed(2)}</td>
-                          <td style={{ padding: '10px 16px', textAlign: 'right' }}>{Number(item.total).toFixed(2)}</td>
+                          <td style={{ padding: '10px 16px', textAlign: 'right' }}>{formatNumber(Number(item.unit_price))}</td>
+                          <td style={{ padding: '10px 16px', textAlign: 'right' }}>{formatNumber(Number(item.total))}</td>
                         </tr>
                       ))}
                     </tbody>

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { api, getSuppliers, getProducts } from '../api'
 import { useConfigStore } from '../store/config'
 import { useNavigate } from 'react-router-dom'
+import { formatMoney } from '../utils/currency'
 
 interface Product {
   id: number
@@ -494,7 +495,7 @@ export default function PurchaseCreate() {
                     />
                   </td>
                   <td style={{ padding: 10, textAlign: 'right' }}>
-                    {config?.currency} {(item.quantity * item.unitCost).toFixed(2)}
+                    {formatMoney(item.quantity * item.unitCost, config?.currency)}
                   </td>
                   <td style={{ padding: 10, textAlign: 'center' }}>
                     <button 
@@ -519,7 +520,7 @@ export default function PurchaseCreate() {
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 20, padding: 20, borderTop: '1px solid var(--border)' }}>
           <div style={{ fontSize: '1.5em', fontWeight: 'bold' }}>
-            Total: {config?.currency} {total.toFixed(2)}
+            Total: {formatMoney(total, config?.currency)}
           </div>
           <button 
             className="btn-primary" 

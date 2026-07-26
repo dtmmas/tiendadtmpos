@@ -11,6 +11,7 @@ import {
 import { useAuthStore } from '../store/auth'
 import { useConfigStore } from '../store/config'
 import { formatDateTime } from '../utils/date'
+import { formatNumber } from '../utils/currency'
 import { buildPrintLogoHtml } from '../utils/printBranding'
 
 export default function CashRegister() {
@@ -402,15 +403,15 @@ export default function CashRegister() {
           <div style={{ margin: '20px 0', textAlign: 'left', background: 'var(--bg)', padding: 15, borderRadius: 8 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
               <span>Esperado por Sistema:</span>
-              <strong>{closeResult.expected.toFixed(2)}</strong>
+              <strong>{formatMoney(closeResult.expected)}</strong>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
               <span>Monto Real (Conteo):</span>
-              <strong>{(closeResult.expected + closeResult.difference).toFixed(2)}</strong>
+              <strong>{formatMoney(closeResult.expected + closeResult.difference)}</strong>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 8, borderTop: '1px solid var(--border)', color: closeResult.difference === 0 ? 'green' : 'red' }}>
               <span>Diferencia:</span>
-              <strong>{closeResult.difference > 0 ? '+' : ''}{closeResult.difference.toFixed(2)}</strong>
+              <strong>{closeResult.difference > 0 ? '+' : ''}{formatMoney(closeResult.difference)}</strong>
             </div>
           </div>
           <div style={{ display: 'flex', justifyContent: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -537,12 +538,12 @@ export default function CashRegister() {
               {summary && Object.entries(summary.salesByMethod).map(([method, total]: any) => (
                 <tr key={method} style={{ borderBottom: '1px solid var(--border)' }}>
                   <td style={{ padding: 8 }}>{translateMethod(method)}</td>
-                  <td style={{ padding: 8, textAlign: 'right' }}>{Number(total).toFixed(2)}</td>
+                  <td style={{ padding: 8, textAlign: 'right' }}>{formatMoney(total)}</td>
                 </tr>
               ))}
               <tr style={{ fontWeight: 'bold' }}>
                 <td style={{ padding: 8 }}>Total Ventas</td>
-                <td style={{ padding: 8, textAlign: 'right' }}>{summary?.totalSales.toFixed(2)}</td>
+                <td style={{ padding: 8, textAlign: 'right' }}>{formatMoney(summary?.totalSales)}</td>
               </tr>
             </tbody>
           </table>
@@ -562,7 +563,7 @@ export default function CashRegister() {
                 Object.entries(creditPaymentsByMethod).map(([method, total]: any) => (
                   <tr key={method} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: 8 }}>{translateMethod(method)}</td>
-                    <td style={{ padding: 8, textAlign: 'right' }}>{Number(total).toFixed(2)}</td>
+                    <td style={{ padding: 8, textAlign: 'right' }}>{formatMoney(total)}</td>
                   </tr>
                 ))
               )}
@@ -600,7 +601,7 @@ export default function CashRegister() {
                                     </span>
                                 </td>
                                 <td style={{ padding: 5, fontSize: '0.9rem' }}>{m.description}</td>
-                                <td style={{ padding: 5, textAlign: 'right', fontWeight: 600 }}>{Number(m.amount).toFixed(2)}</td>
+                                <td style={{ padding: 5, textAlign: 'right', fontWeight: 600 }}>{formatMoney(m.amount)}</td>
                             </tr>
                         ))}
                     </tbody>
@@ -653,7 +654,7 @@ export default function CashRegister() {
         <Modal onClose={() => setShowCloseModal(false)} title="Cierre de Caja">
            <div style={{ marginBottom: 20, padding: 15, background: 'var(--bg)', borderRadius: 8 }}>
               <div style={{ fontSize: '0.9rem', color: 'var(--muted)' }}>Total Esperado en Sistema</div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{summary?.expectedCash.toFixed(2)}</div>
+              <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{formatMoney(summary?.expectedCash)}</div>
            </div>
            <form onSubmit={handleCloseRegister}>
              <div style={{ marginBottom: 15 }}>
@@ -670,7 +671,7 @@ export default function CashRegister() {
              </div>
              {closingAmount && (
                  <div style={{ marginBottom: 15, textAlign: 'right', fontWeight: 'bold', color: (Number(closingAmount) - (summary?.expectedCash || 0)) === 0 ? 'green' : 'red' }}>
-                    Diferencia: {(Number(closingAmount) - (summary?.expectedCash || 0)).toFixed(2)}
+                    Diferencia: {formatMoney(Number(closingAmount) - (summary?.expectedCash || 0))}
                  </div>
              )}
              <div style={{ marginBottom: 15 }}>
@@ -701,7 +702,7 @@ function StatCard({ title, value, color, negative, highlight }: any) {
         <div className="card" style={{ borderLeft: `4px solid ${color}`, background: highlight ? 'rgba(234, 179, 8, 0.1)' : undefined }}>
             <div style={{ fontSize: '0.85rem', color: 'var(--muted)', marginBottom: 5 }}>{title}</div>
             <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: highlight ? '#000' : 'var(--text)' }}>
-                {negative ? '-' : ''}{Number(value || 0).toFixed(2)}
+                {negative ? '-' : ''}{formatMoney(value)}
             </div>
         </div>
     )
@@ -732,7 +733,7 @@ function translateMethod(method: string) {
 }
 
 function formatMoney(value: unknown) {
-    return Number(value || 0).toFixed(2)
+    return formatNumber(Number(value || 0))
 }
 
 function escapeHtml(value: string) {

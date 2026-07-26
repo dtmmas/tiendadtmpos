@@ -3,6 +3,7 @@ import { api } from '../api'
 import { useConfigStore } from '../store/config'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
+import { formatMoney } from '../utils/currency'
 
 interface Purchase {
   id: number
@@ -109,7 +110,7 @@ export default function Purchases() {
                 <td style={{ padding: 12 }}>{p.doc_no || '-'}</td>
                 <td style={{ padding: 12 }}>{p.user_name || '-'}</td>
                 <td style={{ padding: 12, textAlign: 'right', fontWeight: 'bold' }}>
-                  {config?.currency} {Number(p.total).toFixed(2)}
+                  {formatMoney(Number(p.total), config?.currency)}
                 </td>
                 <td style={{ padding: 12, textAlign: 'center' }}>
                   <span style={{ 

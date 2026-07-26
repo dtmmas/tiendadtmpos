@@ -5,6 +5,7 @@ import { useAuthStore } from '../store/auth'
 import { useNavigate } from 'react-router-dom'
 import jsPDF from 'jspdf'
 import { formatDateTime } from '../utils/date'
+import { formatMoney as formatCurrency, formatNumber, formatPercent } from '../utils/currency'
 import { formatCompanyName } from '../utils/text'
 import { addLogoToPdf, buildPrintLogoHtml } from '../utils/printBranding'
 import MobileBarcodeScannerButton from '../components/MobileBarcodeScannerButton'
@@ -117,6 +118,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false)
   const [isPhoneViewport, setIsPhoneViewport] = useState(false)
   const [isPhonePaymentPanelOpen, setIsPhonePaymentPanelOpen] = useState(false)
+  const [isPhoneHeldSalesOpen, setIsPhoneHeldSalesOpen] = useState(false)
 
   // Batch Selection State
   const [selectedProductForBatch, setSelectedProductForBatch] = useState<Product | null>(null)
@@ -205,6 +207,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
       setIsPhoneViewport(isPhone)
       if (!isPhone) {
         setIsPhonePaymentPanelOpen(false)
+        setIsPhoneHeldSalesOpen(false)
       }
     }
 
@@ -721,10 +724,11 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
     return cart.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
   }, [cart])
 
-  const shouldCollapsePhonePayment = !isQuoteMode && isPhoneViewport
+  const shouldCollapsePhonePayment = isPhoneViewport
   const showPhoneProductsOnly = shouldCollapsePhonePayment && !isPhonePaymentPanelOpen
   const showPhoneCheckoutContext = !showPhoneProductsOnly
   const showExpandedPaymentPanel = !shouldCollapsePhonePayment || isPhonePaymentPanelOpen
+  const showCartItemsPanel = !shouldCollapsePhonePayment || !isPhonePaymentPanelOpen
 
   const projectedCostTotal = useMemo(() => {
     if (!canViewProjectedProfit) return 0
@@ -741,7 +745,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
     return (projectedProfitTotal / total) * 100
   }, [canViewProjectedProfit, total, projectedProfitTotal])
 
-  const formatMoney = (value: number) => `${config?.currency || ''} ${Number(value || 0).toFixed(2)}`
+  const formatMoney = (value: number) => formatCurrency(Number(value || 0), config?.currency)
 
   const resetCurrentSale = () => {
     setCart([])
@@ -777,6 +781,94 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
     return 'Base'
   }
 
+  const renderHeldSalesSection = (compact = false) => (
+    <div
+      className={compact ? 'pos-held-sales-block pos-held-sales-block-compact' : 'pos-held-sales-block'}
+      style={{ padding: compact ? '0 16px 12px' : '10px 16px', borderBottom: compact ? 'none' : '1px solid var(--border)', backgroundColor: 'var(--bg)' }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: heldSales.length ? 10 : 0 }}>
+        <div style={{ fontWeight: 700, color: 'var(--text)' }}>{heldOrderLabel}</div>
+        <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{heldSales.length}</div>
+      </div>
+      {heldSales.length === 0 ? (
+        <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
+          {emptyHeldOrderLabel}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: compact ? 220 : 170, overflowY: 'auto' }}>
+          {heldSales.map(sale => (
+            <div key={sale.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, background: 'var(--modal)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+                <div>
+                  <div style={{ fontWeight: 700, color: 'var(--text)' }}>{sale.name}</div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
+                    {sale.customerName || 'Cliente general'} | {sale.cart.length} item(s)
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
+                    {formatDateTime(new Date(sale.savedAt))}
+                  </div>
+                </div>
+                <div style={{ fontWeight: 700, color: 'var(--accent)' }}>
+                  {formatMoney(sale.total)}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => resumeHeldSale(sale.id)}
+                  style={{
+                    flex: 1,
+                    padding: '8px 10px',
+                    borderRadius: 6,
+                    border: '1px solid var(--border)',
+                    background: 'var(--surface)',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    fontWeight: 600
+                  }}
+                >
+                  Retomar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deleteHeldSale(sale.id)}
+                  style={{
+                    padding: '8px 10px',
+                    borderRadius: 6,
+                    border: '1px solid rgba(239, 68, 68, 0.35)',
+                    background: 'transparent',
+                    color: '#ef4444',
+                    cursor: 'pointer',
+                    fontWeight: 600
+                  }}
+                >
+                  Eliminar
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+
+  const renderPhoneHeldSalesAccordion = () => (
+    <div className="pos-phone-held-sales-accordion">
+      <button
+        type="button"
+        className="pos-phone-held-sales-toggle"
+        onClick={() => setIsPhoneHeldSalesOpen(prev => !prev)}
+      >
+        <span>{heldOrderLabel}</span>
+        <span className="pos-phone-held-sales-toggle-meta">
+          {heldSales.length}
+          <span className={`pos-phone-held-sales-chevron${isPhoneHeldSalesOpen ? ' open' : ''}`}>▾</span>
+        </span>
+      </button>
+      {isPhoneHeldSalesOpen && renderHeldSalesSection(true)}
+    </div>
+  )
+
   const buildPrintableTicketHtml = (
     saleId: number,
     date: string,
@@ -788,8 +880,8 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
     const logoBlock = buildPrintLogoHtml(config?.logoUrl, companyName, { maxWidth: 110, maxHeight: 40, marginBottom: 4 })
     const paymentLines: string[] = []
     if (paymentDetails?.paymentMethod === 'CASH') {
-      paymentLines.push(`Efectivo: ${Number(paymentDetails.receivedAmount || 0).toFixed(2)}`)
-      paymentLines.push(`Cambio: ${Number(paymentDetails.changeAmount || 0).toFixed(2)}`)
+      paymentLines.push(`Efectivo: ${formatNumber(Number(paymentDetails.receivedAmount || 0))}`)
+      paymentLines.push(`Cambio: ${formatNumber(Number(paymentDetails.changeAmount || 0))}`)
     } else if (paymentDetails?.paymentMethod === 'CARD') {
       paymentLines.push(`Tarjeta Ref: ${paymentDetails.referenceNumber || ''}`)
     } else if (paymentDetails?.paymentMethod === 'DEPOSIT') {
@@ -804,8 +896,8 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
         return `
           <div class="row item">
             <div class="name">${escapeHtml(item.name)}</div>
-            <div class="qty">${escapeHtml(item.quantity)} x ${escapeHtml(item.price.toFixed(2))}</div>
-            <div class="line-total">${escapeHtml(lineTotal.toFixed(2))}</div>
+            <div class="qty">${escapeHtml(formatNumber(item.quantity, 0))} x ${escapeHtml(formatNumber(item.price))}</div>
+            <div class="line-total">${escapeHtml(formatNumber(lineTotal))}</div>
           </div>
         `
       })
@@ -847,7 +939,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
       <div class="divider"></div>
       ${itemsHtml}
       <div class="divider"></div>
-      <div class="total">TOTAL: ${escapeHtml(config?.currency || '')} ${escapeHtml(totalAmount.toFixed(2))}</div>
+      <div class="total">TOTAL: ${escapeHtml(formatMoney(totalAmount))}</div>
       ${paymentHtml ? `<div class="divider"></div>${paymentHtml}` : ''}
     </div>
     <script>
@@ -946,9 +1038,9 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
           <tr>
             <td>${escapeHtml(item.name)}</td>
             <td>${escapeHtml(item.sku || item.productCode || '')}</td>
-            <td style="text-align:center;">${escapeHtml(item.quantity)}</td>
-            <td style="text-align:right;">${escapeHtml(item.price.toFixed(2))}</td>
-            <td style="text-align:right;">${escapeHtml(lineTotal.toFixed(2))}</td>
+            <td style="text-align:center;">${escapeHtml(formatNumber(item.quantity, 0))}</td>
+            <td style="text-align:right;">${escapeHtml(formatNumber(item.price))}</td>
+            <td style="text-align:right;">${escapeHtml(formatNumber(lineTotal))}</td>
           </tr>
         `
       })
@@ -1010,7 +1102,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
       </table>
 
       <div class="summary">
-        <div class="summary-row total"><span>Total cotizado</span><span>${escapeHtml(totalAmount.toFixed(2))}</span></div>
+        <div class="summary-row total"><span>Total cotizado</span><span>${escapeHtml(formatNumber(totalAmount))}</span></div>
       </div>
 
       <div class="note">Esta cotizacion es informativa y no afecta inventario ni caja. El documento muestra unicamente informacion comercial apta para entregar al cliente.</div>
@@ -1182,23 +1274,23 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
     items.forEach(item => {
       const lineTotal = item.price * item.quantity
       doc.text(`${item.name.substring(0, 20)}`, 5, y)
-      doc.text(`${item.quantity} x ${item.price.toFixed(2)}`, 50, y, { align: 'right' })
-      doc.text(`${lineTotal.toFixed(2)}`, 75, y, { align: 'right' })
+      doc.text(`${formatNumber(item.quantity, 0)} x ${formatNumber(item.price)}`, 50, y, { align: 'right' })
+      doc.text(formatNumber(lineTotal), 75, y, { align: 'right' })
       y += 5
     })
 
     doc.line(5, y, 75, y)
     y += 5
     doc.setFontSize(10)
-    doc.text(`TOTAL: ${config?.currency} ${totalAmount.toFixed(2)}`, 75, y, { align: 'right' })
+    doc.text(`TOTAL: ${formatMoney(totalAmount)}`, 75, y, { align: 'right' })
 
     y += 5
     doc.setFontSize(8)
     if (paymentDetails) {
        if (paymentDetails.paymentMethod === 'CASH') {
-          doc.text(`Efectivo: ${Number(paymentDetails.receivedAmount).toFixed(2)}`, 5, y)
+          doc.text(`Efectivo: ${formatNumber(Number(paymentDetails.receivedAmount))}`, 5, y)
           y += 4
-          doc.text(`Cambio: ${Number(paymentDetails.changeAmount).toFixed(2)}`, 5, y)
+          doc.text(`Cambio: ${formatNumber(Number(paymentDetails.changeAmount))}`, 5, y)
        } else if (paymentDetails.paymentMethod === 'CARD') {
           doc.text(`Tarjeta Ref: ${paymentDetails.referenceNumber}`, 5, y)
        } else if (paymentDetails.paymentMethod === 'DEPOSIT') {
@@ -1233,7 +1325,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
     if (paymentMethod === 'CASH') {
        const received = parseFloat(receivedAmount) || 0
        if (received < total) {
-         alert(`El monto recibido (${received}) es menor al total (${total.toFixed(2)})`)
+         alert(`El monto recibido (${formatNumber(received)}) es menor al total (${formatNumber(total)})`)
          return
        }
     } else if (paymentMethod === 'CARD' || paymentMethod === 'DEPOSIT') {
@@ -1403,8 +1495,21 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
                 {isQuoteMode ? 'Prepara cotizaciones sin afectar caja ni inventario.' : 'Procesa ventas y emite ticket desde el punto de venta.'}
               </div>
             </div>
-            <div style={{ padding: '8px 12px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--modal)', color: 'var(--text)', fontWeight: 700 }}>
-              {modeChipLabel}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ padding: '8px 12px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--modal)', color: 'var(--text)', fontWeight: 700 }}>
+                {modeChipLabel}
+              </div>
+              <button
+                type="button"
+                className="btn-danger"
+                onClick={() => {
+                  window.close()
+                  setTimeout(() => navigate('/'), 200)
+                }}
+                style={{ padding: '8px 12px' }}
+              >
+                {backButtonLabel}
+              </button>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flex: '1 1 250px' }}>
@@ -1652,7 +1757,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
                     </div>
                     <div>Otras tiendas: {Number(p.otherStock ?? 0)}</div>
                   </div>
-                  <div style={{ color: 'var(--accent)', fontWeight: 700, fontSize: '1.1rem', marginTop: 8 }}>{config?.currency} {p.price.toFixed(2)}</div>
+                  <div style={{ color: 'var(--accent)', fontWeight: 700, fontSize: '1.1rem', marginTop: 8 }}>{formatMoney(p.price)}</div>
                 </div>
               </div>
             ))}
@@ -1711,6 +1816,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
 
       {/* Right: Cart */}
       <div className={`pos-cart ${isMobileCartOpen ? 'open' : ''}`}>
+        {isPhoneViewport && renderPhoneHeldSalesAccordion()}
         {showPhoneCheckoutContext && (
           <>
             <div style={{ padding: 16, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1718,54 +1824,41 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                   <span style={{ fontWeight: 600, fontSize: '1.2rem', color: 'var(--text)' }}>{currentOrderLabel}</span>
                   <button
+                    onClick={() => holdCurrentSale()}
+                    disabled={cart.length === 0}
+                    style={{
+                      color: cart.length === 0 ? 'var(--muted)' : '#f59e0b',
+                      background: cart.length === 0 ? 'var(--surface)' : 'rgba(245, 158, 11, 0.12)',
+                      border: cart.length === 0 ? '1px solid var(--border)' : '1px solid rgba(245, 158, 11, 0.28)',
+                      cursor: cart.length === 0 ? 'not-allowed' : 'pointer',
+                      fontWeight: 700,
+                      borderRadius: 999,
+                      padding: '7px 12px'
+                    }}
+                  >
+                    En espera
+                  </button>
+                  <button
+                    onClick={resetCurrentSale}
+                    style={{
+                      color: '#ef4444',
+                      background: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid rgba(239, 68, 68, 0.24)',
+                      cursor: 'pointer',
+                      fontWeight: 700,
+                      borderRadius: 999,
+                      padding: '7px 12px'
+                    }}
+                  >
+                    Vaciar
+                  </button>
+                  <button
                     type="button"
                     className="pos-mobile-cart-close"
                     onClick={() => setIsMobileCartOpen(false)}
                   >
                     Cerrar
                   </button>
-                </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={() => navigate('/')}
-                    style={{ padding: '8px 12px' }}
-                  >
-                    Volver
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-danger"
-                    onClick={() => {
-                      window.close()
-                      setTimeout(() => navigate('/'), 200)
-                    }}
-                    style={{ padding: '8px 12px' }}
-                  >
-                    {backButtonLabel}
-                  </button>
-                </div>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                <div style={{ fontSize: '0.92rem', color: 'var(--muted)', fontWeight: 600 }}>
-                  {isQuoteMode ? 'Administra la cotización actual sin mezclarla con las ventas.' : 'Administra la venta actual y sus acciones rápidas.'}
-                </div>
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <button
-                    onClick={() => holdCurrentSale()}
-                    disabled={cart.length === 0}
-                    style={{
-                      color: cart.length === 0 ? 'var(--muted)' : '#f59e0b',
-                      background: 'none',
-                      border: 'none',
-                      cursor: cart.length === 0 ? 'not-allowed' : 'pointer',
-                      fontWeight: 600
-                    }}
-                  >
-                    En espera
-                  </button>
-                  <button onClick={resetCurrentSale} style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Vaciar</button>
                 </div>
               </div>
             </div>
@@ -1806,127 +1899,45 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
               </button>
             </div>
 
-            <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: heldSales.length ? 10 : 0 }}>
-                <div style={{ fontWeight: 700, color: 'var(--text)' }}>{heldOrderLabel}</div>
-                <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{heldSales.length}</div>
-              </div>
-              {heldSales.length === 0 ? (
-                <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
-                  {emptyHeldOrderLabel}
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 170, overflowY: 'auto' }}>
-                  {heldSales.map(sale => (
-                    <div key={sale.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, background: 'var(--modal)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
-                        <div>
-                          <div style={{ fontWeight: 700, color: 'var(--text)' }}>{sale.name}</div>
-                          <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
-                            {sale.customerName || 'Cliente general'} | {sale.cart.length} item(s)
-                          </div>
-                          <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
-                            {formatDateTime(new Date(sale.savedAt))}
-                          </div>
-                        </div>
-                        <div style={{ fontWeight: 700, color: 'var(--accent)' }}>
-                          {config?.currency} {sale.total.toFixed(2)}
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                        <button
-                          type="button"
-                          onClick={() => resumeHeldSale(sale.id)}
-                          style={{
-                            flex: 1,
-                            padding: '8px 10px',
-                            borderRadius: 6,
-                            border: '1px solid var(--border)',
-                            background: 'var(--surface)',
-                            color: 'var(--text)',
-                            cursor: 'pointer',
-                            fontWeight: 600
-                          }}
-                        >
-                          Retomar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => deleteHeldSale(sale.id)}
-                          style={{
-                            padding: '8px 10px',
-                            borderRadius: 6,
-                            border: '1px solid rgba(239, 68, 68, 0.35)',
-                            background: 'transparent',
-                            color: '#ef4444',
-                            cursor: 'pointer',
-                            fontWeight: 600
-                          }}
-                        >
-                          Eliminar
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           </>
         )}
 
-        <div className="pos-cart-items" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16 }}>
-          {cart.length === 0 ? (
-            <>
-              {showPhoneProductsOnly && (
-                <div
-                  className="pos-cart-list-header"
-                  style={{ marginBottom: 16 }}
-                >
+        {showCartItemsPanel && (
+          <div className="pos-cart-items" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16 }}>
+            {cart.length === 0 ? (
+              <>
+                {showPhoneProductsOnly && (
+                  <div
+                    className="pos-cart-list-header"
+                    style={{ marginBottom: 16 }}
+                  >
+                    <div>
+                      <div className="pos-cart-list-title">{currentOrderLabel}</div>
+                      <div className="pos-cart-list-subtitle">Aun no hay productos agregados</div>
+                    </div>
+                  </div>
+                )}
+                <div style={{ textAlign: 'center', color: 'var(--muted)', marginTop: showPhoneProductsOnly ? 0 : 32 }}>
+                  Carrito vacío
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="pos-cart-list-header pos-cart-list-header-mobile-only">
                   <div>
-                    <div className="pos-cart-list-title">{currentOrderLabel}</div>
-                    <div className="pos-cart-list-subtitle">Aun no hay productos agregados</div>
+                    <div className="pos-cart-list-title">Productos agregados</div>
+                    <div className="pos-cart-list-subtitle">
+                      {cart.length} producto(s) | {totalUnits} unidad(es)
+                    </div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                    <button
-                      type="button"
-                      className="pos-mobile-cart-close"
-                      onClick={() => setIsMobileCartOpen(false)}
-                    >
-                      Cerrar
-                    </button>
+                    <div className="pos-cart-list-total">{formatMoney(total)}</div>
                   </div>
                 </div>
-              )}
-              <div style={{ textAlign: 'center', color: 'var(--muted)', marginTop: showPhoneProductsOnly ? 0 : 32 }}>
-                Carrito vacío
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="pos-cart-list-header">
-                <div>
-                  <div className="pos-cart-list-title">Productos agregados</div>
-                  <div className="pos-cart-list-subtitle">
-                    {cart.length} producto(s) | {totalUnits} unidad(es)
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                  <div className="pos-cart-list-total">{formatMoney(total)}</div>
-                  {showPhoneProductsOnly && (
-                    <button
-                      type="button"
-                      className="pos-mobile-cart-close"
-                      onClick={() => setIsMobileCartOpen(false)}
-                    >
-                      Cerrar
-                    </button>
-                  )}
-                </div>
-              </div>
 
-              <div className="pos-cart-list">
-                {cart.map(item => (
-                  <div key={`${item.id}-${item.batchNo || ''}-${item.imei || ''}-${item.serial || ''}`} className="pos-cart-item-card">
+                <div className="pos-cart-list">
+                  {cart.map(item => (
+                    <div key={`${item.id}-${item.batchNo || ''}-${item.imei || ''}-${item.serial || ''}`} className="pos-cart-item-card">
                     <div className="pos-cart-item-head">
                       <div className="pos-cart-item-title-wrap">
                         <div className="pos-cart-item-name">{item.name}</div>
@@ -1953,12 +1964,12 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
                                       maxWidth: 110
                                   }}
                               >
-                                  <option value={item.originalPrice ?? item.price}>{Number(item.originalPrice ?? item.price).toFixed(2)}</option>
-                                  {item.price2 && <option value={item.price2}>{Number(item.price2).toFixed(2)} (P2)</option>}
-                                  {item.price3 && <option value={item.price3}>{Number(item.price3).toFixed(2)} (P3)</option>}
+                                  <option value={item.originalPrice ?? item.price}>{formatNumber(Number(item.originalPrice ?? item.price))}</option>
+                                  {item.price2 && <option value={item.price2}>{formatNumber(Number(item.price2))} (P2)</option>}
+                                  {item.price3 && <option value={item.price3}>{formatNumber(Number(item.price3))} (P3)</option>}
                               </select>
                           ) : (
-                              <span>{item.price.toFixed(2)}</span>
+                              <span>{formatNumber(item.price)}</span>
                           )}
                           <span>x {item.quantity}</span>
                         </div>
@@ -1994,7 +2005,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
                       <div className="pos-cart-item-profit">
                         <span>Costo: {formatMoney(Number(item.cost || 0) * item.quantity)}</span>
                         <span>Utilidad: {formatMoney((item.price * item.quantity) - (Number(item.cost || 0) * item.quantity))}</span>
-                        <span>Margen: {((item.price * item.quantity) > 0 ? ((((item.price * item.quantity) - (Number(item.cost || 0) * item.quantity)) / (item.price * item.quantity)) * 100) : 0).toFixed(2)}%</span>
+                        <span>Margen: {formatPercent((item.price * item.quantity) > 0 ? ((((item.price * item.quantity) - (Number(item.cost || 0) * item.quantity)) / (item.price * item.quantity)) * 100) : 0)}</span>
                       </div>
                     )}
 
@@ -2092,33 +2103,51 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
                         Quitar
                       </button>
                     </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         <div className={`pos-cart-summary${shouldCollapsePhonePayment && !isPhonePaymentPanelOpen ? ' phone-collapsed' : ''}`} style={{ padding: 16, borderTop: '1px solid var(--border)', backgroundColor: 'var(--bg)' }}>
           {showPhoneCheckoutContext && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.2rem', fontWeight: 'bold', marginBottom: 16, color: 'var(--text)' }}>
-              <span>Total:</span>
-              <span>{formatMoney(total)}</span>
-            </div>
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.2rem', fontWeight: 'bold', marginBottom: !isQuoteMode ? 8 : 16, color: 'var(--text)' }}>
+                <span>Total:</span>
+                <span>{formatMoney(total)}</span>
+              </div>
+              {!isQuoteMode && (
+                <div className="pos-cart-summary-meta">
+                  {cart.length} producto(s) | {totalUnits} unidad(es)
+                </div>
+              )}
+            </>
           )}
 
-          {!isQuoteMode && shouldCollapsePhonePayment && (
+          {shouldCollapsePhonePayment && (
             <div className="pos-phone-payment-toggle">
               {!isPhonePaymentPanelOpen ? (
-                <button
-                  type="button"
-                  onClick={() => setIsPhonePaymentPanelOpen(true)}
-                  disabled={cart.length === 0 || loading}
-                  className="primary-btn"
-                  style={{ width: '100%' }}
-                >
-                  Confirmar pago
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setIsPhonePaymentPanelOpen(true)}
+                    disabled={cart.length === 0 || loading}
+                    className="primary-btn"
+                    style={{ width: '100%' }}
+                  >
+                    {isQuoteMode ? 'Confirmar cotización' : 'Confirmar pago'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsMobileCartOpen(false)}
+                    className="secondary-btn"
+                    style={{ width: '100%', marginTop: 8 }}
+                  >
+                    Cerrar
+                  </button>
+                </>
               ) : (
                 <button
                   type="button"
@@ -2132,7 +2161,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
             </div>
           )}
 
-          {isQuoteMode && (
+          {isQuoteMode && showExpandedPaymentPanel && (
             <div style={{ marginBottom: 16, padding: 12, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--modal)' }}>
               <div style={{ fontWeight: 700, marginBottom: 6, color: 'var(--text)' }}>Cotización</div>
               <div style={{ fontSize: '0.9rem', color: 'var(--muted)' }}>
@@ -2150,7 +2179,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
                   </div>
                   <div style={{ padding: 10, borderRadius: 8, background: 'var(--bg)', border: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Margen proyectado</div>
-                    <div style={{ fontWeight: 700, color: 'var(--text)', marginTop: 4 }}>{projectedMargin.toFixed(2)}%</div>
+                    <div style={{ fontWeight: 700, color: 'var(--text)', marginTop: 4 }}>{formatPercent(projectedMargin)}</div>
                   </div>
                 </div>
               )}
@@ -2241,7 +2270,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
                     placeholder="0.00"
                   />
                   <div style={{ marginTop: 8, fontSize: '1.1rem', fontWeight: 'bold', color: (parseFloat(receivedAmount) || 0) >= total ? '#2ecc71' : '#ef4444' }}>
-                    Cambio: {config?.currency} {Math.max(0, (parseFloat(receivedAmount) || 0) - total).toFixed(2)}
+                    Cambio: {formatMoney(Math.max(0, (parseFloat(receivedAmount) || 0) - total))}
                   </div>
                 </div>
               )}
@@ -2272,23 +2301,20 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
 
           {!isQuoteMode && showExpandedPaymentPanel && (
             <>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, fontSize: '0.95rem', color: 'var(--text)', cursor: 'pointer' }}>
+              <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0, width: '100%', marginBottom: 10, fontSize: '0.95rem', color: 'var(--text)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                 <input
                   type="checkbox"
                   checked={shouldPrintTicket}
                   onChange={e => setShouldPrintTicket(e.target.checked)}
+                  style={{ margin: 0 }}
                 />
-                Imprimir ticket automaticamente al completar la venta
+                <span style={{ whiteSpace: 'nowrap' }}>Imprimir ticket</span>
               </label>
-
-              <div style={{ marginBottom: 16, fontSize: '0.92rem', color: 'var(--muted)' }}>
-                Al pagar se abre el dialogo de impresion. Si el entorno lo bloquea, el sistema descarga el PDF del ticket como respaldo.
-              </div>
             </>
           )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {isQuoteMode ? (
+            {isQuoteMode ? showExpandedPaymentPanel && (
               <button
                 onClick={handleGenerateQuote}
                 disabled={cart.length === 0 || loading}
@@ -2345,7 +2371,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
                    Ultima venta registrada: #{lastSale.saleId}
                 </div>
             )}
-            {isQuoteMode && lastQuote && (
+            {isQuoteMode && lastQuote && showExpandedPaymentPanel && (
               <div
                 style={{
                   width: '100%',
@@ -2364,6 +2390,8 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
             )}
           </div>
         </div>
+
+        {!isPhoneViewport && renderHeldSalesSection(showPhoneProductsOnly)}
       </div>
       {/* Customer Modal */}
       {isCustomerModalOpen && (
