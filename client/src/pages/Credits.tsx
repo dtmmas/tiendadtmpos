@@ -38,6 +38,7 @@ export default function Credits() {
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [config, setConfig] = useState<Config | null>(null)
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
   
   // Modal state
   const [selectedCredit, setSelectedCredit] = useState<Credit | null>(null)
@@ -59,6 +60,14 @@ export default function Credits() {
   useEffect(() => {
     loadCredits()
     getConfig().then(setConfig)
+  }, [])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)')
+    const syncViewport = () => setIsMobileViewport(mediaQuery.matches)
+    syncViewport()
+    mediaQuery.addEventListener('change', syncViewport)
+    return () => mediaQuery.removeEventListener('change', syncViewport)
   }, [])
 
   const formatMoney = (value?: number | string) => formatCurrency(Number(value || 0), config?.currency)
@@ -269,7 +278,7 @@ export default function Credits() {
     <div className="page-shell">
       <div className="page-toolbar" style={{ marginBottom: 20 }}>
         <h2 style={{ margin: 0 }}>Gestión de Créditos</h2>
-        <form onSubmit={handleSearch} className="page-toolbar-actions" style={{ flex: 1, justifyContent: 'flex-end' }}>
+        <form onSubmit={handleSearch} className="page-toolbar-actions" style={{ flex: 1, justifyContent: 'flex-end', width: isMobileViewport ? '100%' : undefined }}>
           <input
             type="text"
             placeholder="Buscar por cliente o No. documento..."
@@ -277,7 +286,7 @@ export default function Credits() {
             onChange={e => setSearch(e.target.value)}
             style={{
               flex: 1,
-              maxWidth: 400
+              maxWidth: isMobileViewport ? '100%' : 400
             }}
           />
           <button 
@@ -291,6 +300,86 @@ export default function Credits() {
 
       {loading ? (
         <p style={{ color: 'var(--muted)' }}>Cargando créditos...</p>
+      ) : isMobileViewport ? (
+        <div style={{ display: 'grid', gap: 12 }}>
+          {credits.length === 0 ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--modal)' }}>
+              No hay créditos pendientes
+            </div>
+          ) : (
+            credits.map(credit => {
+              const total = Number(credit.total_amount)
+              const paid = Number(credit.paid_amount)
+              const pending = total - paid
+              const isFullyPaid = credit.paid === 1 || pending < 0.01
+
+              return (
+                <div key={credit.id} style={{ background: 'var(--modal)', borderRadius: 12, border: '1px solid var(--border)', padding: 14, display: 'grid', gap: 10 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+                    <div>
+                      <div style={{ fontWeight: 700 }}>{credit.customer_name || 'Consumidor Final'}</div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>{credit.doc_no || `#${credit.sale_id}`}</div>
+                    </div>
+                    <span style={{
+                      padding: '4px 8px',
+                      borderRadius: 999,
+                      background: isFullyPaid ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                      color: isFullyPaid ? '#22c55e' : '#ef4444',
+                      fontWeight: 700,
+                      fontSize: '0.75rem'
+                    }}>
+                      {isFullyPaid ? 'COMPLETADO' : 'PENDIENTE'}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, fontSize: '0.9rem' }}>
+                    <div>
+                      <div style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>Fecha venta</div>
+                      <div>{formatDate(credit.sale_date)}</div>
+                    </div>
+                    <div>
+                      <div style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>Vence</div>
+                      <div>{formatDate(credit.due_date)}</div>
+                    </div>
+                    <div>
+                      <div style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>Total</div>
+                      <div style={{ fontWeight: 700 }}>{formatMoney(total)}</div>
+                    </div>
+                    <div>
+                      <div style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>Pagado</div>
+                      <div style={{ fontWeight: 700, color: '#22c55e' }}>{formatMoney(paid)}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ padding: 10, borderRadius: 10, background: isFullyPaid ? 'rgba(34, 197, 94, 0.08)' : 'rgba(239, 68, 68, 0.08)', color: isFullyPaid ? '#22c55e' : '#ef4444', fontWeight: 800, textAlign: 'center' }}>
+                    {isFullyPaid ? 'COMPLETADO' : `Pendiente: ${formatMoney(pending)}`}
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: !isFullyPaid ? '1fr 1fr' : '1fr', gap: 10 }}>
+                    <button
+                      className="icon-btn"
+                      onClick={() => openHistoryModal(credit)}
+                      title="Ver historial de pagos"
+                      style={{ width: '100%', justifyContent: 'center', padding: '0 16px' }}
+                    >
+                      Historial
+                    </button>
+                    {!isFullyPaid && (
+                      <button
+                        className="icon-btn primary"
+                        onClick={() => openPayModal(credit)}
+                        title="Abonar"
+                        style={{ width: '100%', justifyContent: 'center', padding: '0 16px' }}
+                      >
+                        Abonar
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
       ) : (
         <div className="table-scroll" style={{ background: 'var(--modal)', borderRadius: 12, border: '1px solid var(--border)' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -376,16 +465,19 @@ export default function Credits() {
           background: 'rgba(0,0,0,0.6)',
           display: 'flex',
           justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 1000
+          alignItems: isMobileViewport ? 'flex-end' : 'center',
+          zIndex: 1000,
+          padding: isMobileViewport ? 0 : 16
         }}>
           <div className="responsive-modal" style={{
             background: 'var(--modal)',
-            padding: 20,
-            borderRadius: 12,
+            padding: isMobileViewport ? 16 : 20,
+            borderRadius: isMobileViewport ? '18px 18px 0 0' : 12,
             border: '1px solid var(--border)',
-            width: '90%',
-            maxWidth: 500
+            width: isMobileViewport ? '100%' : '90%',
+            maxWidth: 500,
+            maxHeight: isMobileViewport ? '90vh' : undefined,
+            overflowY: isMobileViewport ? 'auto' : 'visible'
           }}>
             <h2 style={{ marginTop: 0, marginBottom: 16 }}>Registrar Abono</h2>
             <div style={{ marginBottom: 20, lineHeight: '1.6' }}>
@@ -506,13 +598,13 @@ export default function Credits() {
                 </div>
               )}
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap', flexDirection: isMobileViewport ? 'column' : 'row' }}>
                 <button
                   type="button"
                   onClick={closePayModal}
                   disabled={processingPayment}
                   className="icon-btn"
-                  style={{ width: 'auto', padding: '0 16px' }}
+                  style={{ width: isMobileViewport ? '100%' : 'auto', padding: '0 16px' }}
                 >
                   Cancelar
                 </button>
@@ -520,6 +612,7 @@ export default function Credits() {
                   type="submit"
                   disabled={processingPayment}
                   className="primary-btn"
+                  style={{ width: isMobileViewport ? '100%' : 'auto' }}
                 >
                   {processingPayment ? 'Procesando...' : 'Confirmar Pago'}
                 </button>
@@ -539,18 +632,19 @@ export default function Credits() {
           backgroundColor: 'rgba(0,0,0,0.5)',
           display: 'flex',
           justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 1000
+          alignItems: isMobileViewport ? 'flex-end' : 'center',
+          zIndex: 1000,
+          padding: isMobileViewport ? 0 : 16
         }}>
           <div className="responsive-modal" style={{
             backgroundColor: 'var(--modal)',
             color: 'var(--text)',
-            padding: '2rem',
-            borderRadius: '12px',
+            padding: isMobileViewport ? '1rem' : '2rem',
+            borderRadius: isMobileViewport ? '18px 18px 0 0' : '12px',
             border: '1px solid var(--border)',
-            width: '95%',
+            width: isMobileViewport ? '100%' : '95%',
             maxWidth: '900px',
-            maxHeight: '80vh',
+            maxHeight: isMobileViewport ? '90vh' : '80vh',
             overflowY: 'auto',
             boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
           }}>
@@ -575,6 +669,76 @@ export default function Credits() {
               <p><strong>Documento:</strong> {selectedCreditHistory.doc_no}</p>
             </div>
 
+            {isMobileViewport ? (
+              <div style={{ display: 'grid', gap: 12, marginBottom: '1.5rem' }}>
+                {historyLoading ? (
+                  <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted)' }}>
+                    Cargando historial...
+                  </div>
+                ) : historyError ? (
+                  <div style={{ padding: '2rem', textAlign: 'center', color: '#ef4444' }}>
+                    {historyError}
+                  </div>
+                ) : historyPayments.length === 0 ? (
+                  <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted)' }}>
+                    No hay pagos registrados
+                  </div>
+                ) : (
+                  historyPayments.map(payment => (
+                    <div key={payment.id} style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 14, background: 'var(--bg)', display: 'grid', gap: 10 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+                        <div>
+                          <div style={{ fontWeight: 700 }}>{formatDate(payment.created_at)}</div>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>{payment.received_by || '-'}</div>
+                        </div>
+                        <span style={{
+                          padding: '4px 8px',
+                          borderRadius: '12px',
+                          backgroundColor: payment.payment_method === 'CASH' ? 'rgba(52, 152, 219, 0.1)' : 'rgba(241, 196, 15, 0.1)',
+                          color: payment.payment_method === 'CASH' ? '#3498db' : '#f1c40f',
+                          fontSize: '0.85rem',
+                          fontWeight: 'bold',
+                          border: `1px solid ${payment.payment_method === 'CASH' ? '#3498db' : '#f1c40f'}`
+                        }}>
+                          {payment.payment_method === 'CASH' ? 'Efectivo' :
+                           payment.payment_method === 'CARD' ? 'Tarjeta' : 'Depósito'}
+                        </span>
+                      </div>
+                      <div style={{ fontWeight: 800, fontSize: '1rem' }}>{formatMoney(payment.amount)}</div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Ref: {payment.reference || '-'}</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: payment.document_url ? '1fr 1fr 1fr' : '1fr 1fr', gap: 8 }}>
+                        {payment.document_url ? (
+                          <a
+                            href={payment.document_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              color: 'var(--accent)',
+                              textDecoration: 'none',
+                              fontWeight: 'bold',
+                              border: '1px solid var(--accent)',
+                              padding: '8px 10px',
+                              borderRadius: '8px',
+                              textAlign: 'center'
+                            }}
+                          >
+                            Ver Doc
+                          </a>
+                        ) : null}
+                        <button
+                          className="icon-btn"
+                          onClick={() => printPayment(payment, selectedCreditHistory)}
+                          title="Imprimir comprobante"
+                          style={{ width: '100%', justifyContent: 'center', padding: '0 12px', gridColumn: payment.document_url ? 'span 2' : 'span 2' }}
+                        >
+                          Imprimir
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : (
             <div className="table-scroll">
               <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '1.5rem' }}>
                 <thead>
@@ -671,6 +835,7 @@ export default function Credits() {
                 </tbody>
               </table>
             </div>
+            )}
 
             <div style={{ textAlign: 'right' }}>
               <button
@@ -681,7 +846,8 @@ export default function Credits() {
                   color: 'var(--text)',
                   border: '1px solid var(--border)',
                   borderRadius: '8px',
-                  cursor: 'pointer'
+                  cursor: 'pointer',
+                  width: isMobileViewport ? '100%' : 'auto'
                 }}
               >
                 Cerrar

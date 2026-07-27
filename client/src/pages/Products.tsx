@@ -4,6 +4,7 @@ import { api, getProducts, getCategories, getBrands, getSuppliers, createProduct
 import { useConfigStore } from '../store/config'
 import { formatMoney } from '../utils/currency'
 import { resolveUnitName, buildUnitNameMap } from '../utils/units'
+import { getWarehouseHighlightStyle } from '../utils/warehouseHighlight'
 import MobileBarcodeScannerButton from '../components/MobileBarcodeScannerButton'
 import CameraCaptureButton from '../components/CameraCaptureButton'
 
@@ -55,6 +56,11 @@ interface WarehouseStockRow {
   quantity: number
 }
 
+interface CatalogSerialRow {
+  value: string
+  warehouseName: string
+}
+
 export default function Products() {
   const user = useAuthStore(s => s.user)
   const hasPermission = useAuthStore(s => s.hasPermission)
@@ -95,6 +101,8 @@ export default function Products() {
   const [catalogWarehouseStock, setCatalogWarehouseStock] = useState<WarehouseStockRow[]>([])
   const [catalogStockLoading, setCatalogStockLoading] = useState(false)
   const [catalogStockError, setCatalogStockError] = useState<string | null>(null)
+  const [catalogSerials, setCatalogSerials] = useState<CatalogSerialRow[]>([])
+  const [showCatalogSerials, setShowCatalogSerials] = useState(false)
   const [query, setQuery] = useState('')
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null)
   const [selectedSubcategoryId, setSelectedSubcategoryId] = useState<number | null>(null)
@@ -565,6 +573,10 @@ export default function Products() {
     [catalogOtherWarehouseStock]
   )
 
+  const canShowCatalogSerials = useMemo(() => {
+    return String(catalogStockProduct?.productType || '').toUpperCase() === 'SERIAL'
+  }, [catalogStockProduct])
+
   const detailImeis = useMemo(() => {
     if (Array.isArray(details?.imeiDetails) && details.imeiDetails.length > 0) {
       return details.imeiDetails
@@ -898,10 +910,31 @@ export default function Products() {
     setCatalogStockProduct(product)
     setCatalogWarehouseStock([])
     setCatalogStockError(null)
+    setCatalogSerials([])
+    setShowCatalogSerials(false)
     setCatalogStockLoading(true)
     try {
-      const whStock = await getProductWarehouseStock(product.id)
+      const [whStock, detailData] = await Promise.all([
+        getProductWarehouseStock(product.id),
+        getProductDetails(product.id)
+      ])
       setCatalogWarehouseStock(Array.isArray(whStock) ? whStock : [])
+      const serialRows = Array.isArray(detailData?.serialDetails) && detailData.serialDetails.length > 0
+        ? detailData.serialDetails
+            .filter((item: any) => item && item.serial)
+            .map((item: any) => ({
+              value: String(item.serial || ''),
+              warehouseName: String(item.warehouseName || 'Sin almacen'),
+            }))
+        : Array.isArray(detailData?.serials) && detailData.serials.length > 0
+          ? detailData.serials
+              .filter((item: any) => item)
+              .map((item: any) => ({
+                value: String(item || ''),
+                warehouseName: 'Almacen no especificado',
+              }))
+          : []
+      setCatalogSerials(serialRows)
     } catch (err: any) {
       setCatalogStockError(err?.response?.data?.message || err?.message || 'Error al cargar existencias por tienda')
     } finally {
@@ -2189,7 +2222,7 @@ export default function Products() {
                             <tbody>
                               {warehouseStock.map(ws => (
                                 <tr key={ws.warehouseId}>
-                                  <td style={{ padding: '6px 8px' }}>{ws.warehouseName}</td>
+                                  <td style={{ padding: '6px 8px' }}><span className="warehouse-highlight" style={getWarehouseHighlightStyle(ws.warehouseName)}>{ws.warehouseName}</span></td>
                                   <td style={{ padding: '6px 8px', textAlign: 'right', ...(Number(ws.quantity) === 0 ? { color: '#991B1B', background: '#FEE2E2' } : {}) }}>{ws.quantity}</td>
                                 </tr>
                               ))}
@@ -2294,7 +2327,7 @@ export default function Products() {
                             {detailImeis.map((im, idx: number) => (
                               <div key={`${im.value}-${idx}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
                                 <div style={{ fontWeight: 700, wordBreak: 'break-word' }}>{im.value}</div>
-                                <div style={{ fontSize: 12, color: 'var(--muted)' }}>Almacen: {im.warehouseName}</div>
+                                <div style={{ fontSize: 12, color: 'var(--muted)' }}>Almacen: <span className="warehouse-highlight" style={getWarehouseHighlightStyle(im.warehouseName)}>{im.warehouseName}</span></div>
                               </div>
                             ))}
                           </>
@@ -2322,7 +2355,7 @@ export default function Products() {
                             {detailSerials.map((sr, idx: number) => (
                               <div key={`${sr.value}-${idx}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
                                 <div style={{ fontWeight: 700, wordBreak: 'break-word' }}>{sr.value}</div>
-                                <div style={{ fontSize: 12, color: 'var(--muted)' }}>Almacen: {sr.warehouseName}</div>
+                                <div style={{ fontSize: 12, color: 'var(--muted)' }}>Almacen: <span className="warehouse-highlight" style={getWarehouseHighlightStyle(sr.warehouseName)}>{sr.warehouseName}</span></div>
                               </div>
                             ))}
                           </>
@@ -2347,6 +2380,8 @@ export default function Products() {
             setCatalogStockProduct(null)
             setCatalogStockError(null)
             setCatalogWarehouseStock([])
+            setCatalogSerials([])
+            setShowCatalogSerials(false)
           }}
         >
           <div
@@ -2366,6 +2401,8 @@ export default function Products() {
                   setCatalogStockProduct(null)
                   setCatalogStockError(null)
                   setCatalogWarehouseStock([])
+                  setCatalogSerials([])
+                  setShowCatalogSerials(false)
                 }}
                 style={{ width: 38, height: 38, borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
                 aria-label="Cerrar existencias por tienda"
@@ -2382,7 +2419,7 @@ export default function Products() {
                   {catalogCurrentWarehouseStock?.quantity ?? catalogStockProduct.stock ?? 0}
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                  {user?.warehouseName || 'Tienda asignada'}
+                  <span className="warehouse-highlight current" style={getWarehouseHighlightStyle(user?.warehouseName || 'Tienda asignada', true)}>{user?.warehouseName || 'Tienda asignada'}</span>
                 </div>
               </div>
               <div style={{ padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
@@ -2419,7 +2456,7 @@ export default function Products() {
                         >
                           <div>
                             <div style={{ fontWeight: 700, color: 'var(--text)' }}>
-                              {item.warehouseName}
+                              <span className={`warehouse-highlight${isCurrentWarehouse ? ' current' : ''}`} style={getWarehouseHighlightStyle(item.warehouseName, isCurrentWarehouse)}>{item.warehouseName}</span>
                               {isCurrentWarehouse && (
                                 <span style={{ marginLeft: 8, fontSize: 11, color: '#2563eb' }}>(Actual)</span>
                               )}
@@ -2434,6 +2471,85 @@ export default function Products() {
                         </div>
                       )
                     })}
+                  </div>
+                )}
+
+                {canShowCatalogSerials && (
+                  <div
+                    style={{
+                      marginTop: 14,
+                      border: `1px solid ${showCatalogSerials ? 'rgba(37, 99, 235, 0.42)' : 'rgba(37, 99, 235, 0.28)'}`,
+                      borderRadius: 16,
+                      background: showCatalogSerials ? 'rgba(37, 99, 235, 0.05)' : 'var(--bg)',
+                      boxShadow: showCatalogSerials ? '0 10px 24px rgba(37, 99, 235, 0.08)' : 'none',
+                      overflow: 'hidden'
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setShowCatalogSerials(prev => !prev)}
+                      style={{
+                        width: '100%',
+                        padding: '12px 14px',
+                        border: 'none',
+                        background: 'transparent',
+                        color: 'var(--text)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                        cursor: 'pointer',
+                        fontWeight: 700
+                      }}
+                    >
+                      <span style={{ color: showCatalogSerials ? '#1d4ed8' : 'var(--text)' }}>Numeros de serie</span>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--muted)', fontSize: 12 }}>
+                        {catalogSerials.length}
+                        <span style={{ transform: showCatalogSerials ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 180ms ease', display: 'inline-block' }}>▸</span>
+                      </span>
+                    </button>
+
+                    {showCatalogSerials && (
+                      <div style={{ borderTop: '1px solid rgba(37, 99, 235, 0.24)', padding: 14, display: 'grid', gap: 8 }}>
+                        {catalogSerials.length === 0 ? (
+                          <div style={{ fontSize: 12, color: 'var(--muted)' }}>No hay numeros de serie disponibles.</div>
+                        ) : (
+                          catalogSerials.map((serial, idx) => (
+                            <div
+                              key={`${serial.value}-${idx}`}
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                gap: 12,
+                                padding: '10px 12px',
+                                borderRadius: 12,
+                                border: '1px solid rgba(37, 99, 235, 0.18)',
+                                background: 'var(--modal)',
+                                flexWrap: 'wrap'
+                              }}
+                            >
+                              <div
+                                style={{
+                                  fontWeight: 800,
+                                  color: '#1d4ed8',
+                                  background: 'rgba(37, 99, 235, 0.10)',
+                                  border: '1px solid rgba(37, 99, 235, 0.22)',
+                                  borderRadius: 10,
+                                  padding: '6px 10px',
+                                  wordBreak: 'break-word',
+                                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                                  letterSpacing: '0.03em'
+                                }}
+                              >
+                                {serial.value}
+                              </div>
+                              <div style={{ fontSize: 12, color: 'var(--muted)' }}>Almacen: <span className="warehouse-highlight" style={getWarehouseHighlightStyle(serial.warehouseName)}>{serial.warehouseName}</span></div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 

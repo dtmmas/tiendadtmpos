@@ -7,6 +7,7 @@ import jsPDF from 'jspdf'
 import { formatDateTime } from '../utils/date'
 import { formatMoney as formatCurrency, formatNumber, formatPercent } from '../utils/currency'
 import { formatCompanyName } from '../utils/text'
+import { getWarehouseHighlightStyle } from '../utils/warehouseHighlight'
 import { addLogoToPdf, buildPrintLogoHtml } from '../utils/printBranding'
 import MobileBarcodeScannerButton from '../components/MobileBarcodeScannerButton'
 
@@ -2798,7 +2799,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
                         }}
                       >
                         <td style={{ padding: '12px 4px', color: 'var(--text)' }}>
-                          {ws.warehouseName}
+                          <span className={`warehouse-highlight${String(user?.warehouseId) === String(ws.warehouseId) ? ' current' : ''}`} style={getWarehouseHighlightStyle(ws.warehouseName, String(user?.warehouseId) === String(ws.warehouseId))}>{ws.warehouseName}</span>
                           {String(user?.warehouseId) === String(ws.warehouseId) ? ' (Actual)' : ''}
                         </td>
                         <td style={{ padding: '12px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--text)' }}>

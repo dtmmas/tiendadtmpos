@@ -3,7 +3,12 @@ import { api, getProducts, getWarehouses, getCategories, getBrands, getProductWa
 import { useConfigStore } from '../store/config'
 import { useAuthStore } from '../store/auth'
 import { formatMoney } from '../utils/currency'
+import { getWarehouseHighlightStyle } from '../utils/warehouseHighlight'
+import { addLogoToPdf } from '../utils/printBranding'
 import MobileBarcodeScannerButton from '../components/MobileBarcodeScannerButton'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
+import * as XLSX from 'xlsx'
 
 interface Movement {
   id: number
@@ -45,12 +50,22 @@ interface WarehouseStock {
   quantity: number
 }
 
+interface ExportDataset {
+  title: string
+  fileName: string
+  subtitle: string
+  columns: string[]
+  rows: Array<Array<string | number>>
+  excelRows: Array<Record<string, string | number>>
+}
+
 export default function InventoryMovements() {
   const productsPerPage = 40
   const hasPermission = useAuthStore(s => s.hasPermission)
   const canReadInventory = hasPermission('inventory:read')
   const canWriteInventory = hasPermission('inventory:write')
   const [activeTab, setActiveTab] = useState<'products' | 'history' | 'kardex'>(canWriteInventory ? 'products' : 'history')
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
   
   // History state
   const [items, setItems] = useState<Movement[]>([])
@@ -80,6 +95,7 @@ export default function InventoryMovements() {
   const [productQuery, setProductQuery] = useState('')
   const [debouncedProductQuery, setDebouncedProductQuery] = useState('')
   const [adjustStockFilter, setAdjustStockFilter] = useState<'all' | 'with_stock' | 'without_stock'>('with_stock')
+  const [adjustWarehouseId, setAdjustWarehouseId] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
   const [totalProducts, setTotalProducts] = useState(0)
   const [view, setView] = useState<'grid' | 'list'>('grid')
@@ -88,7 +104,8 @@ export default function InventoryMovements() {
 
   // Shared state
   const [warehouses, setWarehouses] = useState<any[]>([])
-  const currency = useConfigStore(s => s.config?.currency || 'USD')
+  const config = useConfigStore(s => s.config)
+  const currency = config?.currency || 'USD'
   
   // Modal state
   const [showAdjust, setShowAdjust] = useState(false)
@@ -116,9 +133,11 @@ export default function InventoryMovements() {
   const [productWarehouseStocks, setProductWarehouseStocks] = useState<WarehouseStock[]>([])
   const [productWarehouseStockMap, setProductWarehouseStockMap] = useState<Record<number, WarehouseStock[]>>({})
   const [loadingWarehouseStockMap, setLoadingWarehouseStockMap] = useState<Record<number, boolean>>({})
+  const [expandedWarehouseStockMap, setExpandedWarehouseStockMap] = useState<Record<number, boolean>>({})
   const [availableAdjustImeis, setAvailableAdjustImeis] = useState<string[]>([])
   const [availableAdjustSerials, setAvailableAdjustSerials] = useState<string[]>([])
   const [savingAdjust, setSavingAdjust] = useState(false)
+  const [exportingData, setExportingData] = useState(false)
 
   // Helper for array inputs
   const updateBatch = (idx: number, field: keyof Batch, val: any) => {
@@ -183,10 +202,25 @@ export default function InventoryMovements() {
   }, [])
 
   useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)')
+    const syncViewport = () => setIsMobileViewport(mediaQuery.matches)
+
+    syncViewport()
+    mediaQuery.addEventListener('change', syncViewport)
+    return () => mediaQuery.removeEventListener('change', syncViewport)
+  }, [])
+
+  useEffect(() => {
     if (!canWriteInventory && activeTab === 'products') {
       setActiveTab('history')
     }
   }, [activeTab, canWriteInventory])
+
+  useEffect(() => {
+    if (isMobileViewport && view !== 'grid') {
+      setView('grid')
+    }
+  }, [isMobileViewport, view])
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -197,67 +231,12 @@ export default function InventoryMovements() {
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [debouncedProductQuery, adjustStockFilter])
+  }, [debouncedProductQuery, adjustStockFilter, adjustWarehouseId])
 
   // Load products when tab is active
   useEffect(() => {
     if (activeTab === 'products') loadProducts()
-  }, [activeTab, currentPage, debouncedProductQuery, adjustStockFilter])
-
-  useEffect(() => {
-    if (activeTab !== 'products' || products.length === 0) return
-
-    const missingProducts = products.filter(product =>
-      !Object.prototype.hasOwnProperty.call(productWarehouseStockMap, product.id) &&
-      !loadingWarehouseStockMap[product.id]
-    )
-    if (missingProducts.length === 0) return
-
-    let cancelled = false
-
-    const loadProductStocks = async () => {
-      const missingProductIds = missingProducts.map(product => product.id)
-      setLoadingWarehouseStockMap(prev => {
-        const next = { ...prev }
-        for (const productId of missingProductIds) next[productId] = true
-        return next
-      })
-
-      try {
-        const entries = await Promise.all(
-          missingProducts.map(async product => {
-            const stocks = await getProductWarehouseStock(product.id)
-            return [product.id, Array.isArray(stocks) ? stocks : []] as const
-          })
-        )
-
-        if (cancelled) return
-
-        setProductWarehouseStockMap(prev => {
-          const next = { ...prev }
-          for (const [productId, stocks] of entries) {
-            next[productId] = stocks
-          }
-          return next
-        })
-      } catch (err) {
-        if (!cancelled) console.error(err)
-      } finally {
-        if (cancelled) return
-        setLoadingWarehouseStockMap(prev => {
-          const next = { ...prev }
-          for (const productId of missingProductIds) next[productId] = false
-          return next
-        })
-      }
-    }
-
-    void loadProductStocks()
-
-    return () => {
-      cancelled = true
-    }
-  }, [activeTab, products, productWarehouseStockMap, loadingWarehouseStockMap])
+  }, [activeTab, currentPage, debouncedProductQuery, adjustStockFilter, adjustWarehouseId])
 
   // Load history when tab is active or filters change
   useEffect(() => {
@@ -345,12 +324,14 @@ export default function InventoryMovements() {
         limit: productsPerPage,
         search: debouncedProductQuery || undefined,
         stockFilter: adjustStockFilter,
+        warehouseId: adjustWarehouseId ? Number(adjustWarehouseId) : undefined,
       })
       const nextProducts = Array.isArray(data?.data) ? data.data : []
       setProducts(nextProducts)
       setTotalProducts(Number(data?.pagination?.total || 0))
       setProductWarehouseStockMap({})
       setLoadingWarehouseStockMap({})
+      setExpandedWarehouseStockMap({})
     } catch (err) {
       console.error(err)
       setProducts([])
@@ -394,6 +375,24 @@ export default function InventoryMovements() {
         return next
       })
     }
+  }
+
+  const toggleWarehouseStockBreakdown = async (productId: number) => {
+    const nextExpanded = !Boolean(expandedWarehouseStockMap[productId])
+    setExpandedWarehouseStockMap(prev => ({
+      ...prev,
+      [productId]: nextExpanded
+    }))
+
+    if (
+      !nextExpanded ||
+      Object.prototype.hasOwnProperty.call(productWarehouseStockMap, productId) ||
+      loadingWarehouseStockMap[productId]
+    ) {
+      return
+    }
+
+    await refreshProductsWarehouseStock([productId])
   }
 
   const loadHistory = async () => {
@@ -509,7 +508,7 @@ export default function InventoryMovements() {
       return
     }
     // Pre-select first warehouse if available
-    const defaultWh = warehouses.length > 0 ? String(warehouses[0].id) : ''
+    const defaultWh = adjustWarehouseId || (warehouses.length > 0 ? String(warehouses[0].id) : '')
     setCurrentWarehouseStock(null)
     setProductWarehouseStocks([])
     setAvailableAdjustImeis([])
@@ -777,6 +776,25 @@ export default function InventoryMovements() {
       .join(' | ')
   }
 
+  const getMovementTypeBadgeStyle = (type: string) => ({
+    padding: '4px 8px',
+    borderRadius: 999,
+    fontSize: 11,
+    fontWeight: 700,
+    background:
+      type.includes('IN') || type === 'PURCHASE' || type === 'INITIAL' || type === 'SALE_CANCEL'
+        ? '#e8f5e9'
+        : type === 'SALE'
+          ? '#ffebee'
+          : '#f5f5f5',
+    color:
+      type.includes('IN') || type === 'PURCHASE' || type === 'INITIAL' || type === 'SALE_CANCEL'
+        ? '#2e7d32'
+        : type === 'SALE'
+          ? '#c62828'
+          : '#616161'
+  })
+
   const totalPages = useMemo(() => Math.max(1, Math.ceil(totalProducts / productsPerPage)), [totalProducts])
 
   const categoryMap = useMemo(() => {
@@ -791,18 +809,341 @@ export default function InventoryMovements() {
     return map
   }, [brands])
 
+  const getWarehouseNameById = (warehouseId?: string) => {
+    if (!warehouseId) return 'Todos los almacenes'
+    return warehouses.find(w => String(w.id) === String(warehouseId))?.name || 'Almacén'
+  }
+
+  const fetchAllFilteredProducts = async () => {
+    const pageLimit = 500
+    const firstPage = await getProducts({
+      paged: true,
+      page: 1,
+      limit: pageLimit,
+      search: debouncedProductQuery || undefined,
+      stockFilter: adjustStockFilter,
+      warehouseId: adjustWarehouseId ? Number(adjustWarehouseId) : undefined,
+    })
+
+    const firstBatch = Array.isArray(firstPage?.data) ? firstPage.data : []
+    const total = Number(firstPage?.pagination?.total || firstBatch.length || 0)
+    const totalPagesNeeded = Math.max(1, Math.ceil(total / pageLimit))
+
+    if (totalPagesNeeded === 1) {
+      return firstBatch as Product[]
+    }
+
+    const remainingPages = await Promise.all(
+      Array.from({ length: totalPagesNeeded - 1 }, (_, index) =>
+        getProducts({
+          paged: true,
+          page: index + 2,
+          limit: pageLimit,
+          search: debouncedProductQuery || undefined,
+          stockFilter: adjustStockFilter,
+          warehouseId: adjustWarehouseId ? Number(adjustWarehouseId) : undefined,
+        })
+      )
+    )
+
+    return [
+      ...firstBatch,
+      ...remainingPages.flatMap(response => Array.isArray(response?.data) ? response.data : [])
+    ] as Product[]
+  }
+
+  const fetchAllFilteredHistory = async () => {
+    let url = '/inventory/movements?limit=100000'
+    if (filters.type) url += `&type=${filters.type}`
+    if (filters.warehouseId) url += `&warehouseId=${filters.warehouseId}`
+
+    const { data } = await api.get(url)
+    return Array.isArray(data) ? data as Movement[] : []
+  }
+
+  const fetchAllFilteredKardex = async () => {
+    if (!kardexSelectedProduct) return []
+
+    let url = `/inventory/movements?kardex=true&productId=${kardexSelectedProduct.id}&limit=100000`
+    if (kardexFilters.warehouseId) url += `&warehouseId=${kardexFilters.warehouseId}`
+    if (kardexFilters.startDate) url += `&startDate=${kardexFilters.startDate}`
+    if (kardexFilters.endDate) url += `&endDate=${kardexFilters.endDate}`
+
+    const { data } = await api.get(url)
+    const list = Array.isArray(data) ? data as Movement[] : []
+
+    let balance = 0
+    return list.map(item => {
+      const signedQty = getSignedQuantity(item)
+      balance += signedQty
+      return { ...item, signedQty, balance }
+    })
+  }
+
+  const buildExportDataset = async (): Promise<ExportDataset> => {
+    if (activeTab === 'products') {
+      const exportProducts = await fetchAllFilteredProducts()
+      const filtersSummary = [
+        debouncedProductQuery ? `Busqueda: ${debouncedProductQuery}` : 'Busqueda: todas',
+        `Filtro stock: ${adjustStockFilter === 'with_stock' ? 'Solo con stock' : adjustStockFilter === 'without_stock' ? 'Solo sin stock' : 'Todos'}`,
+        `Almacen: ${getWarehouseNameById(adjustWarehouseId)}`
+      ]
+
+      return {
+        title: 'Gestion de Inventario - Ajustes de Stock',
+        fileName: `GestionInventario_Ajustes_${new Date().toISOString().slice(0, 10)}`,
+        subtitle: filtersSummary.join(' | '),
+        columns: ['Codigo', 'SKU', 'Producto', 'Categoria', 'Marca', 'Tipo', adjustWarehouseId ? 'Stock Tienda' : 'Stock Global', 'Costo', 'Precio'],
+        rows: exportProducts.map(product => ([
+          product.productCode || '-',
+          product.sku || '-',
+          product.name,
+          product.categoryId ? categoryMap[product.categoryId] : '-',
+          product.brandId ? brandMap[product.brandId] : '-',
+          product.productType || 'GENERAL',
+          Number(product.stock || 0),
+          formatMoney(Number(product.cost || 0), currency),
+          formatMoney(Number(product.price || 0), currency)
+        ])),
+        excelRows: exportProducts.map(product => ({
+          Codigo: product.productCode || '-',
+          SKU: product.sku || '-',
+          Producto: product.name,
+          Categoria: product.categoryId ? categoryMap[product.categoryId] : '-',
+          Marca: product.brandId ? brandMap[product.brandId] : '-',
+          Tipo: product.productType || 'GENERAL',
+          [adjustWarehouseId ? 'Stock Tienda' : 'Stock Global']: Number(product.stock || 0),
+          Costo: Number(product.cost || 0),
+          Precio: Number(product.price || 0),
+        })),
+      }
+    }
+
+    if (activeTab === 'history') {
+      const exportItems = await fetchAllFilteredHistory()
+      const filtersSummary = [
+        `Tipo: ${filters.type ? getTypeName(filters.type) : 'Todos'}`,
+        `Almacen: ${getWarehouseNameById(filters.warehouseId)}`
+      ]
+
+      return {
+        title: 'Gestion de Inventario - Historial de Movimientos',
+        fileName: `GestionInventario_Historial_${new Date().toISOString().slice(0, 10)}`,
+        subtitle: filtersSummary.join(' | '),
+        columns: ['Fecha', 'Tipo', 'Producto', 'Codigo', 'Almacen', 'Cantidad', 'Detalle', 'Referencia', 'Usuario', 'Notas'],
+        rows: exportItems.map(item => ([
+          new Date(item.date).toLocaleString(),
+          getTypeName(item.type),
+          item.product_name,
+          item.product_code || '-',
+          item.warehouse_name,
+          Number(item.quantity || 0),
+          getMovementTrackingDetail(item.notes) || '-',
+          item.reference_id ? `#${item.reference_id}` : '-',
+          item.user_name || 'Sistema',
+          getMovementGeneralNotes(item.notes) || '-'
+        ])),
+        excelRows: exportItems.map(item => ({
+          Fecha: new Date(item.date).toLocaleString(),
+          Tipo: getTypeName(item.type),
+          Producto: item.product_name,
+          Codigo: item.product_code || '-',
+          Almacen: item.warehouse_name,
+          Cantidad: Number(item.quantity || 0),
+          Detalle: getMovementTrackingDetail(item.notes) || '-',
+          Referencia: item.reference_id ? `#${item.reference_id}` : '-',
+          Usuario: item.user_name || 'Sistema',
+          Notas: getMovementGeneralNotes(item.notes) || '-'
+        })),
+      }
+    }
+
+    const exportKardexItems = await fetchAllFilteredKardex()
+    const filtersSummary = [
+      `Producto: ${kardexSelectedProduct ? `${kardexSelectedProduct.name} (${kardexSelectedProduct.sku})` : 'Sin seleccionar'}`,
+      `Almacen: ${getWarehouseNameById(kardexFilters.warehouseId)}`,
+      kardexFilters.startDate ? `Desde: ${kardexFilters.startDate}` : '',
+      kardexFilters.endDate ? `Hasta: ${kardexFilters.endDate}` : ''
+    ].filter(Boolean)
+
+    return {
+      title: 'Gestion de Inventario - Kardex',
+      fileName: `GestionInventario_Kardex_${new Date().toISOString().slice(0, 10)}`,
+      subtitle: filtersSummary.join(' | '),
+      columns: ['Fecha', 'Tipo', 'Documento', 'Entrada', 'Salida', 'Saldo', 'Detalle', 'Almacen', 'Usuario', 'Notas'],
+      rows: exportKardexItems.map(item => ([
+        new Date(item.date).toLocaleString(),
+        getTypeName(item.type),
+        item.reference_id ? `#${item.reference_id}` : '-',
+        item.signedQty > 0 ? item.signedQty : '-',
+        item.signedQty < 0 ? Math.abs(item.signedQty) : '-',
+        item.balance,
+        getMovementTrackingDetail(item.notes) || '-',
+        item.warehouse_name,
+        item.user_name || 'Sistema',
+        getMovementGeneralNotes(item.notes) || '-'
+      ])),
+      excelRows: exportKardexItems.map(item => ({
+        Fecha: new Date(item.date).toLocaleString(),
+        Tipo: getTypeName(item.type),
+        Documento: item.reference_id ? `#${item.reference_id}` : '-',
+        Entrada: item.signedQty > 0 ? item.signedQty : 0,
+        Salida: item.signedQty < 0 ? Math.abs(item.signedQty) : 0,
+        Saldo: item.balance,
+        Detalle: getMovementTrackingDetail(item.notes) || '-',
+        Almacen: item.warehouse_name,
+        Usuario: item.user_name || 'Sistema',
+        Notas: getMovementGeneralNotes(item.notes) || '-'
+      })),
+    }
+  }
+
+  const exportDisabled =
+    exportingData ||
+    (activeTab === 'products' && (loadingProducts || totalProducts === 0)) ||
+    (activeTab === 'history' && (loadingHistory || items.length === 0)) ||
+    (activeTab === 'kardex' && (loadingKardex || !kardexSelectedProduct || kardexItems.length === 0))
+
+  const exportToPDF = async () => {
+    setExportingData(true)
+    try {
+      const dataset = await buildExportDataset()
+      if (!dataset.rows.length) return
+
+      const doc = new jsPDF('l', 'mm', 'a4')
+      const now = new Date().toLocaleString()
+      const logoHeight = await addLogoToPdf(doc, config?.logoUrl, { x: 14, y: 10, maxWidth: 28, maxHeight: 18 })
+      const titleY = logoHeight > 0 ? 24 : 22
+
+      doc.setFontSize(18)
+      doc.text(dataset.title, 14, titleY)
+      doc.setFontSize(10)
+      doc.text(`Fecha: ${now}`, 14, titleY + 8)
+      if (dataset.subtitle) {
+        doc.text(dataset.subtitle, 14, titleY + 14, { maxWidth: 260 })
+      }
+
+      autoTable(doc, {
+        head: [dataset.columns],
+        body: dataset.rows,
+        startY: dataset.subtitle ? titleY + 22 : titleY + 16,
+        theme: 'grid',
+        styles: { fontSize: 8, cellPadding: 2 },
+        headStyles: { fillColor: [41, 128, 185] },
+        margin: { left: 8, right: 8 }
+      })
+
+      doc.save(`${dataset.fileName}.pdf`)
+    } finally {
+      setExportingData(false)
+    }
+  }
+
+  const exportToExcel = async () => {
+    setExportingData(true)
+    try {
+      const dataset = await buildExportDataset()
+      if (!dataset.excelRows.length) return
+
+      const wb = XLSX.utils.book_new()
+      const ws = XLSX.utils.json_to_sheet(dataset.excelRows)
+      XLSX.utils.book_append_sheet(wb, ws, 'Inventario')
+      XLSX.writeFile(wb, `${dataset.fileName}.xlsx`)
+    } finally {
+      setExportingData(false)
+    }
+  }
+
+  const printCurrentView = async () => {
+    setExportingData(true)
+    try {
+      const dataset = await buildExportDataset()
+      if (!dataset.rows.length) return
+
+      const escapeHtml = (value: string | number) => String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+
+      const rowsHtml = dataset.rows
+        .map(row => `<tr>${row.map(cell => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`)
+        .join('')
+
+      const printWindow = window.open('', '_blank', 'width=1200,height=900')
+      if (!printWindow) return
+
+      printWindow.document.write(`<!DOCTYPE html>
+<html>
+  <head>
+    <title>${escapeHtml(dataset.title)}</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 24px; color: #0f172a; }
+      h1 { font-size: 22px; margin-bottom: 8px; }
+      p { margin: 0 0 8px; color: #475569; }
+      table { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: 12px; }
+      th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; vertical-align: top; }
+      th { background: #e2e8f0; }
+    </style>
+  </head>
+  <body>
+    <h1>${escapeHtml(dataset.title)}</h1>
+    <p><strong>Fecha:</strong> ${escapeHtml(new Date().toLocaleString())}</p>
+    ${dataset.subtitle ? `<p><strong>Filtros:</strong> ${escapeHtml(dataset.subtitle)}</p>` : ''}
+    <table>
+      <thead><tr>${dataset.columns.map(column => `<th>${escapeHtml(column)}</th>`).join('')}</tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  </body>
+</html>`)
+      printWindow.document.close()
+      printWindow.focus()
+      printWindow.print()
+    } finally {
+      setExportingData(false)
+    }
+  }
+
   const renderWarehouseStockBreakdown = (productId: number, globalStock: number, compact = false) => {
+    const isExpanded = Boolean(expandedWarehouseStockMap[productId])
     const hasLoadedStocks = Object.prototype.hasOwnProperty.call(productWarehouseStockMap, productId)
     const stocks = productWarehouseStockMap[productId] || []
-    const isLoadingStocks = Boolean(loadingWarehouseStockMap[productId]) || !hasLoadedStocks
+    const isLoadingStocks = Boolean(loadingWarehouseStockMap[productId])
+    const stockLabel = adjustWarehouseId ? `Stock en ${getWarehouseNameById(adjustWarehouseId)}` : 'Stock Global'
 
     return (
       <div style={{ display: 'grid', gap: compact ? 2 : 4 }}>
-        {isLoadingStocks ? (
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: compact ? 2 : 4 }}>
+          <span style={{ color: 'var(--muted)', fontWeight: 600, fontSize: compact ? 11 : 12 }}>{stockLabel}</span>
+          <strong style={{ color: globalStock > 0 ? '#10b981' : '#ef4444', fontSize: compact ? 11 : 12 }}>{globalStock}</strong>
+        </div>
+        <button
+          type="button"
+          onClick={() => void toggleWarehouseStockBreakdown(productId)}
+          style={{
+            border: '1px solid var(--border)',
+            background: 'var(--bg)',
+            color: 'var(--text)',
+            borderRadius: 8,
+            padding: compact ? '6px 8px' : '7px 10px',
+            fontSize: compact ? 11 : 12,
+            fontWeight: 600,
+            cursor: 'pointer',
+            textAlign: 'left'
+          }}
+        >
+          {isExpanded ? 'Ocultar stock por tienda' : 'Ver stock por tienda'}
+        </button>
+        {isExpanded && isLoadingStocks ? (
           <div style={{ fontSize: compact ? 11 : 12, color: 'var(--muted)' }}>
             Cargando stock por tienda...
           </div>
-        ) : stocks.length > 0 ? (
+        ) : isExpanded && !hasLoadedStocks ? (
+          <div style={{ fontSize: compact ? 11 : 12, color: 'var(--muted)' }}>
+            Sin datos cargados
+          </div>
+        ) : isExpanded && stocks.length > 0 ? (
           stocks.map(stock => (
             <div
               key={`${productId}-${stock.warehouseId}`}
@@ -814,30 +1155,115 @@ export default function InventoryMovements() {
                 color: 'var(--muted)'
               }}
             >
-              <span>{stock.warehouseName}</span>
+              <span className="warehouse-highlight" style={getWarehouseHighlightStyle(stock.warehouseName)}>{stock.warehouseName}</span>
               <strong style={{ color: Number(stock.quantity || 0) > 0 ? '#10b981' : '#ef4444' }}>
                 {stock.quantity}
               </strong>
             </div>
           ))
-        ) : (
+        ) : isExpanded ? (
           <div style={{ fontSize: compact ? 11 : 12, color: 'var(--muted)' }}>
             Sin stock por tienda registrado
           </div>
-        )}
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            gap: 12,
-            fontSize: compact ? 11 : 12,
-            paddingTop: compact ? 4 : 6,
-            borderTop: '1px dashed var(--border)'
-          }}
-        >
-          <span style={{ color: 'var(--muted)', fontWeight: 600 }}>Stock Global</span>
-          <strong style={{ color: globalStock > 0 ? '#10b981' : '#ef4444' }}>{globalStock}</strong>
-        </div>
+        ) : null}
+      </div>
+    )
+  }
+
+  const renderHistoryMobileCards = () => {
+    if (loadingHistory) {
+      return <div style={{ textAlign: 'center', padding: 24 }}>Cargando...</div>
+    }
+
+    if (items.length === 0) {
+      return <div style={{ textAlign: 'center', padding: 24, color: 'var(--muted)' }}>No hay movimientos recientes</div>
+    }
+
+    return (
+      <div style={{ display: 'grid', gap: 12 }}>
+        {items.map(m => (
+          <div key={m.id} style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 14, display: 'grid', gap: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: 'var(--muted)' }}>{new Date(m.date).toLocaleString()}</div>
+                <div style={{ fontWeight: 700, marginTop: 4 }}>{m.product_name}</div>
+                <div style={{ fontSize: 12, color: 'var(--muted)' }}>{m.product_code || '-'}</div>
+              </div>
+              <span style={getMovementTypeBadgeStyle(m.type)}>{getTypeName(m.type)}</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--muted)' }}>Almacén</div>
+                <span className="warehouse-highlight" style={getWarehouseHighlightStyle(m.warehouse_name)}>{m.warehouse_name}</span>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 11, color: 'var(--muted)' }}>Cantidad</div>
+                <div style={{ fontWeight: 800, color: m.quantity > 0 ? '#10b981' : '#ef4444' }}>
+                  {m.quantity > 0 ? '+' : ''}{m.quantity}
+                </div>
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--muted)' }}>Detalle</div>
+              <div style={{ fontSize: 13 }}>{getMovementTrackingDetail(m.notes) || '-'}</div>
+            </div>
+            <div style={{ display: 'grid', gap: 4, fontSize: 12, color: 'var(--muted)' }}>
+              <div><strong style={{ color: 'var(--text)' }}>Referencia:</strong> {m.reference_id ? `#${m.reference_id}` : '-'}</div>
+              <div><strong style={{ color: 'var(--text)' }}>Usuario:</strong> {m.user_name || 'Sistema'}</div>
+              {getMovementGeneralNotes(m.notes) ? (
+                <div><strong style={{ color: 'var(--text)' }}>Notas:</strong> {getMovementGeneralNotes(m.notes)}</div>
+              ) : null}
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  const renderKardexMobileCards = () => {
+    if (!kardexSelectedProduct) {
+      return <div style={{ textAlign: 'center', padding: 24, color: 'var(--muted)' }}>Seleccione un producto para ver su Kardex</div>
+    }
+
+    if (loadingKardex) {
+      return <div style={{ textAlign: 'center', padding: 24 }}>Cargando Kardex...</div>
+    }
+
+    if (kardexItems.length === 0) {
+      return <div style={{ textAlign: 'center', padding: 24, color: 'var(--muted)' }}>No hay movimientos registrados en este periodo</div>
+    }
+
+    return (
+      <div style={{ display: 'grid', gap: 12 }}>
+        {kardexItems.map(m => (
+          <div key={m.id} style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 14, display: 'grid', gap: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+              <div style={{ fontSize: 12, color: 'var(--muted)' }}>{new Date(m.date).toLocaleString()}</div>
+              <span style={getMovementTypeBadgeStyle(m.type)}>{getTypeName(m.type)}</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
+              <div style={{ background: 'var(--surface)', borderRadius: 10, padding: 10 }}>
+                <div style={{ fontSize: 11, color: 'var(--muted)' }}>Entrada</div>
+                <div style={{ fontWeight: 800, color: '#10b981' }}>{m.signedQty > 0 ? m.signedQty : '-'}</div>
+              </div>
+              <div style={{ background: 'var(--surface)', borderRadius: 10, padding: 10 }}>
+                <div style={{ fontSize: 11, color: 'var(--muted)' }}>Salida</div>
+                <div style={{ fontWeight: 800, color: '#ef4444' }}>{m.signedQty < 0 ? Math.abs(m.signedQty) : '-'}</div>
+              </div>
+              <div style={{ background: 'rgba(0,0,0,0.03)', borderRadius: 10, padding: 10 }}>
+                <div style={{ fontSize: 11, color: 'var(--muted)' }}>Saldo</div>
+                <div style={{ fontWeight: 800 }}>{m.balance}</div>
+              </div>
+            </div>
+            <div style={{ display: 'grid', gap: 6, fontSize: 12 }}>
+              <div><strong>Documento:</strong> {m.reference_id ? `#${m.reference_id}` : '-'}</div>
+              <div><strong>Almacén:</strong> <span className="warehouse-highlight" style={getWarehouseHighlightStyle(m.warehouse_name)}>{m.warehouse_name}</span></div>
+              <div><strong>Usuario:</strong> {m.user_name || 'Sistema'}</div>
+              <div><strong>Detalle:</strong> {getMovementTrackingDetail(m.notes) || '-'}</div>
+              {getMovementGeneralNotes(m.notes) ? <div><strong>Notas:</strong> {getMovementGeneralNotes(m.notes)}</div> : null}
+            </div>
+          </div>
+        ))}
       </div>
     )
   }
@@ -849,36 +1275,44 @@ export default function InventoryMovements() {
     return Number(selectedProduct?.stock || 0)
   }, [productWarehouseStocks, selectedProduct])
 
+  const inventoryTabCount = canWriteInventory ? 3 : 2
+
   return (
-    <div className="page-container" style={{ padding: 20 }}>
+    <div className="page-container" style={{ padding: isMobileViewport ? 14 : 20 }}>
       <div style={{ marginBottom: 20 }}>
         <h2 style={{ marginBottom: 16 }}>Gestión de Inventario</h2>
         
         <div style={{ 
-          display: 'flex', 
+          display: isMobileViewport ? 'grid' : 'flex',
+          gridTemplateColumns: isMobileViewport ? `repeat(${inventoryTabCount}, minmax(0, 1fr))` : undefined,
           gap: 12, 
           paddingBottom: 0,
           marginBottom: 20,
-          borderBottom: '1px solid var(--border)',
-          overflowX: 'auto'
+          borderBottom: isMobileViewport ? 'none' : '1px solid var(--border)',
+          overflowX: 'visible'
         }}>
           {canWriteInventory && (
             <button 
               onClick={() => setActiveTab('products')}
               style={{ 
-                padding: '12px 20px', 
-                border: 'none',
-                background: 'transparent',
+                padding: isMobileViewport ? '10px 14px' : '12px 20px',
+                border: isMobileViewport ? '1px solid var(--border)' : 'none',
+                background: isMobileViewport ? (activeTab === 'products' ? 'rgba(var(--primary-rgb), 0.12)' : 'var(--surface)') : 'transparent',
                 color: activeTab === 'products' ? 'var(--primary)' : 'var(--muted)',
-                borderBottom: activeTab === 'products' ? '2px solid var(--primary)' : '2px solid transparent',
+                borderBottom: isMobileViewport ? '1px solid var(--border)' : (activeTab === 'products' ? '2px solid var(--primary)' : '2px solid transparent'),
                 cursor: 'pointer',
                 fontWeight: activeTab === 'products' ? 600 : 500,
-                fontSize: '14px',
+                fontSize: isMobileViewport ? '13px' : '14px',
                 display: 'flex',
+                flexDirection: isMobileViewport ? 'column' : 'row',
                 alignItems: 'center',
+                justifyContent: 'center',
                 gap: 8,
                 transition: 'all 0.2s ease',
-                marginBottom: -1
+                marginBottom: isMobileViewport ? 0 : -1,
+                borderRadius: isMobileViewport ? 12 : 0,
+                minHeight: isMobileViewport ? 84 : undefined,
+                textAlign: 'center'
               }}
             >
               <div style={{
@@ -900,19 +1334,24 @@ export default function InventoryMovements() {
           <button 
             onClick={() => setActiveTab('history')}
             style={{ 
-              padding: '12px 20px', 
-              border: 'none',
-              background: 'transparent',
+              padding: isMobileViewport ? '10px 14px' : '12px 20px',
+              border: isMobileViewport ? '1px solid var(--border)' : 'none',
+              background: isMobileViewport ? (activeTab === 'history' ? '#fef3c7' : 'var(--surface)') : 'transparent',
               color: activeTab === 'history' ? '#f59e0b' : 'var(--muted)',
-              borderBottom: activeTab === 'history' ? '2px solid #f59e0b' : '2px solid transparent',
+              borderBottom: isMobileViewport ? '1px solid var(--border)' : (activeTab === 'history' ? '2px solid #f59e0b' : '2px solid transparent'),
               cursor: 'pointer',
               fontWeight: activeTab === 'history' ? 600 : 500,
-              fontSize: '14px',
+              fontSize: isMobileViewport ? '13px' : '14px',
               display: 'flex',
+              flexDirection: isMobileViewport ? 'column' : 'row',
               alignItems: 'center',
+              justifyContent: 'center',
               gap: 8,
               transition: 'all 0.2s ease',
-              marginBottom: -1
+              marginBottom: isMobileViewport ? 0 : -1,
+              borderRadius: isMobileViewport ? 12 : 0,
+              minHeight: isMobileViewport ? 84 : undefined,
+              textAlign: 'center'
             }}
           >
              <div style={{
@@ -932,19 +1371,24 @@ export default function InventoryMovements() {
           <button 
             onClick={() => setActiveTab('kardex')}
             style={{ 
-              padding: '12px 20px', 
-              border: 'none',
-              background: 'transparent',
+              padding: isMobileViewport ? '10px 14px' : '12px 20px',
+              border: isMobileViewport ? '1px solid var(--border)' : 'none',
+              background: isMobileViewport ? (activeTab === 'kardex' ? '#d1fae5' : 'var(--surface)') : 'transparent',
               color: activeTab === 'kardex' ? '#10b981' : 'var(--muted)',
-              borderBottom: activeTab === 'kardex' ? '2px solid #10b981' : '2px solid transparent',
+              borderBottom: isMobileViewport ? '1px solid var(--border)' : (activeTab === 'kardex' ? '2px solid #10b981' : '2px solid transparent'),
               cursor: 'pointer',
               fontWeight: activeTab === 'kardex' ? 600 : 500,
-              fontSize: '14px',
+              fontSize: isMobileViewport ? '13px' : '14px',
               display: 'flex',
+              flexDirection: isMobileViewport ? 'column' : 'row',
               alignItems: 'center',
+              justifyContent: 'center',
               gap: 8,
               transition: 'all 0.2s ease',
-              marginBottom: -1
+              marginBottom: isMobileViewport ? 0 : -1,
+              borderRadius: isMobileViewport ? 12 : 0,
+              minHeight: isMobileViewport ? 84 : undefined,
+              textAlign: 'center'
             }}
           >
              <div style={{
@@ -964,17 +1408,30 @@ export default function InventoryMovements() {
             Kardex (Auditoría)
           </button>
         </div>
+
+        <div style={{ display: 'flex', flexDirection: isMobileViewport ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobileViewport ? 'stretch' : 'center', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
+          <div style={{ fontSize: 13, color: 'var(--muted)' }}>
+            {activeTab === 'products' && 'Exporta o imprime la vista actual de ajustes de stock.'}
+            {activeTab === 'history' && 'Exporta o imprime el historial con los filtros aplicados.'}
+            {activeTab === 'kardex' && 'Exporta o imprime el kardex del producto seleccionado.'}
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', width: isMobileViewport ? '100%' : 'auto' }}>
+            <button className="small-btn" style={{ flex: isMobileViewport ? '1 1 100%' : undefined }} onClick={() => void exportToPDF()} disabled={exportDisabled}>Exportar PDF</button>
+            <button className="small-btn" style={{ flex: isMobileViewport ? '1 1 100%' : undefined }} onClick={exportToExcel} disabled={exportDisabled}>Exportar Excel</button>
+            <button className="small-btn" style={{ flex: isMobileViewport ? '1 1 100%' : undefined }} onClick={printCurrentView} disabled={exportDisabled}>Imprimir</button>
+          </div>
+        </div>
       </div>
 
       {canWriteInventory && activeTab === 'products' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, alignItems: 'center' }}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', flexDirection: isMobileViewport ? 'column' : 'row', justifyContent: 'space-between', marginBottom: 16, alignItems: isMobileViewport ? 'stretch' : 'center', gap: 12 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', width: isMobileViewport ? '100%' : 'auto' }}>
               <input 
                 placeholder="Buscar por codigo, SKU, nombre o detalle..." 
                 value={productQuery} 
                 onChange={e => setProductQuery(e.target.value)} 
-                style={{ width: 400, maxWidth: '100%', padding: 8, borderRadius: 6, border: '1px solid var(--border)' }}
+                style={{ width: isMobileViewport ? '100%' : 400, maxWidth: '100%', padding: 8, borderRadius: 6, border: '1px solid var(--border)' }}
               />
               <MobileBarcodeScannerButton
                 buttonLabel="Escanear"
@@ -991,13 +1448,24 @@ export default function InventoryMovements() {
                 <option value="without_stock">Solo sin stock</option>
                 <option value="all">Con y sin stock</option>
               </select>
+              <select
+                value={adjustWarehouseId}
+                onChange={e => setAdjustWarehouseId(e.target.value)}
+                style={{ padding: 8, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--modal)', color: 'var(--text)' }}
+                title="Filtrar por almacén"
+              >
+                <option value="">Todas las tiendas</option>
+                {warehouses.map(w => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
               <div style={{ fontSize: 12, color: 'var(--muted)' }}>
                 {loadingProducts
                   ? 'Buscando productos...'
                   : `${products.length > 0 ? ((currentPage - 1) * productsPerPage) + 1 : 0} - ${Math.min(currentPage * productsPerPage, totalProducts)} de ${totalProducts}`}
               </div>
             </div>
-            <div className="view-toggle">
+            <div className="view-toggle" style={{ alignSelf: isMobileViewport ? 'flex-end' : 'auto' }}>
               <button
                 className={`toggle-btn ${view === 'grid' ? 'active' : ''}`}
                 onClick={() => setView('grid')}
@@ -1020,7 +1488,7 @@ export default function InventoryMovements() {
           ) : (
             <>
               {totalProducts > productsPerPage && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+                <div style={{ display: 'flex', flexDirection: isMobileViewport ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobileViewport ? 'stretch' : 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
                   <div style={{ fontSize: 12, color: 'var(--muted)' }}>
                     Pagina {currentPage} de {totalPages} - {productsPerPage} productos por pagina
                   </div>
@@ -1033,17 +1501,17 @@ export default function InventoryMovements() {
                 </div>
               )}
               {view === 'grid' ? (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 16 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(auto-fill, minmax(250px, 1fr))', gap: 16 }}>
                   {products.map(p => (
                     <div key={p.id} style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      <div style={{ display: 'flex', gap: 10 }}>
+                      <div style={{ display: 'flex', gap: 10, alignItems: isMobileViewport ? 'flex-start' : 'stretch' }}>
                         <img 
                           src={p.imageUrl || 'https://via.placeholder.com/64x64?text=IMG'} 
                           alt={p.name} 
-                          style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover' }}
+                          style={{ width: isMobileViewport ? 56 : 64, height: isMobileViewport ? 56 : 64, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }}
                         />
                         <div style={{ flex: 1, overflow: 'hidden' }}>
-                          <div style={{ fontWeight: 600, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={p.name}>{p.name}</div>
+                          <div style={{ fontWeight: 600, fontSize: 14, whiteSpace: isMobileViewport ? 'normal' : 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={p.name}>{p.name}</div>
                           <div style={{ fontSize: 12, color: 'var(--muted)' }}>SKU: {p.sku}</div>
                           <div style={{ fontSize: 12, color: 'var(--muted)' }}>COD: {p.productCode || '-'}</div>
                           <div style={{ fontSize: 12, color: 'var(--muted)', display: '-webkit-box', WebkitLineClamp: 2 as any, WebkitBoxOrient: 'vertical', overflow: 'hidden' }} title={p.description || ''}>
@@ -1061,19 +1529,20 @@ export default function InventoryMovements() {
                         {renderWarehouseStockBreakdown(p.id, p.stock)}
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', gap: 10 }}>
                         <div style={{ fontSize: 13, fontWeight: 500 }}>{formatMoney(p.price, currency)}</div>
                         <button 
                           onClick={() => openAdjustModal(p)}
                           style={{ 
-                            padding: '6px 12px', 
+                            padding: '6px 12px',
                             borderRadius: 6, 
                             background: '#e65100', 
                             color: 'white', 
                             border: 'none', 
                             fontSize: 12,
                             cursor: 'pointer',
-                            fontWeight: 500
+                            fontWeight: 500,
+                            width: isMobileViewport ? '100%' : 'auto'
                           }}
                         >
                           Ajustar
@@ -1150,8 +1619,8 @@ export default function InventoryMovements() {
 
       {activeTab === 'history' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-            <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{ display: 'flex', flexDirection: isMobileViewport ? 'column' : 'row', justifyContent: 'space-between', marginBottom: 16, gap: 10 }}>
+            <div style={{ display: 'flex', gap: 10, flexDirection: isMobileViewport ? 'column' : 'row' }}>
               <select 
                 value={filters.type} 
                 onChange={e => setFilters({...filters, type: e.target.value})}
@@ -1179,6 +1648,7 @@ export default function InventoryMovements() {
             <button onClick={loadHistory} className="primary-btn">Refrescar</button>
           </div>
 
+          {isMobileViewport ? renderHistoryMobileCards() : (
           <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
               <thead style={{ background: 'var(--surface)' }}>
@@ -1227,7 +1697,7 @@ export default function InventoryMovements() {
                       <div style={{ fontWeight: 500 }}>{m.product_name}</div>
                       <div style={{ fontSize: 12, color: 'gray' }}>{m.product_code}</div>
                     </td>
-                    <td style={{ padding: 12 }}>{m.warehouse_name}</td>
+                    <td style={{ padding: 12 }}><span className="warehouse-highlight" style={getWarehouseHighlightStyle(m.warehouse_name)}>{m.warehouse_name}</span></td>
                     <td style={{ padding: 12, textAlign: 'right', fontWeight: 'bold', color: m.quantity > 0 ? 'green' : 'red' }}>
                       {m.quantity > 0 ? '+' : ''}{m.quantity}
                     </td>
@@ -1253,12 +1723,13 @@ export default function InventoryMovements() {
               </tbody>
             </table>
           </div>
+          )}
         </div>
       )}
 
       {activeTab === 'kardex' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          <div style={{ background: 'var(--modal)', padding: 20, borderRadius: 12, border: '1px solid var(--border)' }}>
+          <div style={{ background: 'var(--modal)', padding: isMobileViewport ? 14 : 20, borderRadius: 12, border: '1px solid var(--border)' }}>
             <h3 style={{ marginTop: 0, marginBottom: 16 }}>Filtros del Kardex</h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
               {/* Product Selector */}
@@ -1343,6 +1814,7 @@ export default function InventoryMovements() {
             </div>
           </div>
 
+          {isMobileViewport ? renderKardexMobileCards() : (
           <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1120 }}>
               <thead style={{ background: 'var(--surface)' }}>
@@ -1400,7 +1872,7 @@ export default function InventoryMovements() {
                         {getMovementTrackingDetail(m.notes) || '-'}
                       </div>
                     </td>
-                    <td style={{ padding: 12, fontSize: 13 }}>{m.warehouse_name}</td>
+                    <td style={{ padding: 12, fontSize: 13 }}><span className="warehouse-highlight" style={getWarehouseHighlightStyle(m.warehouse_name)}>{m.warehouse_name}</span></td>
                     <td style={{ padding: 12, fontSize: 13 }}>{m.user_name || 'Sistema'}</td>
                     <td style={{ padding: 12, fontSize: 12, color: 'var(--muted)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={getMovementGeneralNotes(m.notes)}>
                       {getMovementGeneralNotes(m.notes) || '-'}
@@ -1410,17 +1882,18 @@ export default function InventoryMovements() {
               </tbody>
             </table>
           </div>
+          )}
         </div>
       )}
       
       {showAdjust && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: 'var(--modal)', width: 400, padding: 20, borderRadius: 12, border: '1px solid var(--border)' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: isMobileViewport ? 'flex-end' : 'center', justifyContent: 'center', zIndex: 1000, padding: isMobileViewport ? 0 : 16 }}>
+          <div style={{ background: 'var(--modal)', width: isMobileViewport ? '100%' : 400, maxWidth: isMobileViewport ? '100%' : 400, maxHeight: isMobileViewport ? '92vh' : '85vh', overflowY: 'auto', padding: isMobileViewport ? 16 : 20, borderRadius: isMobileViewport ? '18px 18px 0 0' : 12, border: '1px solid var(--border)' }}>
             <h3 style={{ margin: 0, marginBottom: 16 }}>Nuevo Ajuste de Inventario</h3>
             
             <div style={{ display: 'grid', gap: 12 }}>
               {selectedProduct ? (
-                <div style={{ background: 'var(--surface)', padding: 10, borderRadius: 8, display: 'flex', gap: 10 }}>
+                <div style={{ background: 'var(--surface)', padding: 10, borderRadius: 8, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                    <img 
                       src={selectedProduct.imageUrl || 'https://via.placeholder.com/48x48?text=IMG'} 
                       alt="" 
@@ -1446,7 +1919,7 @@ export default function InventoryMovements() {
                                 borderBottom: '1px dashed var(--border)'
                               }}
                             >
-                              <span>{stock.warehouseName}</span>
+                              <span className="warehouse-highlight" style={getWarehouseHighlightStyle(stock.warehouseName)}>{stock.warehouseName}</span>
                               <strong style={{ color: Number(stock.quantity || 0) > 0 ? '#10b981' : '#ef4444' }}>
                                 {stock.quantity}
                               </strong>

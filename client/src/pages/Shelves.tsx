@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
+import { getWarehouseHighlightStyle } from '../utils/warehouseHighlight'
 
 interface Warehouse { id: number; name: string }
 interface Shelf { id: number; name: string; warehouseId?: number | null; warehouseIds?: number[] }
@@ -9,6 +10,7 @@ export default function Shelves() {
   const [shelves, setShelves] = useState<Shelf[]>([])
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [view, setView] = useState<'grid' | 'list'>('grid')
   const [section, setSection] = useState<'almacenes' | 'estantes'>('almacenes')
   const [expanded, setExpanded] = useState<Record<number, boolean>>({})
@@ -37,6 +39,14 @@ export default function Shelves() {
     setShelves(sSorted)
   }
   useEffect(() => { load() }, [])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)')
+    const syncViewport = () => setIsMobileViewport(mediaQuery.matches)
+    syncViewport()
+    mediaQuery.addEventListener('change', syncViewport)
+    return () => mediaQuery.removeEventListener('change', syncViewport)
+  }, [])
 
   const filteredWarehouses = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -181,13 +191,13 @@ export default function Shelves() {
   }
 
   return (
-    <div style={{ padding: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+    <div style={{ padding: isMobileViewport ? 14 : 20 }}>
+      <div style={{ display: 'flex', alignItems: isMobileViewport ? 'stretch' : 'center', justifyContent: 'space-between', flexDirection: isMobileViewport ? 'column' : 'row', gap: 12, marginBottom: 16 }}>
         <h2 style={{ margin: 0 }}>Ubicaciones / Estantes</h2>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <input placeholder="Buscar..." value={query} onChange={e => setQuery(e.target.value)} style={{ width: 280 }} />
+        <div style={{ display: 'flex', alignItems: isMobileViewport ? 'stretch' : 'center', gap: 8, flexWrap: 'wrap', flexDirection: isMobileViewport ? 'column' : 'row', width: isMobileViewport ? '100%' : 'auto' }}>
+          <input placeholder="Buscar..." value={query} onChange={e => setQuery(e.target.value)} style={{ width: isMobileViewport ? '100%' : 280 }} />
           
-          <button className="primary-btn" onClick={() => startCreateShelf()}>Nuevo estante</button>
+          <button className="primary-btn" onClick={() => startCreateShelf()} style={{ width: isMobileViewport ? '100%' : 'auto' }}>Nuevo estante</button>
           
           <div className="view-toggle">
             <button
@@ -219,7 +229,7 @@ export default function Shelves() {
       </div>
 
       {view === 'grid' ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 20 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))', gap: 20 }}>
           {(section === 'almacenes' ? filteredWarehouses : filteredShelves).map(item => (
             <div key={(item as any).id} style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
               {section === 'almacenes' ? (
@@ -256,7 +266,7 @@ export default function Shelves() {
                       )}
                     </ul>
                   )}
-                  <div style={{ display: 'flex', gap: 10, marginTop: 'auto', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: 10, marginTop: 'auto', alignItems: 'center', flexWrap: 'wrap' }}>
                   
                   {/* Read-only view of warehouse */}
                   <div style={{ flex: 1 }}></div>
@@ -268,10 +278,13 @@ export default function Shelves() {
                     <span style={{ fontWeight: 600 }}>{(item as Shelf).name}</span>
                     <span style={{ fontSize: 11, padding: '2px 6px', border: '1px solid var(--border)', borderRadius: 10, opacity: 0.8 }}>Estante</span>
                   </div>
-                  <div style={{ color: 'var(--muted)', fontSize: 13 }}>Almacén: {(() => {
+                  <div style={{ color: 'var(--muted)', fontSize: 13 }}>Almacén: <span className="warehouse-highlight" style={getWarehouseHighlightStyle((() => {
                     const wid = (item as Shelf).warehouseId ?? null
                     return wid ? (warehouses.find(w => w.id === wid)?.name || '—') : '—'
-                  })()}</div>
+                  })())}>{(() => {
+                    const wid = (item as Shelf).warehouseId ?? null
+                    return wid ? (warehouses.find(w => w.id === wid)?.name || '—') : '—'
+                  })()}</span></div>
                   <div style={{ display: 'flex', gap: 10, marginTop: 'auto', alignItems: 'center' }}>
                     <button className="icon-btn primary" title="Editar" aria-label="Editar" onClick={() => startEditShelf(item as Shelf)}>
                       <svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 17.25V21h3.75L17.81 9.94a1 1 0 0 0 0-1.41l-3.34-3.34a1 1 0 0 0-1.41 0L3 16.59z" fill="currentColor"/></svg>
@@ -291,6 +304,80 @@ export default function Shelves() {
           ))}
         </div>
       ) : (
+        isMobileViewport ? (
+        <div style={{ display: 'grid', gap: 12 }}>
+          {(section === 'almacenes' ? filteredWarehouses : filteredShelves).map(item => (
+            <div key={(item as any).id} style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 14, display: 'grid', gap: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+                <div>
+                  <div style={{ fontWeight: 700 }}>{(item as any).name}</div>
+                  {section === 'estantes' && (
+                    <div style={{ color: 'var(--muted)', fontSize: 13, marginTop: 6 }}>
+                      Almacén: <span className="warehouse-highlight" style={getWarehouseHighlightStyle((() => {
+                        const shelf = item as Shelf
+                        const ids = Array.isArray(shelf.warehouseIds) && shelf.warehouseIds.length > 0 ? shelf.warehouseIds : (shelf.warehouseId != null ? [shelf.warehouseId] : [])
+                        return ids.length ? (warehouses.find(w => w.id === ids[0])?.name || '—') : '—'
+                      })())}>{(() => {
+                        const shelf = item as Shelf
+                        const ids = Array.isArray(shelf.warehouseIds) && shelf.warehouseIds.length > 0 ? shelf.warehouseIds : (shelf.warehouseId != null ? [shelf.warehouseId] : [])
+                        if (!ids.length) return '—'
+                        const names = ids.map(id => warehouses.find(w => w.id === id)?.name || String(id)).filter(Boolean)
+                        return names.join(', ')
+                      })()}</span>
+                    </div>
+                  )}
+                </div>
+                <span style={{ fontSize: 11, padding: '3px 8px', border: '1px solid var(--border)', borderRadius: 999, opacity: 0.85 }}>
+                  {section === 'almacenes' ? 'Almacén' : 'Estante'}
+                </span>
+              </div>
+
+              {section === 'almacenes' && (
+                <>
+                  <button className="small-btn" onClick={() => toggleExpand((item as Warehouse).id)} style={{ width: '100%' }}>
+                    {expanded[(item as Warehouse).id] ? 'Contraer estantes' : 'Mostrar estantes'}
+                  </button>
+                  {expanded[(item as Warehouse).id] && (
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      {(childrenByWarehouse[(item as Warehouse).id] || []).length === 0 ? (
+                        <div style={{ opacity: 0.8, fontSize: 13 }}>Sin estantes</div>
+                      ) : (
+                        childrenByWarehouse[(item as Warehouse).id].map(sc => (
+                          <div key={sc.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, background: 'var(--bg)', display: 'grid', gap: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ fontWeight: 600 }}>{sc.name}</span>
+                              <span style={{ fontSize: 11, padding: '2px 6px', border: '1px solid var(--border)', borderRadius: 10, opacity: 0.8 }}>Estante</span>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                              <button className="icon-btn primary" title="Editar" aria-label="Editar" onClick={() => startEditShelf(sc)} style={{ width: '100%', justifyContent: 'center', padding: '0 16px' }}>
+                                Editar
+                              </button>
+                              <button className="icon-btn danger" title="Eliminar" aria-label="Eliminar" onClick={() => removeShelf(sc.id)} style={{ width: '100%', justifyContent: 'center', padding: '0 16px' }}>
+                                Eliminar
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {section === 'estantes' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <button className="icon-btn primary" title="Editar" aria-label="Editar" onClick={() => startEditShelf(item as Shelf)} style={{ width: '100%', justifyContent: 'center', padding: '0 16px' }}>
+                    Editar
+                  </button>
+                  <button className="icon-btn danger" title="Eliminar" aria-label="Eliminar" onClick={() => removeShelf((item as Shelf).id)} style={{ width: '100%', justifyContent: 'center', padding: '0 16px' }}>
+                    Eliminar
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        ) : (
         <div style={{ border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead style={{ background: 'var(--modal)' }}>
@@ -346,11 +433,12 @@ export default function Shelves() {
             </tbody>
           </table>
         </div>
+        )
       )}
 
       {showCreate && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ width: 460, background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: isMobileViewport ? 'flex-end' : 'center', justifyContent: 'center', padding: isMobileViewport ? 0 : 16, zIndex: 1000 }}>
+          <div style={{ width: isMobileViewport ? '100%' : 460, maxWidth: isMobileViewport ? '100%' : 460, maxHeight: isMobileViewport ? '88vh' : undefined, overflowY: isMobileViewport ? 'auto' : 'visible', background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: isMobileViewport ? '18px 18px 0 0' : 12, padding: 16 }}>
             <h3 style={{ margin: 0, marginBottom: 12 }}>{createMode === 'warehouse' ? 'Nuevo almacén' : 'Nuevo estante'}</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
               <div>
@@ -369,17 +457,17 @@ export default function Shelves() {
                 </div>
               )}
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
-              <button onClick={cancelCreate} style={{ padding: '8px 16px', background: 'transparent', border: '1px solid var(--border)', color: 'inherit', borderRadius: 6, cursor: 'pointer' }}>Cancelar</button>
-              <button className="primary-btn" onClick={saveCreate} disabled={loading}>{loading ? 'Guardando...' : 'Crear'}</button>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', flexDirection: isMobileViewport ? 'column' : 'row', gap: 8, marginTop: 14 }}>
+              <button onClick={cancelCreate} style={{ padding: '8px 16px', background: 'transparent', border: '1px solid var(--border)', color: 'inherit', borderRadius: 6, cursor: 'pointer', width: isMobileViewport ? '100%' : 'auto' }}>Cancelar</button>
+              <button className="primary-btn" onClick={saveCreate} style={{ width: isMobileViewport ? '100%' : 'auto' }} disabled={loading}>{loading ? 'Guardando...' : 'Crear'}</button>
             </div>
           </div>
         </div>
       )}
 
       {showLinkExisting && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ width: 460, background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: isMobileViewport ? 'flex-end' : 'center', justifyContent: 'center', padding: isMobileViewport ? 0 : 16, zIndex: 1000 }}>
+          <div style={{ width: isMobileViewport ? '100%' : 460, maxWidth: isMobileViewport ? '100%' : 460, maxHeight: isMobileViewport ? '88vh' : undefined, overflowY: isMobileViewport ? 'auto' : 'visible', background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: isMobileViewport ? '18px 18px 0 0' : 12, padding: 16 }}>
             <h3 style={{ margin: 0, marginBottom: 12 }}>Vincular estante existente</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
               <div>
@@ -404,17 +492,17 @@ export default function Shelves() {
                 </select>
               </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
-              <button onClick={cancelLinkExisting}>Cancelar</button>
-              <button className="primary-btn" onClick={saveLinkExisting} disabled={loading || !selectedExistingShelfId || !linkWarehouseId}>{loading ? 'Guardando...' : 'Vincular'}</button>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', flexDirection: isMobileViewport ? 'column' : 'row', gap: 8, marginTop: 14 }}>
+              <button onClick={cancelLinkExisting} style={{ width: isMobileViewport ? '100%' : 'auto' }}>Cancelar</button>
+              <button className="primary-btn" onClick={saveLinkExisting} style={{ width: isMobileViewport ? '100%' : 'auto' }} disabled={loading || !selectedExistingShelfId || !linkWarehouseId}>{loading ? 'Guardando...' : 'Vincular'}</button>
             </div>
           </div>
         </div>
       )}
 
       {showEdit && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ width: 460, background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: isMobileViewport ? 'flex-end' : 'center', justifyContent: 'center', padding: isMobileViewport ? 0 : 16, zIndex: 1000 }}>
+          <div style={{ width: isMobileViewport ? '100%' : 460, maxWidth: isMobileViewport ? '100%' : 460, maxHeight: isMobileViewport ? '88vh' : undefined, overflowY: isMobileViewport ? 'auto' : 'visible', background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: isMobileViewport ? '18px 18px 0 0' : 12, padding: 16 }}>
             <h3 style={{ margin: 0, marginBottom: 12 }}>{editTarget?.type === 'warehouse' ? 'Editar almacén' : 'Editar estante'}</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
               <div>
@@ -433,22 +521,22 @@ export default function Shelves() {
                 </div>
               )}
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
-              <button onClick={cancelEdit}>Cancelar</button>
-              <button className="primary-btn" onClick={saveEdit} disabled={loading}>{loading ? 'Guardando...' : 'Guardar'}</button>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', flexDirection: isMobileViewport ? 'column' : 'row', gap: 8, marginTop: 14 }}>
+              <button onClick={cancelEdit} style={{ width: isMobileViewport ? '100%' : 'auto' }}>Cancelar</button>
+              <button className="primary-btn" onClick={saveEdit} style={{ width: isMobileViewport ? '100%' : 'auto' }} disabled={loading}>{loading ? 'Guardando...' : 'Guardar'}</button>
             </div>
           </div>
         </div>
       )}
 
       {deleteTarget && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ width: 420, background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: isMobileViewport ? 'flex-end' : 'center', justifyContent: 'center', padding: isMobileViewport ? 0 : 16, zIndex: 1000 }}>
+          <div style={{ width: isMobileViewport ? '100%' : 420, maxWidth: isMobileViewport ? '100%' : 420, background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: isMobileViewport ? '18px 18px 0 0' : 12, padding: 16 }}>
             <h3 style={{ margin: 0, marginBottom: 12 }}>Eliminar {deleteTarget.type === 'warehouse' ? 'almacén' : 'estante'}</h3>
             <p>¿Seguro que deseas eliminar "{(deleteTarget.item as any)?.name}"?</p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
-              <button onClick={() => setDeleteTarget(null)} style={{ padding: '8px 16px', background: 'transparent', border: '1px solid var(--border)', color: 'inherit', borderRadius: 6, cursor: 'pointer' }}>Cancelar</button>
-              <button className="primary-btn danger" onClick={confirmDelete} disabled={loading}>{loading ? 'Eliminando...' : 'Eliminar'}</button>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', flexDirection: isMobileViewport ? 'column' : 'row', gap: 8, marginTop: 14 }}>
+              <button onClick={() => setDeleteTarget(null)} style={{ padding: '8px 16px', background: 'transparent', border: '1px solid var(--border)', color: 'inherit', borderRadius: 6, cursor: 'pointer', width: isMobileViewport ? '100%' : 'auto' }}>Cancelar</button>
+              <button className="primary-btn danger" onClick={confirmDelete} style={{ width: isMobileViewport ? '100%' : 'auto' }} disabled={loading}>{loading ? 'Eliminando...' : 'Eliminar'}</button>
             </div>
           </div>
         </div>

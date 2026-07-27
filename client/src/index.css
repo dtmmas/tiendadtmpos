@@ -1352,6 +1352,23 @@ input[type="file"]:focus {
   color: #d97706;
 }
 
+.warehouse-highlight {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.warehouse-highlight.current {
+  font-weight: 800;
+}
+
 .pos-cart-item-actions {
   display: flex;
   align-items: center;

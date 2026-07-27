@@ -18,6 +18,7 @@ export default function CashRegister() {
   const { user } = useAuthStore()
   const config = useConfigStore(s => s.config)
   const isAdmin = user?.role === 'ADMIN'
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [loading, setLoading] = useState(true)
   const [openingCash, setOpeningCash] = useState(false)
   const [savingMovement, setSavingMovement] = useState(false)
@@ -191,6 +192,14 @@ export default function CashRegister() {
   }
 
   useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)')
+    const syncViewport = () => setIsMobileViewport(mediaQuery.matches)
+    syncViewport()
+    mediaQuery.addEventListener('change', syncViewport)
+    return () => mediaQuery.removeEventListener('change', syncViewport)
+  }, [])
+
+  useEffect(() => {
     if (isAdmin) {
       fetchUsers()
     } else if (user?.id) {
@@ -334,7 +343,7 @@ export default function CashRegister() {
   // Vista: Caja Cerrada -> Formulario Apertura
   if (!isOpen && !closeResult) {
     return (
-      <div style={{ padding: 20, maxWidth: 500, margin: '0 auto' }}>
+      <div style={{ padding: isMobileViewport ? 14 : 20, maxWidth: 500, margin: '0 auto' }}>
         <div className="card">
           <h2>{isOwnCash ? 'Apertura de Caja' : 'Caja sin apertura activa'}</h2>
           {isAdmin && users.length > 0 && (
@@ -397,7 +406,7 @@ export default function CashRegister() {
   // Vista: Resultado Cierre
   if (closeResult) {
     return (
-      <div style={{ padding: 20, maxWidth: 500, margin: '0 auto' }}>
+      <div style={{ padding: isMobileViewport ? 14 : 20, maxWidth: 500, margin: '0 auto' }}>
         <div className="card" style={{ textAlign: 'center' }}>
           <h2>Caja Cerrada Correctamente</h2>
           <div style={{ margin: '20px 0', textAlign: 'left', background: 'var(--bg)', padding: 15, borderRadius: 8 }}>
@@ -429,10 +438,10 @@ export default function CashRegister() {
 
   // Vista: Dashboard Caja Abierta
   return (
-    <div style={{ padding: 20, maxWidth: 1000, margin: '0 auto' }}>
+    <div style={{ padding: isMobileViewport ? 14 : 20, maxWidth: 1000, margin: '0 auto' }}>
       {isAdmin && users.length > 0 && (
         <div className="card" style={{ marginBottom: 16, background: isOwnCash ? undefined : 'rgba(59, 130, 246, 0.08)', border: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', gap: 12, flexWrap: 'wrap' }}>
             <div>
               <div style={{ fontWeight: 700 }}>Modo Supervisión</div>
               <div style={{ color: 'var(--muted)', fontSize: '0.9rem' }}>
@@ -442,7 +451,7 @@ export default function CashRegister() {
             <select
               value={selectedUserId || user?.id || ''}
               onChange={(e) => setSelectedUserId(Number(e.target.value))}
-              style={{ minWidth: 240, padding: 10, borderRadius: 8, background: 'var(--modal)', color: 'var(--text)', border: '1px solid var(--border)' }}
+              style={{ minWidth: isMobileViewport ? '100%' : 240, width: isMobileViewport ? '100%' : 'auto', padding: 10, borderRadius: 8, background: 'var(--modal)', color: 'var(--text)', border: '1px solid var(--border)' }}
             >
               {users.map(u => (
                 <option key={u.id} value={u.id}>{u.name}{u.role_name ? ` (${u.role_name})` : ''}</option>
@@ -451,7 +460,7 @@ export default function CashRegister() {
           </div>
         </div>
       )}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', gap: 14, marginBottom: 20 }}>
         <div>
           <h2 style={{ margin: 0 }}>Control de Caja</h2>
           <div style={{ color: 'var(--muted)', fontSize: '0.9rem' }}>
@@ -462,11 +471,12 @@ export default function CashRegister() {
           </div>
         </div>
         {isOwnCash ? (
-          <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', width: isMobileViewport ? '100%' : 'auto' }}>
             <button
               type="button"
               className="btn-secondary"
               onClick={handlePrintReport}
+              style={{ width: isMobileViewport ? '100%' : 'auto' }}
             >
               Imprimir Caja
             </button>
@@ -477,6 +487,7 @@ export default function CashRegister() {
                   setMovementType('IN')
                   setShowMovementModal(true)
               }}
+              style={{ flex: isMobileViewport ? '1 1 calc(50% - 5px)' : undefined }}
             >
               + Entrada
             </button>
@@ -487,6 +498,7 @@ export default function CashRegister() {
                   setMovementType('OUT')
                   setShowMovementModal(true)
               }}
+              style={{ flex: isMobileViewport ? '1 1 calc(50% - 5px)' : undefined }}
             >
               - Salida
             </button>
@@ -494,16 +506,18 @@ export default function CashRegister() {
               type="button"
               className="btn-danger"
               onClick={() => setShowCloseModal(true)}
+              style={{ width: isMobileViewport ? '100%' : 'auto' }}
             >
               Cerrar Caja
             </button>
           </div>
         ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', width: isMobileViewport ? '100%' : 'auto' }}>
             <button
               type="button"
               className="btn-secondary"
               onClick={handlePrintReport}
+              style={{ width: isMobileViewport ? '100%' : 'auto' }}
             >
               Imprimir Caja
             </button>
@@ -515,7 +529,7 @@ export default function CashRegister() {
       </div>
 
       {/* Cards Resumen */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 15, marginBottom: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0, 1fr))' : 'repeat(auto-fit, minmax(150px, 1fr))', gap: 15, marginBottom: 20 }}>
         <StatCard title="Saldo Inicial" value={summary?.openingAmount} color="#64748b" />
         <StatCard title="Ventas (Efectivo)" value={summary?.salesCash} color="#22c55e" />
         <StatCard title="Ventas (Depósito)" value={depositSales} color="#8b5cf6" />
@@ -529,51 +543,105 @@ export default function CashRegister() {
         <StatCard title="Total Esperado" value={summary?.expectedCash} color="#eab308" highlight />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? '1fr' : '1fr 1fr', gap: 20 }}>
         {/* Ventas por Método */}
         <div className="card">
           <h3>Ventas por Método</h3>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <tbody>
+          {isMobileViewport ? (
+            <div style={{ display: 'grid', gap: 10 }}>
               {summary && Object.entries(summary.salesByMethod).map(([method, total]: any) => (
-                <tr key={method} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ padding: 8 }}>{translateMethod(method)}</td>
-                  <td style={{ padding: 8, textAlign: 'right' }}>{formatMoney(total)}</td>
-                </tr>
+                <div key={method} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: 10, borderRadius: 10, background: 'var(--surface)' }}>
+                  <span>{translateMethod(method)}</span>
+                  <strong>{formatMoney(total)}</strong>
+                </div>
               ))}
-              <tr style={{ fontWeight: 'bold' }}>
-                <td style={{ padding: 8 }}>Total Ventas</td>
-                <td style={{ padding: 8, textAlign: 'right' }}>{formatMoney(summary?.totalSales)}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div className="card">
-          <h3>Abonos a Crédito por Método</h3>
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 16 }}>
-            <tbody>
-              {Object.keys(creditPaymentsByMethod).length === 0 ? (
-                <tr>
-                  <td colSpan={2} style={{ padding: 12, textAlign: 'center', color: 'var(--muted)' }}>
-                    Sin abonos de crédito en este turno.
-                  </td>
-                </tr>
-              ) : (
-                Object.entries(creditPaymentsByMethod).map(([method, total]: any) => (
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: 10, borderRadius: 10, background: 'rgba(234, 179, 8, 0.1)', fontWeight: 'bold' }}>
+                <span>Total Ventas</span>
+                <strong>{formatMoney(summary?.totalSales)}</strong>
+              </div>
+            </div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <tbody>
+                {summary && Object.entries(summary.salesByMethod).map(([method, total]: any) => (
                   <tr key={method} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: 8 }}>{translateMethod(method)}</td>
                     <td style={{ padding: 8, textAlign: 'right' }}>{formatMoney(total)}</td>
                   </tr>
+                ))}
+                <tr style={{ fontWeight: 'bold' }}>
+                  <td style={{ padding: 8 }}>Total Ventas</td>
+                  <td style={{ padding: 8, textAlign: 'right' }}>{formatMoney(summary?.totalSales)}</td>
+                </tr>
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="card">
+          <h3>Abonos a Crédito por Método</h3>
+          {isMobileViewport ? (
+            <div style={{ display: 'grid', gap: 10, marginBottom: 16 }}>
+              {Object.keys(creditPaymentsByMethod).length === 0 ? (
+                <div style={{ padding: 12, textAlign: 'center', color: 'var(--muted)', background: 'var(--surface)', borderRadius: 10 }}>
+                  Sin abonos de crédito en este turno.
+                </div>
+              ) : (
+                Object.entries(creditPaymentsByMethod).map(([method, total]: any) => (
+                  <div key={method} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: 10, borderRadius: 10, background: 'var(--surface)' }}>
+                    <span>{translateMethod(method)}</span>
+                    <strong>{formatMoney(total)}</strong>
+                  </div>
                 ))
               )}
-            </tbody>
-          </table>
+            </div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 16 }}>
+              <tbody>
+                {Object.keys(creditPaymentsByMethod).length === 0 ? (
+                  <tr>
+                    <td colSpan={2} style={{ padding: 12, textAlign: 'center', color: 'var(--muted)' }}>
+                      Sin abonos de crédito en este turno.
+                    </td>
+                  </tr>
+                ) : (
+                  Object.entries(creditPaymentsByMethod).map(([method, total]: any) => (
+                    <tr key={method} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: 8 }}>{translateMethod(method)}</td>
+                      <td style={{ padding: 8, textAlign: 'right' }}>{formatMoney(total)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          )}
 
           <h3>Movimientos de Efectivo</h3>
           <div style={{ maxHeight: 300, overflowY: 'auto' }}>
             {movements.length === 0 ? (
                 <div style={{ color: 'var(--muted)', textAlign: 'center', padding: 20 }}>Sin movimientos</div>
+            ) : isMobileViewport ? (
+                <div style={{ display: 'grid', gap: 10 }}>
+                  {movements.map(m => (
+                    <div key={m.id} style={{ padding: 10, borderRadius: 10, background: 'var(--surface)', display: 'grid', gap: 6 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{formatDateTime(new Date(m.created_at)).split(' ')[1]}</span>
+                        <span style={{
+                          padding: '2px 6px',
+                          borderRadius: 4,
+                          background: m.type === 'IN' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                          color: m.type === 'IN' ? '#22c55e' : '#ef4444',
+                          fontSize: '0.75rem',
+                          fontWeight: 'bold'
+                        }}>
+                          {m.type === 'IN' ? 'ENTRADA' : 'SALIDA'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.9rem' }}>{m.description}</div>
+                      <div style={{ textAlign: 'right', fontWeight: 700 }}>{formatMoney(m.amount)}</div>
+                    </div>
+                  ))}
+                </div>
             ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
@@ -613,7 +681,7 @@ export default function CashRegister() {
 
       {/* Modal Movimiento */}
       {showMovementModal && (
-        <Modal onClose={() => setShowMovementModal(false)} title={`Registrar ${movementType === 'IN' ? 'Entrada' : 'Salida'}`}>
+        <Modal mobile={isMobileViewport} onClose={() => setShowMovementModal(false)} title={`Registrar ${movementType === 'IN' ? 'Entrada' : 'Salida'}`}>
           <form onSubmit={handleAddMovement}>
              <div style={{ marginBottom: 15 }}>
                 <label>Monto</label>
@@ -639,9 +707,9 @@ export default function CashRegister() {
                     required
                 />
              </div>
-             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                <button type="button" onClick={() => setShowMovementModal(false)} className="btn-secondary" disabled={savingMovement}>Cancelar</button>
-                <button type="submit" className="btn-primary" disabled={savingMovement}>
+             <div style={{ display: 'flex', justifyContent: 'flex-end', flexDirection: isMobileViewport ? 'column' : 'row', gap: 10 }}>
+                <button type="button" onClick={() => setShowMovementModal(false)} className="btn-secondary" style={{ width: isMobileViewport ? '100%' : 'auto' }} disabled={savingMovement}>Cancelar</button>
+                <button type="submit" className="btn-primary" style={{ width: isMobileViewport ? '100%' : 'auto' }} disabled={savingMovement}>
                   {savingMovement ? 'Registrando...' : 'Registrar'}
                 </button>
              </div>
@@ -651,7 +719,7 @@ export default function CashRegister() {
 
       {/* Modal Cierre */}
       {showCloseModal && (
-        <Modal onClose={() => setShowCloseModal(false)} title="Cierre de Caja">
+        <Modal mobile={isMobileViewport} onClose={() => setShowCloseModal(false)} title="Cierre de Caja">
            <div style={{ marginBottom: 20, padding: 15, background: 'var(--bg)', borderRadius: 8 }}>
               <div style={{ fontSize: '0.9rem', color: 'var(--muted)' }}>Total Esperado en Sistema</div>
               <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{formatMoney(summary?.expectedCash)}</div>
@@ -684,9 +752,9 @@ export default function CashRegister() {
                     placeholder="Observaciones..."
                 />
              </div>
-             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                <button type="button" onClick={() => setShowCloseModal(false)} className="btn-secondary" disabled={closingCash}>Cancelar</button>
-                <button type="submit" className="btn-danger" disabled={closingCash}>
+             <div style={{ display: 'flex', justifyContent: 'flex-end', flexDirection: isMobileViewport ? 'column' : 'row', gap: 10 }}>
+                <button type="button" onClick={() => setShowCloseModal(false)} className="btn-secondary" style={{ width: isMobileViewport ? '100%' : 'auto' }} disabled={closingCash}>Cancelar</button>
+                <button type="submit" className="btn-danger" style={{ width: isMobileViewport ? '100%' : 'auto' }} disabled={closingCash}>
                   {closingCash ? 'Cerrando caja...' : 'Confirmar Cierre'}
                 </button>
              </div>
@@ -701,17 +769,17 @@ function StatCard({ title, value, color, negative, highlight }: any) {
     return (
         <div className="card" style={{ borderLeft: `4px solid ${color}`, background: highlight ? 'rgba(234, 179, 8, 0.1)' : undefined }}>
             <div style={{ fontSize: '0.85rem', color: 'var(--muted)', marginBottom: 5 }}>{title}</div>
-            <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: highlight ? '#000' : 'var(--text)' }}>
+            <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'var(--text)' }}>
                 {negative ? '-' : ''}{formatMoney(value)}
             </div>
         </div>
     )
 }
 
-function Modal({ children, onClose, title }: any) {
+function Modal({ children, onClose, title, mobile }: any) {
     return (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-            <div style={{ background: 'var(--modal)', padding: 20, borderRadius: 12, width: 400, maxWidth: '90%', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: mobile ? 'flex-end' : 'center', zIndex: 1000, padding: mobile ? 0 : 16 }}>
+            <div style={{ background: 'var(--modal)', padding: mobile ? 16 : 20, borderRadius: mobile ? '18px 18px 0 0' : 12, width: mobile ? '100%' : 400, maxWidth: mobile ? '100%' : '90%', maxHeight: mobile ? '88vh' : undefined, overflowY: mobile ? 'auto' : 'visible', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 15 }}>
                     <h3 style={{ margin: 0 }}>{title}</h3>
                     <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer' }}>×</button>

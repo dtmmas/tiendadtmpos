@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { useConfigStore } from '../store/config'
 import { formatMoney, formatNumber } from '../utils/currency'
+import { getWarehouseHighlightStyle } from '../utils/warehouseHighlight'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import * as XLSX from 'xlsx'
@@ -23,11 +24,19 @@ interface Warehouse {
   name: string
 }
 
+function getDetailLines(details?: string) {
+  return (details || '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+}
+
 export default function InventoryReport() {
   const [items, setItems] = useState<StockItem[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [selectedWarehouse, setSelectedWarehouse] = useState<string>('')
   const [loading, setLoading] = useState(false)
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
   const config = useConfigStore(s => s.config)
   const currency = config?.currency || '$'
 
@@ -38,6 +47,14 @@ export default function InventoryReport() {
 
   useEffect(() => {
     api.get('/warehouses').then(res => setWarehouses(res.data)).catch(console.error)
+  }, [])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)')
+    const syncViewport = () => setIsMobileViewport(mediaQuery.matches)
+    syncViewport()
+    mediaQuery.addEventListener('change', syncViewport)
+    return () => mediaQuery.removeEventListener('change', syncViewport)
   }, [])
 
   const loadStock = async () => {
@@ -132,32 +149,32 @@ export default function InventoryReport() {
   useEffect(() => { loadStock() }, [selectedWarehouse])
 
   return (
-    <div className="page-container" style={{ padding: 20 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20, alignItems: 'center' }}>
+    <div className="page-container" style={{ padding: isMobileViewport ? 14 : 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20, alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', gap: 12 }}>
         <h2>Reporte de Inventario Actual</h2>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: isMobileViewport ? 'stretch' : 'center', flexWrap: 'wrap', flexDirection: isMobileViewport ? 'column' : 'row', width: isMobileViewport ? '100%' : 'auto' }}>
           <label>Almacén:</label>
           <select 
             value={selectedWarehouse} 
             onChange={e => setSelectedWarehouse(e.target.value)}
-            style={{ padding: 8, borderRadius: 4, border: '1px solid var(--border)' }}
+            style={{ padding: 8, borderRadius: 4, border: '1px solid var(--border)', width: isMobileViewport ? '100%' : 'auto' }}
           >
             <option value="">Todos los Almacenes</option>
             {warehouses.map(w => (
               <option key={w.id} value={w.id}>{w.name}</option>
             ))}
           </select>
-          <button onClick={loadStock} className="primary-btn">Actualizar</button>
-          <button onClick={exportToPDF} className="secondary-btn" style={{ background: '#d32f2f', color: 'white', border: 'none' }}>PDF</button>
-          <button onClick={exportToExcel} className="secondary-btn" style={{ background: '#2e7d32', color: 'white', border: 'none' }}>Excel</button>
+          <button onClick={loadStock} className="primary-btn" style={{ width: isMobileViewport ? '100%' : 'auto' }}>Actualizar</button>
+          <button onClick={exportToPDF} className="secondary-btn" style={{ background: '#d32f2f', color: 'white', border: 'none', width: isMobileViewport ? '100%' : 'auto' }}>PDF</button>
+          <button onClick={exportToExcel} className="secondary-btn" style={{ background: '#2e7d32', color: 'white', border: 'none', width: isMobileViewport ? '100%' : 'auto' }}>Excel</button>
         </div>
       </div>
 
       {/* KPI Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 20, marginBottom: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(auto-fit, minmax(200px, 1fr))', gap: 20, marginBottom: 20 }}>
         <div className="kpi-card" style={{ background: 'var(--surface)', padding: 15, borderRadius: 8, border: '1px solid var(--border)' }}>
           <div style={{ fontSize: 14, color: 'gray' }}>Total Unidades</div>
-          <div style={{ fontSize: 24, fontWeight: 'bold' }}>{totalItems}</div>
+          <div style={{ fontSize: 24, fontWeight: 'bold' }}>{formatNumber(totalItems, 0)}</div>
         </div>
         <div className="kpi-card" style={{ background: 'var(--surface)', padding: 15, borderRadius: 8, border: '1px solid var(--border)' }}>
           <div style={{ fontSize: 14, color: 'gray' }}>Valor Costo Total</div>
@@ -170,6 +187,65 @@ export default function InventoryReport() {
       </div>
 
       {/* Table Layout */}
+      {isMobileViewport ? (
+        <div style={{ display: 'grid', gap: 12 }}>
+          {loading ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface)' }}>
+              Cargando inventario...
+            </div>
+          ) : items.length === 0 ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface)' }}>
+              No hay stock registrado
+            </div>
+          ) : items.map((item, idx) => (
+            <div key={idx} style={{ border: '1px solid var(--border)', borderRadius: 16, background: 'linear-gradient(180deg, var(--surface), var(--modal))', padding: 14, display: 'grid', gap: 12, boxShadow: '0 10px 24px rgba(15, 23, 42, 0.06)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: '1rem', lineHeight: 1.3 }}>{item.product_name}</div>
+                  <div style={{ marginTop: 6 }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', fontFamily: 'monospace', background: '#e2e8f0', padding: '4px 8px', borderRadius: 999, fontSize: '11px', color: '#334155', border: '1px solid #cbd5e1' }}>
+                      {item.product_code || '-'}
+                    </span>
+                  </div>
+                </div>
+                <span className="warehouse-highlight" style={{ ...getWarehouseHighlightStyle(item.warehouse_name), flexShrink: 0 }}>
+                  {item.warehouse_name}
+                </span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.14)', borderRadius: 12, padding: 10 }}>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Stock</div>
+                  <div style={{ fontWeight: 800, fontSize: '1.1rem', color: '#0f172a' }}>{formatNumber(item.quantity, 0)}</div>
+                </div>
+                <div style={{ background: 'rgba(37, 99, 235, 0.06)', border: '1px solid rgba(37, 99, 235, 0.12)', borderRadius: 12, padding: 10 }}>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Costo U.</div>
+                  <div style={{ fontWeight: 700 }}>{formatMoney(Number(item.cost || 0), currency)}</div>
+                </div>
+                <div style={{ gridColumn: '1 / -1', background: 'rgba(15, 23, 42, 0.04)', border: '1px solid var(--border)', borderRadius: 12, padding: 10 }}>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Total Costo</div>
+                  <div style={{ fontWeight: 800, fontSize: '1rem', color: '#0f172a' }}>{formatMoney(Number(item.quantity) * Number(item.cost || 0), currency)}</div>
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8, fontWeight: 700 }}>Detalles (Lote/IMEI/Serie)</div>
+                {getDetailLines(item.details).length > 0 ? (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 12, padding: 10 }}>
+                    {getDetailLines(item.details).map((line, i) => (
+                      <span key={i} style={{ display: 'inline-flex', alignItems: 'center', maxWidth: '100%', padding: '6px 10px', borderRadius: 999, background: 'rgba(37, 99, 235, 0.08)', border: '1px solid rgba(37, 99, 235, 0.16)', color: '#1d4ed8', fontSize: '11px', fontWeight: 700, lineHeight: 1.35, wordBreak: 'break-word' }}>
+                        {line}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: '#94a3b8', background: 'var(--bg)', border: '1px dashed var(--border)', borderRadius: 12, padding: 10, textAlign: 'center' }}>Sin detalles</div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
       <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
           <thead>
@@ -210,7 +286,7 @@ export default function InventoryReport() {
                     )}
                 </td>
                 <td style={{ padding: '10px 16px', verticalAlign: 'top' }}>
-                  {item.warehouse_name}
+                  <span className="warehouse-highlight" style={getWarehouseHighlightStyle(item.warehouse_name)}>{item.warehouse_name}</span>
                 </td>
                 <td style={{ padding: '10px 16px', verticalAlign: 'top', textAlign: 'right', fontWeight: 600 }}>
                   {item.quantity}
@@ -226,6 +302,7 @@ export default function InventoryReport() {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   )
 }

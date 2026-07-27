@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
+import { getWarehouseHighlightStyle } from '../utils/warehouseHighlight'
 
 interface Role {
   id: number
@@ -161,7 +162,9 @@ export default function Users() {
                 <td style={{ padding: 8, fontWeight: 500 }}>{user.name}</td>
                 <td style={{ padding: 8 }}>{user.email}</td>
                 <td style={{ padding: 8 }}>{user.role_name}</td>
-                <td style={{ padding: 8 }}>{user.warehouse_name || 'Sin asignar'}</td>
+                <td style={{ padding: 8 }}>
+                  {user.warehouse_name ? <span className="warehouse-highlight" style={getWarehouseHighlightStyle(user.warehouse_name)}>{user.warehouse_name}</span> : 'Sin asignar'}
+                </td>
                 <td style={{ padding: 8 }}>
                   <span style={{
                     padding: '2px 8px',

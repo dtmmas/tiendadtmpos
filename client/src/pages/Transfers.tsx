@@ -3,6 +3,7 @@ import { api } from '../api'
 import { useAuthStore } from '../store/auth'
 import { useConfigStore } from '../store/config'
 import { formatDateTime } from '../utils/date'
+import { getWarehouseHighlightStyle } from '../utils/warehouseHighlight'
 import { buildPrintLogoHtml } from '../utils/printBranding'
 import MobileBarcodeScannerButton from '../components/MobileBarcodeScannerButton'
 
@@ -113,6 +114,7 @@ export default function Transfers() {
   const [view, setView] = useState<'list' | 'create'>('list')
   const [transfers, setTransfers] = useState<Transfer[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
   
   const [searchTerm, setSearchTerm] = useState('')
   const [filterWarehouse, setFilterWarehouse] = useState('')
@@ -309,6 +311,14 @@ export default function Transfers() {
   useEffect(() => {
     loadWarehouses()
     loadTransfers()
+  }, [])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)')
+    const syncViewport = () => setIsMobileViewport(mediaQuery.matches)
+    syncViewport()
+    mediaQuery.addEventListener('change', syncViewport)
+    return () => mediaQuery.removeEventListener('change', syncViewport)
   }, [])
 
   useEffect(() => {
@@ -716,23 +726,23 @@ export default function Transfers() {
   }
 
   return (
-    <div className="page-container" style={{ padding: 20 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20, alignItems: 'center' }}>
+    <div className="page-container" style={{ padding: isMobileViewport ? 14 : 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20, alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', gap: 12 }}>
         <h2 style={{ margin: 0 }}>Transferencias de Inventario</h2>
         
         {view === 'list' ? (
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: isMobileViewport ? 'stretch' : 'center', flexWrap: 'wrap', flexDirection: isMobileViewport ? 'column' : 'row', width: isMobileViewport ? '100%' : 'auto' }}>
             <input 
               placeholder={isAdmin ? 'Buscar...' : 'Buscar traslados recibidos...'} 
               value={searchTerm} 
               onChange={e => setSearchTerm(e.target.value)} 
-              style={{ padding: 8, borderRadius: 6, border: '1px solid var(--border)', width: 200 }}
+              style={{ padding: 8, borderRadius: 6, border: '1px solid var(--border)', width: isMobileViewport ? '100%' : 200 }}
             />
             
             <select 
               value={filterWarehouse} 
               onChange={e => setFilterWarehouse(e.target.value)}
-              style={{ padding: 8, borderRadius: 6, border: '1px solid var(--border)' }}
+              style={{ padding: 8, borderRadius: 6, border: '1px solid var(--border)', width: isMobileViewport ? '100%' : 'auto' }}
             >
               <option value="">{isAdmin ? 'Todos los almacenes' : 'Mis transferencias'}</option>
               {filterWarehouses.map(w => (
@@ -743,7 +753,7 @@ export default function Transfers() {
             <select 
               value={filterStatus} 
               onChange={e => setFilterStatus(e.target.value)}
-              style={{ padding: 8, borderRadius: 6, border: '1px solid var(--border)' }}
+              style={{ padding: 8, borderRadius: 6, border: '1px solid var(--border)', width: isMobileViewport ? '100%' : 'auto' }}
             >
               <option value="">Todos los estados</option>
               <option value="COMPLETED">Completado</option>
@@ -751,14 +761,98 @@ export default function Transfers() {
               <option value="CANCELLED">Cancelado</option>
             </select>
 
-            <button className="primary-btn" onClick={() => setView('create')}>Nueva Transferencia</button>
+            <button className="primary-btn" onClick={() => setView('create')} style={{ width: isMobileViewport ? '100%' : 'auto' }}>Nueva Transferencia</button>
           </div>
         ) : (
-          <button className="secondary-btn" onClick={() => setView('list')}>Volver al Historial</button>
+          <button className="secondary-btn" onClick={() => setView('list')} style={{ width: isMobileViewport ? '100%' : 'auto' }}>Volver al Historial</button>
         )}
       </div>
 
       {view === 'list' ? (
+        isMobileViewport ? (
+          <div style={{ display: 'grid', gap: 12 }}>
+            {!isAdmin && (
+              <div style={{ padding: 12, border: '1px solid var(--border)', borderRadius: 12, background: 'var(--modal)', fontSize: 13, color: 'var(--muted)' }}>
+                Solo se muestran los traslados recibidos en tu tienda.
+              </div>
+            )}
+            {filteredTransfers.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 24, color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface)' }}>
+                No se encontraron transferencias
+              </div>
+            ) : (
+              filteredTransfers.map(t => (
+                <div key={t.id} style={{ border: '1px solid var(--border)', borderRadius: 14, background: 'linear-gradient(180deg, var(--surface), var(--modal))', padding: 14, display: 'grid', gap: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+                    <div>
+                      <div style={{ fontWeight: 800 }}>Transferencia #{t.id}</div>
+                      <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{formatDateTime(t.created_at)}</div>
+                    </div>
+                    <span style={{
+                      padding: '4px 8px',
+                      borderRadius: 6,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      background: t.status === 'COMPLETED' ? '#dcfce7' : t.status === 'PENDING' ? '#fef9c3' : '#fee2e2',
+                      color: t.status === 'COMPLETED' ? '#166534' : t.status === 'PENDING' ? '#854d0e' : '#991b1b'
+                    }}>
+                      {t.status === 'COMPLETED' ? 'COMPLETADO' : t.status === 'PENDING' ? 'PENDIENTE' : 'CANCELADO'}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>Origen</div>
+                    <div><span className="warehouse-highlight" style={getWarehouseHighlightStyle(t.source_warehouse_name)}>{t.source_warehouse_name}</span></div>
+                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>Destino</div>
+                    <div><span className="warehouse-highlight" style={getWarehouseHighlightStyle(t.destination_warehouse_name)}>{t.destination_warehouse_name}</span></div>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                    <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, background: 'var(--bg)' }}>
+                      <div style={{ fontSize: 11, color: 'var(--muted)' }}>Registro destino</div>
+                      <div style={{ marginTop: 4 }}>
+                        <span style={{
+                          padding: '4px 8px',
+                          borderRadius: 6,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          background: getDestinationMovementLabel(t.destination_movement_summary) === 'INICIAL'
+                            ? '#dbeafe'
+                            : getDestinationMovementLabel(t.destination_movement_summary) === 'MIXTO'
+                              ? '#ede9fe'
+                              : '#dcfce7',
+                          color: getDestinationMovementLabel(t.destination_movement_summary) === 'INICIAL'
+                            ? '#1d4ed8'
+                            : getDestinationMovementLabel(t.destination_movement_summary) === 'MIXTO'
+                              ? '#6d28d9'
+                              : '#166534'
+                        }}>
+                          {getDestinationMovementLabel(t.destination_movement_summary)}
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, background: 'var(--bg)' }}>
+                      <div style={{ fontSize: 11, color: 'var(--muted)' }}>Items</div>
+                      <div style={{ marginTop: 4, fontWeight: 800 }}>{t.total_quantity}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: 13, color: 'var(--muted)' }}>Usuario: {t.created_by_user || 'N/A'}</div>
+
+                  <button
+                    className="icon-btn"
+                    title="Ver detalles"
+                    onClick={() => void openTransferDetail(t.id)}
+                    disabled={loadingTransferDetailId === t.id}
+                    style={{ width: '100%', justifyContent: 'center', padding: '0 16px' }}
+                  >
+                    {loadingTransferDetailId === t.id ? 'Cargando...' : 'Ver detalles'}
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        ) : (
         <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
           {!isAdmin && (
             <div style={{ padding: 12, borderBottom: '1px solid var(--border)', background: 'var(--modal)', fontSize: 13, color: 'var(--muted)' }}>
@@ -785,12 +879,12 @@ export default function Transfers() {
                   <td style={{ padding: 12, fontWeight: 'bold' }}>#{t.id}</td>
                   <td style={{ padding: 12 }}>{formatDateTime(t.created_at)}</td>
                   <td style={{ padding: 12 }}>
-                    <span style={{ background: '#e3f2fd', color: '#1565c0', padding: '2px 8px', borderRadius: 12, fontSize: 12 }}>
+                    <span className="warehouse-highlight" style={getWarehouseHighlightStyle(t.source_warehouse_name)}>
                       {t.source_warehouse_name}
                     </span>
                   </td>
                   <td style={{ padding: 12 }}>
-                    <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '2px 8px', borderRadius: 12, fontSize: 12 }}>
+                    <span className="warehouse-highlight" style={getWarehouseHighlightStyle(t.destination_warehouse_name)}>
                       {t.destination_warehouse_name}
                     </span>
                   </td>
@@ -848,9 +942,10 @@ export default function Transfers() {
             </tbody>
           </table>
         </div>
+        )
       ) : (
         <div className="card" style={{ maxWidth: 800, margin: '0 auto' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? '1fr' : '1fr 1fr', gap: 20, marginBottom: 20 }}>
             <div>
               <label className="label">Almacén Origen</label>
               {isAdmin ? (
@@ -879,7 +974,7 @@ export default function Transfers() {
                     color: 'var(--text)'
                   }}
                 >
-                  {sourceWarehouse?.name || user?.warehouseName || 'Sin tienda asignada'}
+                  <span className="warehouse-highlight current" style={getWarehouseHighlightStyle(sourceWarehouse?.name || user?.warehouseName || 'Sin tienda asignada', true)}>{sourceWarehouse?.name || user?.warehouseName || 'Sin tienda asignada'}</span>
                 </div>
               )}
             </div>
@@ -915,14 +1010,14 @@ export default function Transfers() {
 
           <div style={{ marginBottom: 20 }}>
             <label className="label">Agregar Productos (Búsqueda en Origen)</label>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', flexDirection: isMobileViewport ? 'column' : 'row' }}>
               <input 
                 className="input"
                 placeholder={sourceId ? "Buscar por código, nombre, SKU o descripción..." : "Seleccione almacén origen primero"}
                 value={createSearchTerm}
                 onChange={e => handleCreateSearchProducts(e.target.value)}
                 disabled={!sourceId}
-                style={{ flex: '1 1 320px' }}
+                style={{ flex: isMobileViewport ? '1 1 auto' : '0 1 420px', width: isMobileViewport ? '100%' : 'min(420px, 100%)', maxWidth: isMobileViewport ? '100%' : 420 }}
               />
               <MobileBarcodeScannerButton
                 buttonLabel="Escanear"
@@ -937,7 +1032,7 @@ export default function Transfers() {
                 {createSearchResults.map(p => (
                   <div 
                     key={p.id} 
-                    style={{ padding: 8, borderBottom: '1px solid var(--border)', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', gap: 12 }}
+                    style={{ padding: 8, borderBottom: '1px solid var(--border)', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: isMobileViewport ? 'stretch' : 'flex-start', flexDirection: isMobileViewport ? 'column' : 'row', gap: 12 }}
                     onClick={() => void addItem(p)}
                     className="hover:bg-gray-100 dark:hover:bg-gray-800"
                   >
@@ -969,7 +1064,7 @@ export default function Transfers() {
             )}
             {trackedSelection && (
               <div style={{ marginTop: 12, border: '1px solid var(--border)', borderRadius: 10, padding: 12, background: 'var(--card, var(--panel, transparent))' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', marginBottom: 10 }}>
                   <div>
                     <div style={{ fontWeight: 700 }}>
                       Seleccionar {trackedSelection.productType === 'IMEI' ? 'IMEIs' : 'series'} para {trackedSelection.product.name}
@@ -978,7 +1073,7 @@ export default function Transfers() {
                       Elija varios {trackedSelection.productType === 'IMEI' ? 'IMEIs' : 'series'} disponibles y agréguelos en una sola vez.
                     </div>
                   </div>
-                  <button className="btn-secondary" type="button" onClick={resetCreateProductSearch}>
+                  <button className="btn-secondary" type="button" onClick={resetCreateProductSearch} style={{ width: isMobileViewport ? '100%' : 'auto' }}>
                     Cerrar
                   </button>
                 </div>
@@ -1018,11 +1113,11 @@ export default function Transfers() {
                   ))}
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginTop: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', marginTop: 10 }}>
                   <div style={{ fontSize: 13, color: 'var(--muted)' }}>
                     Seleccionados: {trackedSelection.productType === 'IMEI' ? trackedSelection.selectedImeis.length : trackedSelection.selectedSerials.length}
                   </div>
-                  <button className="btn-primary" type="button" onClick={addTrackedItems}>
+                  <button className="btn-primary" type="button" onClick={addTrackedItems} style={{ width: isMobileViewport ? '100%' : 'auto' }}>
                     Agregar seleccionados
                   </button>
                 </div>
@@ -1032,6 +1127,123 @@ export default function Transfers() {
 
           <div style={{ marginBottom: 20 }}>
             <h3>Items a Transferir</h3>
+            {isMobileViewport ? (
+              <div style={{ display: 'grid', gap: 12 }}>
+                {items.map((item, index) => (
+                  <div key={`${item.productId}-${index}`} style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: 'var(--bg)', display: 'grid', gap: 10 }}>
+                    <div>
+                      <div style={{ fontWeight: 700 }}>{item.name}</div>
+                      <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                        {[item.productCode ? `COD: ${item.productCode}` : '', item.sku ? `SKU: ${item.sku}` : '']
+                          .filter(Boolean)
+                          .join(' | ') || 'Sin codigo'}
+                      </div>
+                      {item.description && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{item.description}</div>}
+                      {item.imei && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>IMEI: {item.imei}</div>}
+                      {item.serial && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>Serie: {item.serial}</div>}
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Detalle</div>
+                      {item.availableBatches && item.availableBatches.length > 0 && (
+                        <select
+                          className="input small"
+                          value={item.batchNo || ''}
+                          onChange={e => {
+                            const batch = item.availableBatches?.find(b => b.batchNo === e.target.value)
+                            updateItemDetail(index, 'batchNo', e.target.value)
+                            if (batch) updateItemDetail(index, 'stockAtSource', batch.quantity)
+                          }}
+                        >
+                          <option value="">Seleccionar Lote...</option>
+                          {item.availableBatches.map((b: any) => (
+                            <option key={b.batchNo} value={b.batchNo}>{b.batchNo} (Exp: {b.expiryDate}) - Stock: {b.quantity}</option>
+                          ))}
+                        </select>
+                      )}
+
+                      {item.availableImeis && item.availableImeis.length > 0 && (
+                        <select
+                          className="input small"
+                          value={item.imei || ''}
+                          onClick={e => e.stopPropagation()}
+                          onFocus={() => { void refreshItemAvailability(item.productId) }}
+                          onChange={e => {
+                            updateItemDetail(index, 'imei', e.target.value)
+                            updateItemDetail(index, 'quantity', 1)
+                            updateItemDetail(index, 'stockAtSource', 1)
+                          }}
+                        >
+                          <option value="">Seleccionar IMEI...</option>
+                          {item.availableImeis
+                            .filter((i: string) => !items.some((other, otherIdx) => otherIdx !== index && other.imei === i))
+                            .map((i: string) => (
+                              <option key={i} value={i}>{i}</option>
+                            ))}
+                        </select>
+                      )}
+
+                      {item.availableSerials && item.availableSerials.length > 0 && (
+                        <select
+                          className="input small"
+                          value={item.serial || ''}
+                          onClick={e => e.stopPropagation()}
+                          onFocus={() => { void refreshItemAvailability(item.productId) }}
+                          onChange={e => {
+                            updateItemDetail(index, 'serial', e.target.value)
+                            updateItemDetail(index, 'quantity', 1)
+                            updateItemDetail(index, 'stockAtSource', 1)
+                          }}
+                        >
+                          <option value="">Seleccionar Serie...</option>
+                          {item.availableSerials
+                            .filter((s: string) => !items.some((other, otherIdx) => otherIdx !== index && other.serial === s))
+                            .map((s: string) => (
+                              <option key={s} value={s}>{s}</option>
+                            ))}
+                        </select>
+                      )}
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div>
+                        <div style={{ fontSize: 12, color: 'var(--muted)' }}>Stock origen</div>
+                        <div style={{ fontWeight: 700 }}>{item.stockAtSource}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 12, color: 'var(--muted)' }}>Cantidad</div>
+                        <input
+                          type="number"
+                          min="1"
+                          max={item.stockAtSource}
+                          value={item.quantity}
+                          onChange={e => {
+                            const val = parseInt(e.target.value) || 0
+                            if (val > item.stockAtSource) {
+                              alert(`Stock insuficiente. Máximo ${item.stockAtSource}`)
+                              updateItemDetail(index, 'quantity', item.stockAtSource)
+                            } else {
+                              updateItemDetail(index, 'quantity', val)
+                            }
+                          }}
+                          disabled={!!item.imei || !!item.serial}
+                          style={{ width: '100%', padding: 8 }}
+                        />
+                      </div>
+                    </div>
+
+                    <button className="btn-danger small" onClick={() => setItems(prev => prev.filter((_, i) => i !== index))} style={{ width: '100%' }}>
+                      Quitar item
+                    </button>
+                  </div>
+                ))}
+                {items.length === 0 && (
+                  <div style={{ textAlign: 'center', color: 'var(--muted)', padding: 18, border: '1px dashed var(--border)', borderRadius: 12 }}>
+                    Agregue productos a la lista
+                  </div>
+                )}
+              </div>
+            ) : (
             <table className="table">
               <thead>
                 <tr>
@@ -1152,6 +1364,7 @@ export default function Transfers() {
                 )}
               </tbody>
             </table>
+            )}
           </div>
 
           <div style={{ marginBottom: 20 }}>
@@ -1164,11 +1377,12 @@ export default function Transfers() {
             />
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-            <button className="btn-secondary" onClick={() => setView('list')} disabled={submittingTransfer}>Cancelar</button>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, flexDirection: isMobileViewport ? 'column' : 'row' }}>
+            <button className="btn-secondary" onClick={() => setView('list')} style={{ width: isMobileViewport ? '100%' : 'auto' }} disabled={submittingTransfer}>Cancelar</button>
             <button 
                 className="btn-primary" 
                 onClick={handleSubmit}
+                style={{ width: isMobileViewport ? '100%' : 'auto' }}
                 disabled={submittingTransfer || !sourceId || !destId || items.length === 0 || (!isAdmin && !userWarehouseId)}
             >
                 {submittingTransfer ? 'Procesando transferencia...' : 'Confirmar Transferencia'}
@@ -1185,29 +1399,29 @@ export default function Transfers() {
             inset: 0,
             background: 'rgba(0,0,0,0.45)',
             display: 'flex',
-            alignItems: 'center',
+            alignItems: isMobileViewport ? 'flex-end' : 'center',
             justifyContent: 'center',
-            padding: 20,
+            padding: isMobileViewport ? 0 : 20,
             zIndex: 1000
           }}
         >
           <div
             className="card"
             onClick={e => e.stopPropagation()}
-            style={{ width: '100%', maxWidth: 980, maxHeight: '85vh', overflowY: 'auto' }}
+            style={{ width: '100%', maxWidth: isMobileViewport ? '100%' : 980, maxHeight: isMobileViewport ? '90vh' : '85vh', overflowY: 'auto', borderRadius: isMobileViewport ? '18px 18px 0 0' : undefined }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', marginBottom: 16 }}>
               <div>
                 <h3 style={{ margin: 0 }}>Detalle de Transferencia #{selectedTransferDetail.id}</h3>
                 <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 6 }}>
-                  {selectedTransferDetail.source_warehouse_name} {'->'} {selectedTransferDetail.destination_warehouse_name} | {formatDateTime(selectedTransferDetail.created_at)}
+                  <span className="warehouse-highlight" style={getWarehouseHighlightStyle(selectedTransferDetail.source_warehouse_name)}>{selectedTransferDetail.source_warehouse_name}</span> {'->'} <span className="warehouse-highlight" style={getWarehouseHighlightStyle(selectedTransferDetail.destination_warehouse_name)}>{selectedTransferDetail.destination_warehouse_name}</span> | {formatDateTime(selectedTransferDetail.created_at)}
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <button className="btn-primary" type="button" onClick={() => printTransferDetail(selectedTransferDetail)}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexDirection: isMobileViewport ? 'column' : 'row', width: isMobileViewport ? '100%' : 'auto' }}>
+                <button className="btn-primary" type="button" onClick={() => printTransferDetail(selectedTransferDetail)} style={{ width: isMobileViewport ? '100%' : 'auto' }}>
                   Imprimir detalle
                 </button>
-                <button className="btn-secondary" type="button" onClick={() => setSelectedTransferDetail(null)}>
+                <button className="btn-secondary" type="button" onClick={() => setSelectedTransferDetail(null)} style={{ width: isMobileViewport ? '100%' : 'auto' }}>
                   Cerrar
                 </button>
               </div>
@@ -1216,11 +1430,11 @@ export default function Transfers() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 16 }}>
               <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
                 <div style={{ fontSize: 12, color: 'var(--muted)' }}>Origen</div>
-                <div style={{ fontWeight: 700 }}>{selectedTransferDetail.source_warehouse_name}</div>
+                <div style={{ fontWeight: 700 }}><span className="warehouse-highlight" style={getWarehouseHighlightStyle(selectedTransferDetail.source_warehouse_name)}>{selectedTransferDetail.source_warehouse_name}</span></div>
               </div>
               <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
                 <div style={{ fontSize: 12, color: 'var(--muted)' }}>Destino</div>
-                <div style={{ fontWeight: 700 }}>{selectedTransferDetail.destination_warehouse_name}</div>
+                <div style={{ fontWeight: 700 }}><span className="warehouse-highlight" style={getWarehouseHighlightStyle(selectedTransferDetail.destination_warehouse_name)}>{selectedTransferDetail.destination_warehouse_name}</span></div>
               </div>
               <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
                 <div style={{ fontSize: 12, color: 'var(--muted)' }}>Estado</div>
@@ -1232,6 +1446,48 @@ export default function Transfers() {
               </div>
             </div>
 
+            {isMobileViewport ? (
+              <div style={{ display: 'grid', gap: 12 }}>
+                {selectedTransferDetail.items.map(item => (
+                  <div key={item.id} style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: 'var(--bg)', display: 'grid', gap: 8 }}>
+                    <div>
+                      <div style={{ fontWeight: 700 }}>{item.product_name}</div>
+                      <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                        {[item.product_code ? `COD: ${item.product_code}` : '', item.sku ? `SKU: ${item.sku}` : '']
+                          .filter(Boolean)
+                          .join(' | ') || 'Sin codigo'}
+                      </div>
+                      {item.description && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{item.description}</div>}
+                    </div>
+                    <div style={{ fontSize: 13 }}>
+                      {[
+                        item.batch_no ? `Lote: ${item.batch_no}` : '',
+                        item.imei ? `IMEI: ${item.imei}` : '',
+                        item.serial ? `Serie: ${item.serial}` : ''
+                      ].filter(Boolean).join(' | ') || 'Sin detalle adicional'}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+                      <div style={{ fontWeight: 700 }}>Cantidad: {item.quantity}</div>
+                      <span style={{
+                        padding: '4px 8px',
+                        borderRadius: 6,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        background: getDestinationItemLabel(item.destination_movement_type) === 'INICIAL' ? '#dbeafe' : '#dcfce7',
+                        color: getDestinationItemLabel(item.destination_movement_type) === 'INICIAL' ? '#1d4ed8' : '#166534'
+                      }}>
+                        {getDestinationItemLabel(item.destination_movement_type)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+                {selectedTransferDetail.items.length === 0 && (
+                  <div style={{ textAlign: 'center', padding: 24, color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 12 }}>
+                    No hay items registrados para esta transferencia.
+                  </div>
+                )}
+              </div>
+            ) : (
             <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead style={{ background: 'var(--modal)' }}>
@@ -1288,6 +1544,7 @@ export default function Transfers() {
                 </tbody>
               </table>
             </div>
+            )}
 
             {selectedTransferDetail.notes && (
               <div style={{ marginTop: 16 }}>

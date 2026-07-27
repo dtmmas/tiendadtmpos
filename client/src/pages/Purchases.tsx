@@ -24,6 +24,7 @@ export default function Purchases() {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
   const [totalRecords, setTotalRecords] = useState(0)
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
   const limit = 50
   
   const config = useConfigStore(s => s.config)
@@ -33,6 +34,14 @@ export default function Purchases() {
   useEffect(() => {
     loadPurchases()
   }, [page, search])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)')
+    const syncViewport = () => setIsMobileViewport(mediaQuery.matches)
+    syncViewport()
+    mediaQuery.addEventListener('change', syncViewport)
+    return () => mediaQuery.removeEventListener('change', syncViewport)
+  }, [])
 
   async function loadPurchases() {
     setLoading(true)
@@ -79,10 +88,52 @@ export default function Purchases() {
           placeholder="Buscar por doc, proveedor, ID..." 
           value={search}
           onChange={e => { setSearch(e.target.value); setPage(0) }}
-          style={{ flex: 1, padding: 8, borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+          style={{ flex: 1, minWidth: isMobileViewport ? '100%' : 280, padding: 8, borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
         />
       </div>
 
+      {isMobileViewport ? (
+        <div style={{ display: 'grid', gap: 12, flex: 1 }}>
+          {purchases.map(p => {
+            const status = (p.status || 'COMPLETED').toUpperCase()
+            const isCompleted = status === 'COMPLETED'
+            return (
+              <div key={p.id} style={{ border: '1px solid var(--border)', borderRadius: 12, backgroundColor: 'var(--modal)', padding: 14, display: 'grid', gap: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
+                  <div>
+                    <div style={{ fontWeight: 800 }}>#{p.id}</div>
+                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>{new Date(p.created_at).toLocaleString()}</div>
+                  </div>
+                  <span style={{
+                    padding: '4px 8px',
+                    borderRadius: 999,
+                    backgroundColor: isCompleted ? 'rgba(46, 204, 113, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+                    color: isCompleted ? '#2ecc71' : '#ef4444',
+                    fontWeight: 'bold',
+                    fontSize: '0.75rem'
+                  }}>
+                    {isCompleted ? 'COMPLETADO' : status}
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gap: 6, fontSize: 13 }}>
+                  <div><strong>Proveedor:</strong> {p.supplier_name || '-'}</div>
+                  <div><strong>Documento:</strong> {p.doc_no || '-'}</div>
+                  <div><strong>Usuario:</strong> {p.user_name || '-'}</div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                  <div style={{ fontWeight: 800, fontSize: '1rem' }}>{formatMoney(Number(p.total), config?.currency)}</div>
+                  <button onClick={() => navigate(`/purchases/${p.id}`)} className="icon-btn" title="Ver Detalles">👁️</button>
+                </div>
+              </div>
+            )
+          })}
+          {purchases.length === 0 && !loading && (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 8, backgroundColor: 'var(--modal)' }}>
+              No hay compras registradas
+            </div>
+          )}
+        </div>
+      ) : (
       <div className="table-scroll" style={{ flex: 1, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 8, backgroundColor: 'var(--modal)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead style={{ position: 'sticky', top: 0, backgroundColor: 'var(--surface)', zIndex: 1 }}>
@@ -147,13 +198,15 @@ export default function Purchases() {
           </tbody>
         </table>
       </div>
+      )}
       
       {/* Pagination */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', justifyContent: isMobileViewport ? 'stretch' : 'flex-end', alignItems: 'center', gap: 10, marginTop: 10, flexWrap: 'wrap', flexDirection: isMobileViewport ? 'column' : 'row' }}>
         <button 
           disabled={page === 0}
           onClick={() => setPage(p => p - 1)}
           className="btn-secondary"
+          style={{ width: isMobileViewport ? '100%' : undefined }}
         >
           Anterior
         </button>
@@ -164,6 +217,7 @@ export default function Purchases() {
           disabled={(page + 1) * limit >= totalRecords}
           onClick={() => setPage(p => p + 1)}
           className="btn-secondary"
+          style={{ width: isMobileViewport ? '100%' : undefined }}
         >
           Siguiente
         </button>

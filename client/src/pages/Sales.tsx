@@ -161,6 +161,42 @@ function getPaymentMethodLabel(method?: string, isCredit?: number) {
   return method || 'N/D'
 }
 
+function getPaymentMethodStyles(method?: string, isCredit?: number) {
+  if (method === 'CASH') {
+    return {
+      borderColor: 'rgba(34, 197, 94, 0.55)',
+      backgroundColor: 'rgba(34, 197, 94, 0.10)',
+      textColor: '#15803d',
+    }
+  }
+  if (method === 'CARD') {
+    return {
+      borderColor: 'rgba(59, 130, 246, 0.55)',
+      backgroundColor: 'rgba(59, 130, 246, 0.10)',
+      textColor: '#1d4ed8',
+    }
+  }
+  if (method === 'DEPOSIT') {
+    return {
+      borderColor: 'rgba(245, 158, 11, 0.55)',
+      backgroundColor: 'rgba(245, 158, 11, 0.10)',
+      textColor: '#b45309',
+    }
+  }
+  if (method === 'CREDIT' || isCredit) {
+    return {
+      borderColor: 'rgba(168, 85, 247, 0.55)',
+      backgroundColor: 'rgba(168, 85, 247, 0.10)',
+      textColor: '#7e22ce',
+    }
+  }
+  return {
+    borderColor: 'rgba(100, 116, 139, 0.45)',
+    backgroundColor: 'rgba(100, 116, 139, 0.10)',
+    textColor: '#475569',
+  }
+}
+
 function DateField({
   label,
   children,
@@ -214,6 +250,7 @@ export default function Sales() {
   const [cancelReason, setCancelReason] = useState('')
   const [saleToCancel, setSaleToCancel] = useState<Sale | null>(null)
   const [cancellingSale, setCancellingSale] = useState(false)
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
   const config = useConfigStore(s => s.config)
@@ -252,6 +289,14 @@ export default function Sales() {
       ignore = true
     }
   }, [isAdmin])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)')
+    const syncViewport = () => setIsMobileViewport(mediaQuery.matches)
+    syncViewport()
+    mediaQuery.addEventListener('change', syncViewport)
+    return () => mediaQuery.removeEventListener('change', syncViewport)
+  }, [])
 
   const loadSales = async () => {
     setLoading(true)
@@ -458,6 +503,68 @@ export default function Sales() {
   const totalPages = Math.ceil(pagination.total / pagination.limit)
   const currentPage = Math.floor(pagination.offset / pagination.limit) + 1
 
+  const renderSaleStatusBadge = (sale: Pick<Sale, 'status' | 'payment_method' | 'is_credit' | 'credit_fully_paid'>) => {
+    const label = getSaleStatusLabel(sale, appliedFilters.paymentMethod)
+    if (label === 'CANCELADO') {
+      return (
+        <span style={{
+          backgroundColor: 'rgba(231, 76, 60, 0.2)',
+          color: '#e74c3c',
+          padding: '4px 8px',
+          borderRadius: 12,
+          fontSize: '0.85rem',
+          fontWeight: 600,
+          border: '1px solid rgba(231, 76, 60, 0.3)'
+        }}>
+          CANCELADO
+        </span>
+      )
+    }
+    if (label === 'PENDIENTE') {
+      return (
+        <span style={{
+          backgroundColor: 'rgba(231, 76, 60, 0.2)',
+          color: '#e74c3c',
+          padding: '4px 8px',
+          borderRadius: 12,
+          fontSize: '0.85rem',
+          fontWeight: 600,
+          border: '1px solid rgba(231, 76, 60, 0.3)'
+        }}>
+          PENDIENTE
+        </span>
+      )
+    }
+    if (label === 'LIQUIDADO') {
+      return (
+        <span style={{
+          backgroundColor: 'rgba(46, 204, 113, 0.2)',
+          color: '#2ecc71',
+          padding: '4px 8px',
+          borderRadius: 12,
+          fontSize: '0.85rem',
+          fontWeight: 600,
+          border: '1px solid rgba(46, 204, 113, 0.3)'
+        }}>
+          LIQUIDADO
+        </span>
+      )
+    }
+    return (
+      <span style={{
+        backgroundColor: 'rgba(46, 204, 113, 0.2)',
+        color: '#2ecc71',
+        padding: '4px 8px',
+        borderRadius: 12,
+        fontSize: '0.85rem',
+        fontWeight: 600,
+        border: '1px solid rgba(46, 204, 113, 0.3)'
+      }}>
+        PAGADO
+      </span>
+    )
+  }
+
   return (
     <div className="page-shell">
       <iframe 
@@ -477,19 +584,19 @@ export default function Sales() {
             Periodo: {appliedFilters.label} | Responsable: {appliedFilters.userId ? (userOptions.find(item => String(item.id) === appliedFilters.userId)?.name || 'Filtrado') : 'Todos'}
           </div>
         </div>
-        <form onSubmit={applyFilters} className="page-toolbar-actions" style={{ width: '100%' }}>
+        <form onSubmit={applyFilters} className="page-toolbar-actions" style={{ width: '100%', alignItems: isMobileViewport ? 'stretch' : undefined }}>
           <input
             type="text"
             placeholder="Buscar por Doc / Cliente / ID / Responsable"
             value={searchInput}
             onChange={e => setSearchInput(e.target.value)}
-            style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit', minWidth: 220, maxWidth: '100%' }}
+            style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit', minWidth: isMobileViewport ? '100%' : 220, maxWidth: '100%' }}
           />
           {isAdmin && (
             <select
               value={selectedUserId}
               onChange={e => setSelectedUserId(e.target.value)}
-              style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}
+              style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit', width: isMobileViewport ? '100%' : undefined }}
             >
               <option value="">Todos los usuarios</option>
               {userOptions.map(option => (
@@ -501,7 +608,7 @@ export default function Sales() {
             <select
               value={paymentFilter}
               onChange={e => setPaymentFilter(e.target.value as PaymentFilter)}
-              style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}
+              style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit', width: isMobileViewport ? '100%' : undefined }}
             >
               <option value="NON_CREDIT">Sin crédito</option>
               <option value="CASH">Efectivo</option>
@@ -517,7 +624,7 @@ export default function Sales() {
             <select
               value={statusFilter}
               onChange={e => setStatusFilter(e.target.value as StatusFilter)}
-              style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}
+              style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit', width: isMobileViewport ? '100%' : undefined }}
             >
               <option value="ACTIVE">Activas</option>
               <option value="CANCELLED">Canceladas</option>
@@ -528,7 +635,7 @@ export default function Sales() {
             <select
               value={periodMode}
               onChange={e => setPeriodMode(e.target.value as PeriodMode)}
-              style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}
+              style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit', width: isMobileViewport ? '100%' : undefined }}
             >
               <option value="all">Todas las fechas</option>
               <option value="day">Día específico</option>
@@ -590,8 +697,8 @@ export default function Sales() {
               </DateField>
             </>
           )}
-          <button type="submit" className="primary-btn">Filtrar</button>
-          <button type="button" className="secondary-btn" onClick={resetFilters}>Limpiar</button>
+          <button type="submit" className="primary-btn" style={{ width: isMobileViewport ? '100%' : undefined }}>Filtrar</button>
+          <button type="button" className="secondary-btn" style={{ width: isMobileViewport ? '100%' : undefined }} onClick={resetFilters}>Limpiar</button>
         </form>
       </div>
 
@@ -615,21 +722,21 @@ export default function Sales() {
       </div>
 
       <div className="responsive-form-grid" style={{ marginBottom: 20 }}>
-        <div style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+        <div style={{ background: 'var(--modal)', border: `1px solid ${getPaymentMethodStyles('CASH').borderColor}`, borderRadius: 12, padding: 16, boxShadow: `inset 4px 0 0 ${getPaymentMethodStyles('CASH').borderColor}` }}>
           <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 6 }}>Efectivo</div>
-          <div style={{ fontWeight: 700, fontSize: 22 }}>{formatMoney(summary.byMethod.CASH)}</div>
+          <div style={{ fontWeight: 700, fontSize: 22, color: getPaymentMethodStyles('CASH').textColor }}>{formatMoney(summary.byMethod.CASH)}</div>
         </div>
-        <div style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+        <div style={{ background: 'var(--modal)', border: `1px solid ${getPaymentMethodStyles('DEPOSIT').borderColor}`, borderRadius: 12, padding: 16, boxShadow: `inset 4px 0 0 ${getPaymentMethodStyles('DEPOSIT').borderColor}` }}>
           <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 6 }}>Depósito</div>
-          <div style={{ fontWeight: 700, fontSize: 22 }}>{formatMoney(summary.byMethod.DEPOSIT)}</div>
+          <div style={{ fontWeight: 700, fontSize: 22, color: getPaymentMethodStyles('DEPOSIT').textColor }}>{formatMoney(summary.byMethod.DEPOSIT)}</div>
         </div>
-        <div style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+        <div style={{ background: 'var(--modal)', border: `1px solid ${getPaymentMethodStyles('CARD').borderColor}`, borderRadius: 12, padding: 16, boxShadow: `inset 4px 0 0 ${getPaymentMethodStyles('CARD').borderColor}` }}>
           <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 6 }}>Tarjeta</div>
-          <div style={{ fontWeight: 700, fontSize: 22 }}>{formatMoney(summary.byMethod.CARD)}</div>
+          <div style={{ fontWeight: 700, fontSize: 22, color: getPaymentMethodStyles('CARD').textColor }}>{formatMoney(summary.byMethod.CARD)}</div>
         </div>
-        <div style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+        <div style={{ background: 'var(--modal)', border: `1px solid ${getPaymentMethodStyles('CREDIT').borderColor}`, borderRadius: 12, padding: 16, boxShadow: `inset 4px 0 0 ${getPaymentMethodStyles('CREDIT').borderColor}` }}>
           <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 6 }}>Crédito</div>
-          <div style={{ fontWeight: 700, fontSize: 22 }}>{formatMoney(summary.byMethod.CREDIT)}</div>
+          <div style={{ fontWeight: 700, fontSize: 22, color: getPaymentMethodStyles('CREDIT').textColor }}>{formatMoney(summary.byMethod.CREDIT)}</div>
         </div>
       </div>
 
@@ -641,6 +748,27 @@ export default function Sales() {
               Resumen del mismo periodo filtrado
             </div>
           </div>
+          {isMobileViewport ? (
+            <div style={{ display: 'grid', gap: 10 }}>
+              {byUser.length === 0 ? (
+                <div style={{ padding: 18, textAlign: 'center', color: 'var(--muted)' }}>
+                  No hay datos por usuario para este filtro.
+                </div>
+              ) : (
+                byUser.map(item => (
+                  <div key={`${item.userId ?? 'unknown'}-${item.userName}`} style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: 'var(--bg)', display: 'grid', gap: 8 }}>
+                    <div style={{ fontWeight: 700 }}>{item.userName}</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, fontSize: '0.9rem' }}>
+                      <div><span style={{ color: 'var(--muted)' }}>Ventas:</span> {item.salesCount}</div>
+                      <div><span style={{ color: 'var(--muted)' }}>Canceladas:</span> {item.cancelledCount}</div>
+                      <div><span style={{ color: 'var(--muted)' }}>Total:</span> <strong>{formatMoney(item.total)}</strong></div>
+                      <div><span style={{ color: 'var(--muted)' }}>Utilidad:</span> <strong style={{ color: '#22c55e' }}>{formatMoney(item.profit)}</strong></div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          ) : (
           <div className="table-scroll">
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
@@ -673,9 +801,107 @@ export default function Sales() {
               </tbody>
             </table>
           </div>
+          )}
         </div>
       )}
 
+      {isMobileViewport ? (
+        <div style={{ display: 'grid', gap: 12 }}>
+          {loading ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', background: 'var(--modal)', borderRadius: 12, border: '1px solid var(--border)' }}>
+              Cargando...
+            </div>
+          ) : sales.length === 0 ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', background: 'var(--modal)', borderRadius: 12, border: '1px solid var(--border)' }}>
+              No se encontraron ventas
+            </div>
+          ) : (
+            sales.map(sale => (
+              <div
+                key={sale.id}
+                style={{
+                  background: 'var(--modal)',
+                  borderRadius: 12,
+                  border: `1px solid ${getPaymentMethodStyles(sale.payment_method, sale.is_credit).borderColor}`,
+                  boxShadow: `inset 4px 0 0 ${getPaymentMethodStyles(sale.payment_method, sale.is_credit).borderColor}`,
+                  padding: 14,
+                  display: 'grid',
+                  gap: 10
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+                  <div>
+                    <div style={{ fontWeight: 800 }}>Venta #{sale.id}</div>
+                    <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                      {formatDateTime((appliedFilters.paymentMethod === 'CREDIT_PAID' || (appliedFilters.paymentMethod === 'REALIZED' && isCreditSale(sale))) ? (sale.credit_fully_paid_at || sale.created_at) : sale.created_at)}
+                    </div>
+                  </div>
+                  {renderSaleStatusBadge(sale)}
+                </div>
+
+                <div style={{ display: 'grid', gap: 6, fontSize: '0.92rem' }}>
+                  <div><strong>Responsable:</strong> {sale.seller_name || 'SIN USUARIO'}</div>
+                  <div><strong>Cliente:</strong> {sale.customer_name || 'General'}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <strong>Método:</strong>
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        padding: '4px 10px',
+                        borderRadius: 999,
+                        border: `1px solid ${getPaymentMethodStyles(sale.payment_method, sale.is_credit).borderColor}`,
+                        background: getPaymentMethodStyles(sale.payment_method, sale.is_credit).backgroundColor,
+                        color: getPaymentMethodStyles(sale.payment_method, sale.is_credit).textColor,
+                        fontWeight: 700,
+                      }}
+                    >
+                      {getPaymentMethodLabel(sale.payment_method, sale.is_credit)}
+                    </span>
+                  </div>
+                  {isCreditSale(sale) && sale.credit_fully_paid_at && (
+                    <div style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>
+                      Liquidado: {formatDateTime(sale.credit_fully_paid_at)}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, background: 'var(--bg)' }}>
+                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>Total</div>
+                    <div style={{ fontWeight: 800 }}>{formatMoney(sale.total)}</div>
+                  </div>
+                  <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, background: 'var(--bg)' }}>
+                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>Utilidad</div>
+                    <div style={{ fontWeight: 800, color: '#22c55e' }}>{formatMoney(sale.profit)}</div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: sale.status !== 'CANCELLED' ? '1fr 1fr' : '1fr', gap: 8 }}>
+                  <button
+                    onClick={() => handleViewDetails(sale.id)}
+                    className="icon-btn primary"
+                    title="Ver detalles"
+                    style={{ width: '100%', justifyContent: 'center', padding: '0 16px' }}
+                  >
+                    Ver detalles
+                  </button>
+                  {sale.status !== 'CANCELLED' && (
+                    <button
+                      onClick={() => handleCancelClick(sale)}
+                      className="icon-btn danger"
+                      title="Cancelar venta"
+                      style={{ width: '100%', justifyContent: 'center', padding: '0 16px' }}
+                    >
+                      Cancelar
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      ) : (
       <div className="table-scroll" style={{ background: 'var(--modal)', borderRadius: 12, border: '1px solid var(--border)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
@@ -710,57 +936,24 @@ export default function Sales() {
                   </td>
                   <td style={{ padding: 12 }}>{sale.seller_name || 'SIN USUARIO'}</td>
                   <td style={{ padding: 12 }}>{sale.customer_name || 'General'}</td>
-                  <td style={{ padding: 12 }}>{getPaymentMethodLabel(sale.payment_method, sale.is_credit)}</td>
+                  <td style={{ padding: 12 }}>
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        padding: '4px 10px',
+                        borderRadius: 999,
+                        border: `1px solid ${getPaymentMethodStyles(sale.payment_method, sale.is_credit).borderColor}`,
+                        background: getPaymentMethodStyles(sale.payment_method, sale.is_credit).backgroundColor,
+                        color: getPaymentMethodStyles(sale.payment_method, sale.is_credit).textColor,
+                        fontWeight: 700,
+                      }}
+                    >
+                      {getPaymentMethodLabel(sale.payment_method, sale.is_credit)}
+                    </span>
+                  </td>
                   <td style={{ padding: 12, textAlign: 'center' }}>
-                    {getSaleStatusLabel(sale, appliedFilters.paymentMethod) === 'CANCELADO' ? (
-                        <span style={{ 
-                            backgroundColor: 'rgba(231, 76, 60, 0.2)', 
-                            color: '#e74c3c', 
-                            padding: '4px 8px', 
-                            borderRadius: 12, 
-                            fontSize: '0.85rem',
-                            fontWeight: 600,
-                            border: '1px solid rgba(231, 76, 60, 0.3)'
-                        }}>
-                            CANCELADO
-                        </span>
-                    ) : getSaleStatusLabel(sale, appliedFilters.paymentMethod) === 'PENDIENTE' ? (
-                        <span style={{ 
-                            backgroundColor: 'rgba(231, 76, 60, 0.2)', 
-                            color: '#e74c3c', 
-                            padding: '4px 8px', 
-                            borderRadius: 12, 
-                            fontSize: '0.85rem',
-                            fontWeight: 600,
-                            border: '1px solid rgba(231, 76, 60, 0.3)'
-                        }}>
-                            PENDIENTE
-                        </span>
-                    ) : getSaleStatusLabel(sale, appliedFilters.paymentMethod) === 'LIQUIDADO' ? (
-                        <span style={{ 
-                            backgroundColor: 'rgba(46, 204, 113, 0.2)', 
-                            color: '#2ecc71', 
-                            padding: '4px 8px', 
-                            borderRadius: 12, 
-                            fontSize: '0.85rem',
-                            fontWeight: 600,
-                            border: '1px solid rgba(46, 204, 113, 0.3)'
-                        }}>
-                            LIQUIDADO
-                        </span>
-                    ) : (
-                        <span style={{ 
-                            backgroundColor: 'rgba(46, 204, 113, 0.2)', 
-                            color: '#2ecc71', 
-                            padding: '4px 8px', 
-                            borderRadius: 12, 
-                            fontSize: '0.85rem',
-                            fontWeight: 600,
-                            border: '1px solid rgba(46, 204, 113, 0.3)'
-                        }}>
-                            PAGADO
-                        </span>
-                    )}
+                    {renderSaleStatusBadge(sale)}
                   </td>
                   <td style={{ padding: 12, textAlign: 'right', fontWeight: 600 }}>
                     {formatMoney(sale.total)}
@@ -796,8 +989,9 @@ export default function Sales() {
           </tbody>
         </table>
       </div>
+      )}
 
-      <div style={{ marginTop: 20, display: 'flex', justifyContent: 'center', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div style={{ marginTop: 20, display: 'flex', justifyContent: 'center', gap: 10, alignItems: 'center', flexWrap: 'wrap', flexDirection: isMobileViewport ? 'column' : 'row' }}>
         <button 
           className="icon-btn"
           disabled={pagination.offset === 0}
@@ -818,9 +1012,9 @@ export default function Sales() {
       </div>
 
       {isModalOpen && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div className="responsive-modal" style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 24, width: '90%', maxWidth: 700, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20, alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: isMobileViewport ? 'flex-end' : 'center', justifyContent: 'center', zIndex: 1000, padding: isMobileViewport ? 0 : 16 }}>
+          <div className="responsive-modal" style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: isMobileViewport ? '18px 18px 0 0' : 12, padding: isMobileViewport ? 16 : 24, width: isMobileViewport ? '100%' : '90%', maxWidth: 700, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20, alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', gap: 12, flexWrap: 'wrap' }}>
               <h3 style={{ margin: 0 }}>Detalle de Venta #{selectedSale?.id}</h3>
               <button onClick={() => setIsModalOpen(false)} className="icon-btn" title="Cerrar">
                 <svg viewBox="0 0 24 24" width="20" height="20"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
@@ -848,7 +1042,20 @@ export default function Sales() {
                   </div>
                   <div>
                     <strong style={{ display: 'block', fontSize: 13, color: 'var(--muted)', marginBottom: 2 }}>Método Pago</strong>
-                    {getPaymentMethodLabel(selectedSale.payment_method, selectedSale.is_credit)}
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        padding: '4px 10px',
+                        borderRadius: 999,
+                        border: `1px solid ${getPaymentMethodStyles(selectedSale.payment_method, selectedSale.is_credit).borderColor}`,
+                        background: getPaymentMethodStyles(selectedSale.payment_method, selectedSale.is_credit).backgroundColor,
+                        color: getPaymentMethodStyles(selectedSale.payment_method, selectedSale.is_credit).textColor,
+                        fontWeight: 700,
+                      }}
+                    >
+                      {getPaymentMethodLabel(selectedSale.payment_method, selectedSale.is_credit)}
+                    </span>
                   </div>
                   <div>
                     <strong style={{ display: 'block', fontSize: 13, color: 'var(--muted)', marginBottom: 2 }}>Total</strong>
@@ -891,6 +1098,20 @@ export default function Sales() {
                   </div>
                 </div>
 
+                {isMobileViewport ? (
+                  <div style={{ display: 'grid', gap: 10, marginBottom: 24 }}>
+                    {selectedSale.items.map(item => (
+                      <div key={item.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, background: 'var(--bg)', display: 'grid', gap: 6 }}>
+                        <div style={{ fontWeight: 700 }}>{item.product_name}</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, fontSize: '0.9rem' }}>
+                          <div><span style={{ color: 'var(--muted)' }}>Cant.</span><br />{item.quantity}</div>
+                          <div><span style={{ color: 'var(--muted)' }}>Precio</span><br />{formatNumber(Number(item.unit_price))}</div>
+                          <div><span style={{ color: 'var(--muted)' }}>Total</span><br />{formatNumber(Number(item.total))}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
                 <div className="table-scroll" style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', marginBottom: 24 }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead style={{ background: 'var(--bg)' }}>
@@ -913,8 +1134,9 @@ export default function Sales() {
                     </tbody>
                   </table>
                 </div>
+                )}
 
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap', flexDirection: isMobileViewport ? 'column' : 'row' }}>
                    <button 
                      onClick={() => setIsModalOpen(false)}
                      style={{ 
@@ -923,7 +1145,8 @@ export default function Sales() {
                        color: 'inherit', 
                        border: '1px solid var(--border)', 
                        borderRadius: 6, 
-                       cursor: 'pointer' 
+                       cursor: 'pointer',
+                       width: isMobileViewport ? '100%' : 'auto'
                      }}
                    >
                      Cerrar
@@ -931,7 +1154,7 @@ export default function Sales() {
                    <button 
                      onClick={() => generateTicket(selectedSale)}
                      className="primary-btn"
-                     style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                     style={{ display: 'flex', alignItems: 'center', gap: 8, width: isMobileViewport ? '100%' : 'auto', justifyContent: 'center' }}
                    >
                      <span>Imprimir</span> Reimprimir Ticket
                    </button>
@@ -943,8 +1166,8 @@ export default function Sales() {
       )}
 
       {isCancelModalOpen && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
-          <div className="responsive-modal" style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 24, width: '90%', maxWidth: 500, boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: isMobileViewport ? 'flex-end' : 'center', justifyContent: 'center', zIndex: 1100, padding: isMobileViewport ? 0 : 16 }}>
+          <div className="responsive-modal" style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: isMobileViewport ? '18px 18px 0 0' : 12, padding: isMobileViewport ? 16 : 24, width: isMobileViewport ? '100%' : '90%', maxWidth: 500, boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }}>
             <h3 style={{ marginTop: 0 }}>Cancelar Venta #{saleToCancel?.id}</h3>
             <p style={{ color: 'var(--muted)' }}>¿Está seguro de que desea cancelar esta venta? Esta acción restaurará el stock y no se puede deshacer.</p>
             
@@ -958,10 +1181,11 @@ export default function Sales() {
               />
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap', flexDirection: isMobileViewport ? 'column' : 'row' }}>
               <button 
                 onClick={() => setIsCancelModalOpen(false)}
                 className="secondary-btn"
+                style={{ width: isMobileViewport ? '100%' : 'auto' }}
                 disabled={cancellingSale}
               >
                 Cerrar
@@ -969,6 +1193,7 @@ export default function Sales() {
               <button 
                 onClick={confirmCancel}
                 className="danger-btn"
+                style={{ width: isMobileViewport ? '100%' : 'auto' }}
                 disabled={cancellingSale || !cancelReason.trim()}
               >
                 {cancellingSale ? 'Cancelando venta...' : 'Confirmar Cancelación'}

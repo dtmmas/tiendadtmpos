@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { useConfigStore } from '../store/config'
 import { formatMoney } from '../utils/currency'
+import { getWarehouseHighlightStyle } from '../utils/warehouseHighlight'
 
 interface PurchaseItem {
   id: number
@@ -33,11 +34,20 @@ export default function PurchaseDetails() {
   const navigate = useNavigate()
   const [purchase, setPurchase] = useState<Purchase | null>(null)
   const [loading, setLoading] = useState(true)
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
   const config = useConfigStore(s => s.config)
 
   useEffect(() => {
     loadPurchase()
   }, [id])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)')
+    const syncViewport = () => setIsMobileViewport(mediaQuery.matches)
+    syncViewport()
+    mediaQuery.addEventListener('change', syncViewport)
+    return () => mediaQuery.removeEventListener('change', syncViewport)
+  }, [])
 
   async function loadPurchase() {
     try {
@@ -56,18 +66,18 @@ export default function PurchaseDetails() {
   if (!purchase) return null
 
   return (
-    <div style={{ padding: 20, maxWidth: 1000, margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+    <div style={{ padding: isMobileViewport ? 14 : 20, maxWidth: 1000, margin: '0 auto' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', gap: 12, marginBottom: 20 }}>
         <h1>Detalle de Compra #{purchase.id}</h1>
         <button className="btn-secondary" onClick={() => navigate('/purchases')}>Volver</button>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20, padding: 20, backgroundColor: 'var(--modal)', borderRadius: 8, border: '1px solid var(--border)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? '1fr' : '1fr 1fr', gap: 20, marginBottom: 20, padding: isMobileViewport ? 14 : 20, backgroundColor: 'var(--modal)', borderRadius: 8, border: '1px solid var(--border)' }}>
         <div>
           <p><strong>Fecha:</strong> {new Date(purchase.created_at).toLocaleString()}</p>
           <p><strong>Proveedor:</strong> {purchase.supplier_name}</p>
           <p><strong>Usuario:</strong> {purchase.user_name}</p>
-          <p><strong>Almacén Destino:</strong> {purchase.warehouse_name || 'Tienda Principal'}</p>
+          <p><strong>Almacén Destino:</strong> <span className="warehouse-highlight" style={getWarehouseHighlightStyle(purchase.warehouse_name || 'Tienda Principal')}>{purchase.warehouse_name || 'Tienda Principal'}</span></p>
         </div>
         <div>
           <p><strong>Doc No:</strong> {purchase.doc_no || '-'}</p>
@@ -76,6 +86,32 @@ export default function PurchaseDetails() {
         </div>
       </div>
 
+      {isMobileViewport ? (
+        <div style={{ display: 'grid', gap: 12 }}>
+          {purchase.items.map(item => (
+            <div key={item.id} style={{ border: '1px solid var(--border)', borderRadius: 12, backgroundColor: 'var(--modal)', padding: 14, display: 'grid', gap: 10 }}>
+              <div>
+                <div style={{ fontWeight: 'bold' }}>{item.product_name}</div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{item.product_code}</div>
+              </div>
+              {item.serials && (
+                <div style={{ fontSize: '0.8rem', color: 'var(--text)', whiteSpace: 'pre-wrap', backgroundColor: 'var(--bg)', padding: 8, borderRadius: 8, border: '1px solid var(--border)' }}>
+                  <strong>Series/IMEIs:</strong><br />
+                  {item.serials}
+                </div>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
+                <div><div style={{ fontSize: 11, color: 'var(--muted)' }}>Cantidad</div><div style={{ fontWeight: 700 }}>{item.quantity}</div></div>
+                <div><div style={{ fontSize: 11, color: 'var(--muted)' }}>Costo Unit.</div><div style={{ fontWeight: 700 }}>{formatMoney(Number(item.unit_cost), config?.currency)}</div></div>
+                <div><div style={{ fontSize: 11, color: 'var(--muted)' }}>Total</div><div style={{ fontWeight: 700 }}>{formatMoney(Number(item.total_cost), config?.currency)}</div></div>
+              </div>
+            </div>
+          ))}
+          <div style={{ border: '1px solid var(--border)', borderRadius: 12, backgroundColor: 'var(--modal)', padding: 14, textAlign: 'right', fontWeight: 'bold', fontSize: '1.1rem', color: 'var(--accent)' }}>
+            Total: {formatMoney(Number(purchase.total), config?.currency)}
+          </div>
+        </div>
+      ) : (
       <div style={{ border: '1px solid var(--border)', borderRadius: 8, backgroundColor: 'var(--modal)', overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
@@ -115,6 +151,7 @@ export default function PurchaseDetails() {
           </tfoot>
         </table>
       </div>
+      )}
     </div>
   )
 }

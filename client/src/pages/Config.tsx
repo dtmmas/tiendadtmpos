@@ -3,6 +3,7 @@ import type { AxiosProgressEvent } from 'axios'
 import { api } from '../api'
 import { useAuthStore } from '../store/auth'
 import { useConfigStore } from '../store/config'
+import { getWarehouseHighlightStyle } from '../utils/warehouseHighlight'
 
 interface TrackedInventoryAuditDifference {
   warehouseId: number
@@ -160,6 +161,7 @@ export default function Config() {
   const { config, fetchConfig } = useConfigStore()
   const user = useAuthStore(s => s.user)
   const isAdmin = String(user?.role || '').toUpperCase() === 'ADMIN'
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [name, setName] = useState('')
   const [currency, setCurrency] = useState('USD')
   const [logoUrl, setLogoUrl] = useState('')
@@ -192,6 +194,14 @@ export default function Config() {
       setLogoUrl(config.logoUrl || '')
     }
   }, [config])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)')
+    const syncViewport = () => setIsMobileViewport(mediaQuery.matches)
+    syncViewport()
+    mediaQuery.addEventListener('change', syncViewport)
+    return () => mediaQuery.removeEventListener('change', syncViewport)
+  }, [])
 
   const logoPreview = useMemo(() => {
     if (logoFile) return URL.createObjectURL(logoFile)
@@ -435,97 +445,128 @@ export default function Config() {
   }
 
   return (
-    <div style={{ padding: 20 }}>
-      <div style={{ maxWidth: 600, background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 12, padding: 20 }}>
-        <h2 style={{ margin: 0, marginBottom: 20 }}>Configuración del sistema</h2>
-        <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div>
-            <label style={{ display: 'block', marginBottom: 6 }}>Nombre</label>
-            <input value={name} onChange={e=>setName(e.target.value)} required style={{ width: '100%' }} />
+    <div style={{ padding: isMobileViewport ? 12 : 20, width: '100%', boxSizing: 'border-box' }}>
+      <div style={{ width: '100%', maxWidth: 1280, margin: '0 auto', display: 'grid', gap: 20 }}>
+        <div style={{ background: 'linear-gradient(180deg, var(--modal), var(--card))', border: '1px solid var(--border)', borderRadius: 16, padding: isMobileViewport ? 16 : 20 }}>
+          <h2 style={{ margin: 0 }}>Configuración del sistema</h2>
+          <div style={{ color: 'var(--muted)', fontSize: 13, marginTop: 6 }}>
+            Centraliza identidad visual, respaldos y herramientas administrativas del sistema.
           </div>
-          <div>
-            <label style={{ display: 'block', marginBottom: 6 }}>Moneda</label>
-            <input value={currency} onChange={e=>setCurrency(e.target.value)} required style={{ width: '100%' }} />
-          </div>
-          
-          <div>
-            <label style={{ display: 'block', marginBottom: 6 }}>Logo actual / vista previa</label>
-            {logoPreview && (
-              <img src={logoPreview} alt="logo" style={{ width: 100, height: 100, objectFit: 'contain', display: 'block', marginBottom: 8, border: '1px solid var(--border)', borderRadius: 8, padding: 4 }} />
-            )}
-          </div>
-          
-          <div>
-            <label style={{ display: 'block', marginBottom: 6 }}>Subir nuevo logo</label>
-            <input type="file" accept="image/*" onChange={(e)=> setLogoFile(e.target.files?.[0] || null)} />
-            {logoFile && <div className="file-name" style={{ marginTop: 4 }}>{logoFile.name}</div>}
-            <small style={{ color: 'var(--muted)', display: 'block', marginTop: 4 }}>Opcional: o pega una URL</small>
-            <input placeholder="Logo URL" value={logoUrl} onChange={e=>setLogoUrl(e.target.value)} style={{ width: '100%', marginTop: 4, padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }} />
-          </div>
+        </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
-            <button type="submit" className="primary-btn" disabled={saving}>{saving ? 'Guardando...' : 'Guardar'}</button>
-          </div>
-        </form>
-
-        {isAdmin && (
-          <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-            <h3 style={{ marginTop: 0, marginBottom: 10 }}>Backups del sistema</h3>
-            <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 12 }}>
-              Puedes descargar un respaldo SQL de la base de datos o un backup completo con base de datos, imágenes y configuración. Esta opción está disponible solo para administrador.
-            </div>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <button type="button" className="secondary-btn" onClick={downloadBackup} disabled={downloadingBackup || downloadingFullBackup}>
-                {downloadingBackup ? 'Generando backup SQL...' : 'Descargar backup SQL'}
-              </button>
-              <button type="button" className="primary-btn" onClick={downloadFullBackup} disabled={downloadingBackup || downloadingFullBackup}>
-                {downloadingFullBackup ? 'Generando backup completo...' : 'Descargar backup completo'}
-              </button>
-              <button
-                type="button"
-                className="secondary-btn"
-                onClick={runTrackedInventoryAudit}
-                disabled={downloadingBackup || downloadingFullBackup || runningTrackedAudit || runningTrackedAutoCorrect}
-              >
-                {runningTrackedAudit ? 'Auditando series e IMEI...' : 'Auditar series e IMEI'}
-              </button>
-              <button
-                type="button"
-                className="primary-btn"
-                onClick={runTrackedInventoryAutoCorrect}
-                disabled={downloadingBackup || downloadingFullBackup || runningTrackedAudit || runningTrackedAutoCorrect}
-              >
-                {runningTrackedAutoCorrect ? 'Autocorrigiendo casos faciles...' : 'Autocorregir casos faciles'}
-              </button>
-            </div>
-            <ProgressBar
-              title="Descargar backup SQL"
-              progress={downloadBackupProgress}
-              active={downloadingBackup}
-            />
-            <ProgressBar
-              title="Descargar backup completo"
-              progress={downloadFullBackupProgress}
-              active={downloadingFullBackup}
-            />
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 10 }}>
-              El backup completo incluye `database.sql`, carpeta `uploads` y `config.json`, para restaurar también las imágenes del sistema.
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 20 }}>
+          <div style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 16, padding: isMobileViewport ? 16 : 20 }}>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontWeight: 700, fontSize: 18 }}>Información general</div>
+              <div style={{ color: 'var(--muted)', fontSize: 13, marginTop: 4 }}>
+                Ajusta nombre comercial, moneda base e imagen principal del sistema.
+              </div>
             </div>
 
-            <div style={{ marginTop: 16, padding: 14, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg)' }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>Restaurar backup</div>
-              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12 }}>
-                La restauración está disponible solo para administrador. Antes de aplicar el archivo seleccionado, el sistema crea automáticamente un backup de seguridad del estado actual.
+            <form onSubmit={save} style={{ display: 'grid', gap: 16 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? '1fr' : 'minmax(0, 1.1fr) minmax(280px, 0.9fr)', gap: 16, alignItems: 'start' }}>
+                <div style={{ display: 'grid', gap: 12 }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 6, fontWeight: 600 }}>Nombre</label>
+                    <input value={name} onChange={e=>setName(e.target.value)} required style={{ width: '100%', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 6, fontWeight: 600 }}>Moneda</label>
+                    <input value={currency} onChange={e=>setCurrency(e.target.value)} required style={{ width: '100%', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 6, fontWeight: 600 }}>Subir nuevo logo</label>
+                    <input type="file" accept="image/*" onChange={(e)=> setLogoFile(e.target.files?.[0] || null)} style={{ width: '100%' }} />
+                    {logoFile && <div className="file-name" style={{ marginTop: 4 }}>{logoFile.name}</div>}
+                    <small style={{ color: 'var(--muted)', display: 'block', marginTop: 6 }}>Opcional: también puedes usar una URL.</small>
+                    <input placeholder="Logo URL" value={logoUrl} onChange={e=>setLogoUrl(e.target.value)} style={{ width: '100%', marginTop: 6, padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit', boxSizing: 'border-box' }} />
+                  </div>
+                </div>
+
+                <div style={{ border: '1px solid var(--border)', borderRadius: 14, padding: 14, background: 'var(--bg)', minHeight: isMobileViewport ? 'auto' : 220, display: 'grid', alignContent: 'start', gap: 10 }}>
+                  <div style={{ fontWeight: 600 }}>Vista previa del logo</div>
+                  {logoPreview ? (
+                    <img src={logoPreview} alt="logo" style={{ width: '100%', maxWidth: 220, height: isMobileViewport ? 140 : 180, objectFit: 'contain', display: 'block', border: '1px solid var(--border)', borderRadius: 10, padding: 8, background: 'var(--modal)' }} />
+                  ) : (
+                    <div style={{ border: '1px dashed var(--border)', borderRadius: 10, padding: 20, color: 'var(--muted)', textAlign: 'center' }}>
+                      Aún no hay logo configurado.
+                    </div>
+                  )}
+                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                    La vista previa usa el archivo local seleccionado o el logo actual guardado.
+                  </div>
+                </div>
               </div>
 
-              <div style={{ display: 'grid', gap: 14 }}>
-                <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, background: 'var(--card)' }}>
+              <div style={{ display: 'flex', justifyContent: isMobileViewport ? 'stretch' : 'flex-end', marginTop: 4 }}>
+                <button type="submit" className="primary-btn" style={{ width: isMobileViewport ? '100%' : 'auto' }} disabled={saving}>{saving ? 'Guardando...' : 'Guardar'}</button>
+              </div>
+            </form>
+          </div>
+
+          {isAdmin && (
+          <div style={{ display: 'grid', gap: 20 }}>
+            <div style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 16, padding: isMobileViewport ? 16 : 20 }}>
+              <h3 style={{ marginTop: 0, marginBottom: 10 }}>Backups del sistema</h3>
+              <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 14 }}>
+                Descarga respaldos SQL o completos, y ejecuta herramientas de auditoría para inventario serializado.
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(2, minmax(220px, 1fr))', gap: 10 }}>
+                <button type="button" className="secondary-btn" onClick={downloadBackup} style={{ width: '100%' }} disabled={downloadingBackup || downloadingFullBackup}>
+                  {downloadingBackup ? 'Generando backup SQL...' : 'Descargar backup SQL'}
+                </button>
+                <button type="button" className="primary-btn" onClick={downloadFullBackup} style={{ width: '100%' }} disabled={downloadingBackup || downloadingFullBackup}>
+                  {downloadingFullBackup ? 'Generando backup completo...' : 'Descargar backup completo'}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={runTrackedInventoryAudit}
+                  style={{ width: '100%' }}
+                  disabled={downloadingBackup || downloadingFullBackup || runningTrackedAudit || runningTrackedAutoCorrect}
+                >
+                  {runningTrackedAudit ? 'Auditando series e IMEI...' : 'Auditar series e IMEI'}
+                </button>
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={runTrackedInventoryAutoCorrect}
+                  style={{ width: '100%' }}
+                  disabled={downloadingBackup || downloadingFullBackup || runningTrackedAudit || runningTrackedAutoCorrect}
+                >
+                  {runningTrackedAutoCorrect ? 'Autocorrigiendo casos faciles...' : 'Autocorregir casos faciles'}
+                </button>
+              </div>
+              <ProgressBar
+                title="Descargar backup SQL"
+                progress={downloadBackupProgress}
+                active={downloadingBackup}
+              />
+              <ProgressBar
+                title="Descargar backup completo"
+                progress={downloadFullBackupProgress}
+                active={downloadingFullBackup}
+              />
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 10 }}>
+                El backup completo incluye `database.sql`, carpeta `uploads` y `config.json`, para restaurar también las imágenes del sistema.
+              </div>
+            </div>
+
+            <div style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 16, padding: isMobileViewport ? 16 : 20 }}>
+              <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 6 }}>Restaurar backup</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 14 }}>
+                Antes de aplicar el archivo seleccionado, el sistema crea automáticamente un backup de seguridad del estado actual.
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: 14 }}>
+                <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 14, background: 'var(--bg)' }}>
                   <div style={{ fontWeight: 600, marginBottom: 6 }}>Restaurar solo base de datos</div>
                   <input
                     type="file"
                     accept=".sql"
                     onChange={e => setSqlRestoreFile(e.target.files?.[0] || null)}
                     disabled={restoringSqlBackup || restoringFullBackup}
+                    style={{ width: '100%' }}
                   />
                   {sqlRestoreFile && (
                     <div className="file-name" style={{ marginTop: 6 }}>{sqlRestoreFile.name}</div>
@@ -537,6 +578,7 @@ export default function Config() {
                     <button
                       type="button"
                       className="secondary-btn"
+                      style={{ width: isMobileViewport ? '100%' : 'auto' }}
                       onClick={restoreSqlBackup}
                       disabled={!sqlRestoreFile || restoringSqlBackup || restoringFullBackup || downloadingBackup || downloadingFullBackup}
                     >
@@ -550,13 +592,14 @@ export default function Config() {
                   </div>
                 </div>
 
-                <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, background: 'var(--card)' }}>
+                <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 14, background: 'var(--bg)' }}>
                   <div style={{ fontWeight: 600, marginBottom: 6 }}>Restaurar backup completo</div>
                   <input
                     type="file"
                     accept=".tar.gz,.tgz"
                     onChange={e => setFullRestoreFile(e.target.files?.[0] || null)}
                     disabled={restoringSqlBackup || restoringFullBackup}
+                    style={{ width: '100%' }}
                   />
                   {fullRestoreFile && (
                     <div className="file-name" style={{ marginTop: 6 }}>{fullRestoreFile.name}</div>
@@ -568,6 +611,7 @@ export default function Config() {
                     <button
                       type="button"
                       className="primary-btn"
+                      style={{ width: isMobileViewport ? '100%' : 'auto' }}
                       onClick={restoreFullBackup}
                       disabled={!fullRestoreFile || restoringSqlBackup || restoringFullBackup || downloadingBackup || downloadingFullBackup}
                     >
@@ -583,7 +627,7 @@ export default function Config() {
               </div>
 
               {lastRestoreResult && (
-                <div style={{ marginTop: 14, border: '1px solid var(--border)', borderRadius: 8, padding: 10, background: 'var(--card)' }}>
+                <div style={{ marginTop: 14, border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: 'var(--card)' }}>
                   <div style={{ fontWeight: 600, marginBottom: 6 }}>Última restauración</div>
                   <div style={{ fontSize: 13 }}>{lastRestoreResult.message}</div>
                   <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>
@@ -598,97 +642,101 @@ export default function Config() {
               )}
             </div>
 
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8 }}>
-              La autocorrección solo mueve series o IMEI `AVAILABLE` cuando todo el stock positivo del producto está concentrado en un solo almacén y la cantidad coincide exactamente.
-            </div>
-
-            {trackedAudit && (
-              <div style={{ marginTop: 16, padding: 14, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg)' }}>
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>Auditoria de series e IMEI</div>
-                <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 10 }}>
-                  Generada: {new Date(trackedAudit.generatedAt).toLocaleString()} | Productos revisados: {trackedAudit.productCount} | Inconsistencias: {trackedAudit.mismatchCount}
-                </div>
-
-                {trackedAudit.mismatchCount === 0 ? (
-                  <div style={{ fontSize: 13 }}>No se detectaron inconsistencias entre stock y series/IMEI disponibles.</div>
-                ) : (
-                  <div style={{ display: 'grid', gap: 10 }}>
-                    {trackedAudit.mismatches.map(item => (
-                      <div key={item.productId} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, background: 'var(--card)' }}>
-                        <div style={{ fontWeight: 600 }}>{item.name}</div>
-                        <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
-                          {item.productCode ? `COD: ${item.productCode}` : 'Sin codigo'} | {item.sku ? `SKU: ${item.sku}` : 'Sin SKU'} | Tipo: {item.productType}
-                        </div>
-                        <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
-                          {item.differences.map(diff => (
-                            <div key={`${item.productId}-${diff.warehouseId}`} style={{ fontSize: 13 }}>
-                              <strong>{diff.warehouseName}</strong>: stock {diff.stockQty} | disponibles {diff.trackedQty}
-                              {diff.trackedItems ? ` | ${diff.trackedItems}` : ''}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+            <div style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 16, padding: isMobileViewport ? 16 : 20 }}>
+              <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 6 }}>Control de series e IMEI</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>
+                La autocorrección solo mueve series o IMEI `AVAILABLE` cuando todo el stock positivo del producto está concentrado en un solo almacén y la cantidad coincide exactamente.
               </div>
-            )}
 
-            {trackedAutoCorrect && (
-              <div style={{ marginTop: 16, padding: 14, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg)' }}>
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>Resultado de autocorrección</div>
-                <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 10 }}>
-                  Ejecutada: {new Date(trackedAutoCorrect.generatedAt).toLocaleString()} | Corregidos: {trackedAutoCorrect.correctedCount} | Omitidos: {trackedAutoCorrect.skippedCount} | Inconsistencias restantes: {trackedAutoCorrect.auditAfter.mismatchCount}
-                </div>
+              {trackedAudit && (
+                <div style={{ marginTop: 6, padding: 14, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg)' }}>
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>Auditoría de series e IMEI</div>
+                  <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 10 }}>
+                    Generada: {new Date(trackedAudit.generatedAt).toLocaleString()} | Productos revisados: {trackedAudit.productCount} | Inconsistencias: {trackedAudit.mismatchCount}
+                  </div>
 
-                {trackedAutoCorrect.corrected.length > 0 && (
-                  <div style={{ marginTop: 8 }}>
-                    <div style={{ fontWeight: 600, marginBottom: 8 }}>Casos corregidos</div>
-                    <div style={{ display: 'grid', gap: 10 }}>
-                      {trackedAutoCorrect.corrected.map(item => (
-                        <div key={item.productId} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, background: 'var(--card)' }}>
+                  {trackedAudit.mismatchCount === 0 ? (
+                    <div style={{ fontSize: 13 }}>No se detectaron inconsistencias entre stock y series/IMEI disponibles.</div>
+                  ) : (
+                    <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
+                      {trackedAudit.mismatches.map(item => (
+                        <div key={item.productId} style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: 'var(--card)' }}>
                           <div style={{ fontWeight: 600 }}>{item.name}</div>
                           <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
                             {item.productCode ? `COD: ${item.productCode}` : 'Sin codigo'} | {item.sku ? `SKU: ${item.sku}` : 'Sin SKU'} | Tipo: {item.productType}
                           </div>
-                          <div style={{ fontSize: 13, marginTop: 8 }}>
-                            Movidos: {item.movedCount} | Destino: {item.targetWarehouseName}
+                          <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+                            {item.differences.map(diff => (
+                              <div key={`${item.productId}-${diff.warehouseId}`} style={{ fontSize: 13 }}>
+                                <span className="warehouse-highlight" style={getWarehouseHighlightStyle(diff.warehouseName)}>{diff.warehouseName}</span>: stock {diff.stockQty} | disponibles {diff.trackedQty}
+                                {diff.trackedItems ? ` | ${diff.trackedItems}` : ''}
+                              </div>
+                            ))}
                           </div>
-                          {item.trackedItems.length > 0 && (
-                            <div style={{ fontSize: 13, marginTop: 6 }}>
-                              {item.trackedItems.join(', ')}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {trackedAutoCorrect && (
+                <div style={{ marginTop: 16, padding: 14, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg)' }}>
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>Resultado de autocorrección</div>
+                  <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 10 }}>
+                    Ejecutada: {new Date(trackedAutoCorrect.generatedAt).toLocaleString()} | Corregidos: {trackedAutoCorrect.correctedCount} | Omitidos: {trackedAutoCorrect.skippedCount} | Inconsistencias restantes: {trackedAutoCorrect.auditAfter.mismatchCount}
+                  </div>
+
+                  {trackedAutoCorrect.corrected.length > 0 && (
+                    <div style={{ marginTop: 8 }}>
+                      <div style={{ fontWeight: 600, marginBottom: 8 }}>Casos corregidos</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(auto-fit, minmax(260px, 1fr))', gap: 10 }}>
+                        {trackedAutoCorrect.corrected.map(item => (
+                          <div key={item.productId} style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: 'var(--card)' }}>
+                            <div style={{ fontWeight: 600 }}>{item.name}</div>
+                            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                              {item.productCode ? `COD: ${item.productCode}` : 'Sin codigo'} | {item.sku ? `SKU: ${item.sku}` : 'Sin SKU'} | Tipo: {item.productType}
                             </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {trackedAutoCorrect.skipped.length > 0 && (
-                  <div style={{ marginTop: 14 }}>
-                    <div style={{ fontWeight: 600, marginBottom: 8 }}>Casos omitidos</div>
-                    <div style={{ display: 'grid', gap: 10 }}>
-                      {trackedAutoCorrect.skipped.map(item => (
-                        <div key={item.productId} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, background: 'var(--card)' }}>
-                          <div style={{ fontWeight: 600 }}>{item.name}</div>
-                          <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
-                            {item.productCode ? `COD: ${item.productCode}` : 'Sin codigo'} | {item.sku ? `SKU: ${item.sku}` : 'Sin SKU'}
+                            <div style={{ fontSize: 13, marginTop: 8 }}>
+                              Movidos: {item.movedCount} | Destino: {item.targetWarehouseName}
+                            </div>
+                            {item.trackedItems.length > 0 && (
+                              <div style={{ fontSize: 13, marginTop: 6, wordBreak: 'break-word' }}>
+                                {item.trackedItems.join(', ')}
+                              </div>
+                            )}
                           </div>
-                          <div style={{ fontSize: 13, marginTop: 8 }}>{item.reason}</div>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {trackedAutoCorrect.corrected.length === 0 && trackedAutoCorrect.skipped.length === 0 && (
-                  <div style={{ fontSize: 13 }}>No hubo inconsistencias que requirieran autocorrección.</div>
-                )}
-              </div>
-            )}
+                  {trackedAutoCorrect.skipped.length > 0 && (
+                    <div style={{ marginTop: 14 }}>
+                      <div style={{ fontWeight: 600, marginBottom: 8 }}>Casos omitidos</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(auto-fit, minmax(260px, 1fr))', gap: 10 }}>
+                        {trackedAutoCorrect.skipped.map(item => (
+                          <div key={item.productId} style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: 'var(--card)' }}>
+                            <div style={{ fontWeight: 600 }}>{item.name}</div>
+                            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                              {item.productCode ? `COD: ${item.productCode}` : 'Sin codigo'} | {item.sku ? `SKU: ${item.sku}` : 'Sin SKU'}
+                            </div>
+                            <div style={{ fontSize: 13, marginTop: 8 }}>{item.reason}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {trackedAutoCorrect.corrected.length === 0 && trackedAutoCorrect.skipped.length === 0 && (
+                    <div style={{ fontSize: 13 }}>No hubo inconsistencias que requirieran autocorrección.</div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   )

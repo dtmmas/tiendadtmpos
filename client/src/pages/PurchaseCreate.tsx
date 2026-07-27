@@ -58,12 +58,21 @@ export default function PurchaseCreate() {
   const [isProductModalOpen, setIsProductModalOpen] = useState(false)
   const [productSearch, setProductSearch] = useState('')
   const [debouncedProductSearch, setDebouncedProductSearch] = useState('')
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
   
   const navigate = useNavigate()
   const config = useConfigStore(s => s.config)
 
   useEffect(() => {
     loadData()
+  }, [])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)')
+    const syncViewport = () => setIsMobileViewport(mediaQuery.matches)
+    syncViewport()
+    mediaQuery.addEventListener('change', syncViewport)
+    return () => mediaQuery.removeEventListener('change', syncViewport)
   }, [])
 
   useEffect(() => {
@@ -316,13 +325,13 @@ export default function PurchaseCreate() {
   }
 
   return (
-    <div style={{ padding: 20, maxWidth: 1200, margin: '0 auto', height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+    <div style={{ padding: isMobileViewport ? 14 : 20, maxWidth: 1200, margin: '0 auto', height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', gap: 12, marginBottom: 20 }}>
         <h1>Nueva Compra</h1>
         <button className="btn-secondary" onClick={() => navigate('/purchases')}>Cancelar</button>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 20, marginBottom: 20, padding: 20, backgroundColor: 'var(--modal)', borderRadius: 8, border: '1px solid var(--border)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(auto-fit, minmax(200px, 1fr))', gap: 20, marginBottom: 20, padding: isMobileViewport ? 14 : 20, backgroundColor: 'var(--modal)', borderRadius: 8, border: '1px solid var(--border)' }}>
         <div>
           <label style={{ display: 'block', marginBottom: 8, fontWeight: 'bold' }}>Proveedor</label>
           <select 
@@ -380,11 +389,66 @@ export default function PurchaseCreate() {
       </div>
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', gap: 12 }}>
           <h3>Detalle de Productos</h3>
           <button className="btn-primary" onClick={() => setIsProductModalOpen(true)}>+ Agregar Producto</button>
         </div>
 
+        {isMobileViewport ? (
+          <div style={{ display: 'grid', gap: 12 }}>
+            {items.map((item, i) => (
+              <div key={item.productId + '_' + i} style={{ border: '1px solid var(--border)', borderRadius: 12, backgroundColor: 'var(--modal)', padding: 14, display: 'grid', gap: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                  <div>
+                    <div style={{ fontWeight: 'bold' }}>{item.name}</div>
+                    <div style={{ fontSize: '0.8em', opacity: 0.7 }}>{item.code}</div>
+                  </div>
+                  <button onClick={() => removeItem(i)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'red', padding: 0 }}>✕</button>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                  <div>
+                    <label>Cantidad</label>
+                    <input type="number" min="1" value={item.quantity} onChange={e => updateItem(i, 'quantity', Number(e.target.value))} style={{ width: '100%', textAlign: 'center', padding: 6, borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }} />
+                  </div>
+                  <div>
+                    <label>Costo Unit.</label>
+                    <input type="number" min="0" step="0.01" value={item.unitCost} onChange={e => updateItem(i, 'unitCost', Number(e.target.value))} style={{ width: '100%', textAlign: 'right', padding: 6, borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }} />
+                  </div>
+                </div>
+                <div style={{ fontWeight: 700 }}>Subtotal: {formatMoney(item.quantity * item.unitCost, config?.currency)}</div>
+                {item.productType === 'MEDICINAL' && (
+                  <div style={{ marginTop: 5 }}>
+                    {item.batches?.map((batch, bIdx) => (
+                      <div key={bIdx} style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 6, marginBottom: 8 }}>
+                        <input placeholder="Lote" value={batch.batchNo} onChange={e => updateBatch(i, bIdx, 'batchNo', e.target.value)} style={{ padding: 6, fontSize: '0.9em', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }} />
+                        <input type="date" value={batch.expiryDate} onChange={e => updateBatch(i, bIdx, 'expiryDate', e.target.value)} style={{ padding: 6, fontSize: '0.9em', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }} />
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <input type="number" placeholder="Cant." value={batch.quantity} onChange={e => updateBatch(i, bIdx, 'quantity', Number(e.target.value))} style={{ padding: 6, flex: 1, fontSize: '0.9em', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }} />
+                          {item.batches && item.batches.length > 1 && <button onClick={() => removeBatch(i, bIdx)} style={{ color: 'red', border: 'none', background: 'none', cursor: 'pointer', padding: 4 }} title="Eliminar lote">✕</button>}
+                        </div>
+                      </div>
+                    ))}
+                    <button onClick={() => addBatch(i)} style={{ fontSize: '0.8em', color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>
+                      + Agregar otro lote
+                    </button>
+                  </div>
+                )}
+                {(item.productType === 'IMEI' || item.productType === 'SERIAL') && (
+                  <div style={{ marginTop: 5 }}>
+                    {item.imeiEntries?.map((entry, idx) => (
+                      <input key={idx} placeholder={`Ingrese ${item.productType} #${idx + 1}`} value={entry} onChange={e => updateImeiEntry(i, idx, e.target.value)} style={{ display: 'block', width: '100%', padding: 6, fontSize: '0.9em', marginBottom: 6, borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+            {items.length === 0 && (
+              <div style={{ padding: 20, textAlign: 'center', opacity: 0.5, border: '1px solid var(--border)', borderRadius: 8, backgroundColor: 'var(--modal)' }}>
+                No hay productos agregados
+              </div>
+            )}
+          </div>
+        ) : (
         <div style={{ flex: 1, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 8, backgroundColor: 'var(--modal)' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead style={{ position: 'sticky', top: 0, background: 'var(--surface)' }}>
@@ -517,14 +581,15 @@ export default function PurchaseCreate() {
             </tbody>
           </table>
         </div>
+        )}
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 20, padding: 20, borderTop: '1px solid var(--border)' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', gap: 20, padding: 20, borderTop: '1px solid var(--border)' }}>
           <div style={{ fontSize: '1.5em', fontWeight: 'bold' }}>
             Total: {formatMoney(total, config?.currency)}
           </div>
           <button 
             className="btn-primary" 
-            style={{ fontSize: '1.2em', padding: '10px 30px' }}
+            style={{ fontSize: '1.2em', padding: '10px 30px', width: isMobileViewport ? '100%' : 'auto' }}
             onClick={handleSubmit}
             disabled={loading}
           >
@@ -534,8 +599,8 @@ export default function PurchaseCreate() {
       </div>
 
       {isProductModalOpen && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100 }}>
-          <div style={{ background: 'var(--modal)', padding: 20, borderRadius: 8, width: 600, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: isMobileViewport ? 'flex-end' : 'center', zIndex: 100, padding: isMobileViewport ? 0 : 16 }}>
+          <div style={{ background: 'var(--modal)', padding: isMobileViewport ? 16 : 20, borderRadius: isMobileViewport ? '18px 18px 0 0' : 8, width: isMobileViewport ? '100%' : 600, maxWidth: isMobileViewport ? '100%' : 600, maxHeight: isMobileViewport ? '88vh' : '80vh', display: 'flex', flexDirection: 'column' }}>
             <h3>Buscar Producto</h3>
             <input 
               autoFocus

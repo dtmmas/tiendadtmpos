@@ -14,6 +14,7 @@ function isoDate(d: Date) {
 export default function CashHistory() {
   const config = useConfigStore(s => s.config)
   const currency = config?.currency || 'USD'
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [period, setPeriod] = useState<Period>('day')
   const [start, setStart] = useState(() => {
     const now = new Date()
@@ -45,6 +46,14 @@ export default function CashHistory() {
     }
     load()
   }, [period, params])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)')
+    const syncViewport = () => setIsMobileViewport(mediaQuery.matches)
+    syncViewport()
+    mediaQuery.addEventListener('change', syncViewport)
+    return () => mediaQuery.removeEventListener('change', syncViewport)
+  }, [])
 
   const openShiftDetail = async (shiftId: number) => {
     try {
@@ -194,19 +203,19 @@ export default function CashHistory() {
   }
 
   return (
-    <div style={{ padding: 20, maxWidth: 1200, margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, gap: 12, flexWrap: 'wrap' }}>
+    <div style={{ padding: isMobileViewport ? 12 : 20, width: '100%', maxWidth: '100%', margin: '0 auto', boxSizing: 'border-box' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', marginBottom: 20, gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h2 style={{ margin: 0 }}>Historial de Cierre de Caja</h2>
           <div style={{ color: 'var(--muted)', fontSize: '0.9rem' }}>
             Resumen por día, mes o año, y detalle de cierres
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', background: 'var(--modal)', padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border)' }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', background: 'var(--modal)', padding: isMobileViewport ? 12 : '8px 10px', borderRadius: 10, border: '1px solid var(--border)', width: isMobileViewport ? '100%' : 'auto', boxSizing: 'border-box' }}>
           <select
             value={period}
             onChange={(e) => setPeriod(e.target.value as Period)}
-            style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', padding: '6px 8px', fontWeight: 600 }}
+            style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', padding: '6px 8px', fontWeight: 600, width: isMobileViewport ? '100%' : 'auto', boxSizing: 'border-box' }}
           >
             <option value="day">Diario</option>
             <option value="month">Mensual</option>
@@ -216,14 +225,14 @@ export default function CashHistory() {
             type="date"
             value={start}
             onChange={(e) => setStart(e.target.value)}
-            style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', padding: '6px 8px' }}
+            style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', padding: '6px 8px', width: isMobileViewport ? '100%' : 'auto', boxSizing: 'border-box' }}
           />
-          <span style={{ color: 'var(--muted)' }}>a</span>
+          <span style={{ color: 'var(--muted)', alignSelf: isMobileViewport ? 'center' : 'auto' }}>a</span>
           <input
             type="date"
             value={end}
             onChange={(e) => setEnd(e.target.value)}
-            style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', padding: '6px 8px' }}
+            style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', padding: '6px 8px', width: isMobileViewport ? '100%' : 'auto', boxSizing: 'border-box' }}
           />
         </div>
       </div>
@@ -231,11 +240,29 @@ export default function CashHistory() {
       {loading ? (
         <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>Cargando...</div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 20 }}>
-          <div className="card">
+        <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? '1fr' : 'minmax(320px, 0.9fr) minmax(0, 1.6fr)', gap: 20, alignItems: 'start', width: '100%' }}>
+          <div className="card" style={{ width: '100%', minWidth: 0 }}>
             <h3>Resumen</h3>
             {summary.length === 0 ? (
               <div style={{ color: 'var(--muted)' }}>Sin cierres en el rango seleccionado.</div>
+            ) : isMobileViewport ? (
+              <div style={{ display: 'grid', gap: 10 }}>
+                {summary.map((r: any) => (
+                  <div key={r.period} style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: 'var(--modal)', display: 'grid', gap: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+                      <div style={{ fontWeight: 700 }}>{r.period}</div>
+                      <span style={{ fontSize: 12, color: 'var(--muted)' }}>{r.shifts} cierre(s)</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+                      <DetailCard label="Esperado" value={formatMoney(Number(r.expected || 0), currency)} />
+                      <DetailCard label="Real" value={formatMoney(Number(r.closing || 0), currency)} />
+                    </div>
+                    <div style={{ fontWeight: 700, color: Number(r.difference || 0) === 0 ? '#22c55e' : Number(r.difference || 0) > 0 ? '#3b82f6' : '#ef4444' }}>
+                      Diferencia: {formatMoney(Number(r.difference || 0), currency)}
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
@@ -264,12 +291,49 @@ export default function CashHistory() {
             )}
           </div>
 
-          <div className="card">
+          <div className="card" style={{ width: '100%', minWidth: 0 }}>
             <h3>Detalle de Cierres</h3>
             {shifts.length === 0 ? (
               <div style={{ color: 'var(--muted)' }}>Sin cierres en el rango seleccionado.</div>
+            ) : isMobileViewport ? (
+              <div style={{ display: 'grid', gap: 12 }}>
+                {shifts.map((s: any) => (
+                  <div key={s.id} style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: 'var(--modal)', display: 'grid', gap: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+                      <div>
+                        <div style={{ fontWeight: 700 }}>{formatDateTime(s.closedAt)}</div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginTop: 4 }}>
+                          Apertura: {formatDateTime(s.openedAt)}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--muted)', textAlign: 'right' }}>
+                        #{s.id}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '0.9rem' }}>
+                      <div><strong>Cerró:</strong> {s.closedByName || '-'}</div>
+                      <div style={{ color: 'var(--muted)', marginTop: 4 }}><strong>Abrió:</strong> {s.openedByName || '-'}</div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+                      <DetailCard label="Inicial" value={formatMoney(Number(s.openingBalance || 0), currency)} />
+                      <DetailCard label="Esperado" value={formatMoney(Number(s.expected || 0), currency)} />
+                      <DetailCard label="Real" value={formatMoney(Number(s.closingBalance || 0), currency)} />
+                      <DetailCard label="Dif." value={formatMoney(Number(s.difference || 0), currency)} />
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      style={{ width: '100%' }}
+                      onClick={() => openShiftDetail(s.id)}
+                      disabled={detailLoading}
+                    >
+                      {detailLoading && selectedShift?.id !== s.id ? 'Cargando...' : 'Ver detalle'}
+                    </button>
+                  </div>
+                ))}
+              </div>
             ) : (
-              <div style={{ maxHeight: 520, overflowY: 'auto' }}>
+              <div style={{ width: '100%', maxHeight: 520, overflowY: 'auto', overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ borderBottom: '2px solid var(--border)', textAlign: 'left', fontSize: '0.85rem' }}>
@@ -328,17 +392,18 @@ export default function CashHistory() {
         <Modal
           title={`Detalle de Cierre #${selectedShift.id}`}
           onClose={() => setSelectedShift(null)}
+          mobile={isMobileViewport}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
             <div style={{ color: 'var(--muted)', fontSize: '0.9rem' }}>
               Cerrado: {formatDateTime(selectedShift.closedAt)}
             </div>
-            <button type="button" className="btn-secondary" onClick={() => printShiftDetail(selectedShift)}>
+            <button type="button" className="btn-secondary" style={{ width: isMobileViewport ? '100%' : 'auto' }} onClick={() => printShiftDetail(selectedShift)}>
               Imprimir Cierre
             </button>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 16 }}>
             <DetailCard label="Abrió" value={selectedShift.openedByName || '-'} />
             <DetailCard label="Cerró" value={selectedShift.closedByName || '-'} />
             <DetailCard label="Saldo Inicial" value={formatMoney(Number(selectedShift.openingBalance || 0), currency)} />
@@ -355,76 +420,128 @@ export default function CashHistory() {
 
           <div className="card" style={{ marginBottom: 16 }}>
             <h4 style={{ marginTop: 0 }}>Ventas por Método</h4>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <tbody>
+            {isMobileViewport ? (
+              <div style={{ display: 'grid', gap: 8 }}>
                 {Object.entries(selectedShift.salesByMethod || {}).map(([method, total]: any) => (
-                  <tr key={method} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: 8 }}>{translateMethod(method)}</td>
-                    <td style={{ padding: 8, textAlign: 'right' }}>{formatMoney(Number(total || 0), currency)}</td>
-                  </tr>
+                  <div key={method} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: 10, border: '1px solid var(--border)', borderRadius: 10 }}>
+                    <span>{translateMethod(method)}</span>
+                    <strong>{formatMoney(Number(total || 0), currency)}</strong>
+                  </div>
                 ))}
-                <tr style={{ fontWeight: 700 }}>
-                  <td style={{ padding: 8 }}>Total Ventas</td>
-                  <td style={{ padding: 8, textAlign: 'right' }}>{formatMoney(Number(selectedShift.totalSales || 0), currency)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div className="card" style={{ marginBottom: 16 }}>
-            <h4 style={{ marginTop: 0 }}>Abonos a Crédito por Método</h4>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <tbody>
-                {Object.keys(selectedShift.creditPaymentsByMethod || {}).length === 0 ? (
-                  <tr>
-                    <td colSpan={2} style={{ padding: 12, textAlign: 'center', color: 'var(--muted)' }}>
-                      Sin abonos de crédito en este cierre.
-                    </td>
-                  </tr>
-                ) : (
-                  Object.entries(selectedShift.creditPaymentsByMethod || {}).map(([method, total]: any) => (
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: 10, border: '1px solid var(--border)', borderRadius: 10, fontWeight: 700 }}>
+                  <span>Total Ventas</span>
+                  <span>{formatMoney(Number(selectedShift.totalSales || 0), currency)}</span>
+                </div>
+              </div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <tbody>
+                  {Object.entries(selectedShift.salesByMethod || {}).map(([method, total]: any) => (
                     <tr key={method} style={{ borderBottom: '1px solid var(--border)' }}>
                       <td style={{ padding: 8 }}>{translateMethod(method)}</td>
                       <td style={{ padding: 8, textAlign: 'right' }}>{formatMoney(Number(total || 0), currency)}</td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ))}
+                  <tr style={{ fontWeight: 700 }}>
+                    <td style={{ padding: 8 }}>Total Ventas</td>
+                    <td style={{ padding: 8, textAlign: 'right' }}>{formatMoney(Number(selectedShift.totalSales || 0), currency)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            )}
           </div>
 
-          <div className="card">
-            <h4 style={{ marginTop: 0 }}>Movimientos del Cierre</h4>
-            <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <h4 style={{ marginTop: 0 }}>Abonos a Crédito por Método</h4>
+            {isMobileViewport ? (
+              Object.keys(selectedShift.creditPaymentsByMethod || {}).length === 0 ? (
+                <div style={{ padding: 12, textAlign: 'center', color: 'var(--muted)' }}>
+                  Sin abonos de crédito en este cierre.
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {Object.entries(selectedShift.creditPaymentsByMethod || {}).map(([method, total]: any) => (
+                    <div key={method} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: 10, border: '1px solid var(--border)', borderRadius: 10 }}>
+                      <span>{translateMethod(method)}</span>
+                      <strong>{formatMoney(Number(total || 0), currency)}</strong>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ borderBottom: '2px solid var(--border)', textAlign: 'left', fontSize: '0.85rem' }}>
-                    <th style={{ padding: 8 }}>Fecha</th>
-                    <th style={{ padding: 8 }}>Tipo</th>
-                    <th style={{ padding: 8 }}>Descripción</th>
-                    <th style={{ padding: 8 }}>Ref.</th>
-                    <th style={{ padding: 8, textAlign: 'right' }}>Monto</th>
-                  </tr>
-                </thead>
                 <tbody>
-                  {(selectedShift.movements || []).length === 0 ? (
+                  {Object.keys(selectedShift.creditPaymentsByMethod || {}).length === 0 ? (
                     <tr>
-                      <td colSpan={5} style={{ padding: 12, textAlign: 'center', color: 'var(--muted)' }}>Sin movimientos</td>
+                      <td colSpan={2} style={{ padding: 12, textAlign: 'center', color: 'var(--muted)' }}>
+                        Sin abonos de crédito en este cierre.
+                      </td>
                     </tr>
                   ) : (
-                    selectedShift.movements.map((movement: any) => (
-                      <tr key={movement.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                        <td style={{ padding: 8 }}>{formatDateTime(movement.createdAt)}</td>
-                        <td style={{ padding: 8 }}>{movement.type === 'IN' ? 'Entrada' : 'Salida'}</td>
-                        <td style={{ padding: 8 }}>{movement.description || '-'}</td>
-                        <td style={{ padding: 8 }}>{translateRefType(movement.refType)}</td>
-                        <td style={{ padding: 8, textAlign: 'right' }}>{formatMoney(Number(movement.amount || 0), currency)}</td>
+                    Object.entries(selectedShift.creditPaymentsByMethod || {}).map(([method, total]: any) => (
+                      <tr key={method} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: 8 }}>{translateMethod(method)}</td>
+                        <td style={{ padding: 8, textAlign: 'right' }}>{formatMoney(Number(total || 0), currency)}</td>
                       </tr>
                     ))
                   )}
                 </tbody>
               </table>
-            </div>
+            )}
+          </div>
+
+          <div className="card">
+            <h4 style={{ marginTop: 0 }}>Movimientos del Cierre</h4>
+            {isMobileViewport ? (
+              <div style={{ display: 'grid', gap: 8 }}>
+                {(selectedShift.movements || []).length === 0 ? (
+                  <div style={{ padding: 12, textAlign: 'center', color: 'var(--muted)' }}>Sin movimientos</div>
+                ) : (
+                  selectedShift.movements.map((movement: any) => (
+                    <div key={movement.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, display: 'grid', gap: 6 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                        <strong>{movement.type === 'IN' ? 'Entrada' : 'Salida'}</strong>
+                        <strong>{formatMoney(Number(movement.amount || 0), currency)}</strong>
+                      </div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{formatDateTime(movement.createdAt)}</div>
+                      <div>{movement.description || '-'}</div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Ref: {translateRefType(movement.refType)}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : (
+              <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid var(--border)', textAlign: 'left', fontSize: '0.85rem' }}>
+                      <th style={{ padding: 8 }}>Fecha</th>
+                      <th style={{ padding: 8 }}>Tipo</th>
+                      <th style={{ padding: 8 }}>Descripción</th>
+                      <th style={{ padding: 8 }}>Ref.</th>
+                      <th style={{ padding: 8, textAlign: 'right' }}>Monto</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(selectedShift.movements || []).length === 0 ? (
+                      <tr>
+                        <td colSpan={5} style={{ padding: 12, textAlign: 'center', color: 'var(--muted)' }}>Sin movimientos</td>
+                      </tr>
+                    ) : (
+                      selectedShift.movements.map((movement: any) => (
+                        <tr key={movement.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: 8 }}>{formatDateTime(movement.createdAt)}</td>
+                          <td style={{ padding: 8 }}>{movement.type === 'IN' ? 'Entrada' : 'Salida'}</td>
+                          <td style={{ padding: 8 }}>{movement.description || '-'}</td>
+                          <td style={{ padding: 8 }}>{translateRefType(movement.refType)}</td>
+                          <td style={{ padding: 8, textAlign: 'right' }}>{formatMoney(Number(movement.amount || 0), currency)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </Modal>
       )}
@@ -441,13 +558,13 @@ function DetailCard({ label, value }: { label: string; value: string }) {
   )
 }
 
-function Modal({ children, onClose, title }: any) {
+function Modal({ children, onClose, title, mobile }: any) {
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: 16 }}>
-      <div style={{ background: 'var(--modal)', padding: 20, borderRadius: 12, width: 960, maxWidth: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 15, gap: 12 }}>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: mobile ? 'flex-end' : 'center', zIndex: 1000, padding: mobile ? 0 : 16 }}>
+      <div style={{ background: 'var(--modal)', padding: mobile ? 16 : 20, borderRadius: mobile ? '18px 18px 0 0' : 12, width: mobile ? '100%' : 'min(1280px, calc(100vw - 32px))', maxWidth: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 15, gap: 12, alignItems: mobile ? 'stretch' : 'center', flexDirection: mobile ? 'column' : 'row' }}>
           <h3 style={{ margin: 0 }}>{title}</h3>
-          <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: 'var(--text)' }}>×</button>
+          <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: 'var(--text)', alignSelf: mobile ? 'flex-end' : 'auto' }}>×</button>
         </div>
         {children}
       </div>

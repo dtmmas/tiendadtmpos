@@ -16,6 +16,7 @@ export default function Dashboard() {
   const currency = useConfigStore(s => s.config?.currency || 'USD')
 
   const [loading, setLoading] = useState(true)
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [products, setProducts] = useState<Product[]>([])
   const [counts, setCounts] = useState({
     categories: 0,
@@ -67,6 +68,14 @@ export default function Dashboard() {
       }
     }
     load()
+  }, [])
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)')
+    const syncViewport = () => setIsMobileViewport(mediaQuery.matches)
+    syncViewport()
+    mediaQuery.addEventListener('change', syncViewport)
+    return () => mediaQuery.removeEventListener('change', syncViewport)
   }, [])
 
   useEffect(() => {
@@ -133,17 +142,27 @@ export default function Dashboard() {
     return products.slice(0, 5)
   }, [products])
 
+  const renderMobileMetricList = (
+    items: Array<React.ReactNode>,
+    emptyText: string
+  ) => {
+    if (items.length === 0) {
+      return <div className="muted" style={{ padding: 10 }}>{emptyText}</div>
+    }
+    return <div style={{ display: 'grid', gap: 10 }}>{items}</div>
+  }
+
   return (
     <div className="page-shell page-shell--narrow">
       <div className="page-toolbar" style={{ marginBottom: 20 }}>
         <h2 style={{ margin: 0 }}>Dashboard</h2>
         
         {/* Filtros de Fecha */}
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', background: 'var(--modal)', padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border)' }}>
+        <div style={{ display: 'flex', flexDirection: isMobileViewport ? 'column' : 'row', gap: 10, alignItems: isMobileViewport ? 'stretch' : 'center', background: 'var(--modal)', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', width: isMobileViewport ? '100%' : 'auto' }}>
             <select 
                 value={salesPeriod} 
                 onChange={e => setSalesPeriod(e.target.value as any)}
-                style={{ background: 'transparent', border: 'none', color: 'var(--text)', fontWeight: 600, cursor: 'pointer' }}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text)', fontWeight: 600, cursor: 'pointer', width: isMobileViewport ? '100%' : 'auto' }}
             >
                 <option value="HOY">Hoy</option>
                 <option value="SEMANA">Esta Semana</option>
@@ -163,15 +182,15 @@ export default function Dashboard() {
       ) : (
         <>
           {/* Main KPIs */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 15, marginBottom: 20 }}>
-            <StatCard title="Ventas del Periodo" value={formatMoney(dailySales, currency)} color="#22c55e" highlight style={{ gridColumn: 'span 2' }} />
+          <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? '1fr' : 'repeat(auto-fit, minmax(200px, 1fr))', gap: 15, marginBottom: 20 }}>
+            <StatCard title="Ventas del Periodo" value={formatMoney(dailySales, currency)} color="#22c55e" highlight style={{ gridColumn: isMobileViewport ? 'auto' : 'span 2' }} />
             <StatCard title="Valor Inventario (Costo)" value={formatMoney(metrics.inventoryValue, currency)} color="#3b82f6" />
             <StatCard title="Valor Potencial (Venta)" value={formatMoney(metrics.potentialRevenue, currency)} color="#8b5cf6" />
             <StatCard title="Créditos por Cobrar" value={creditsDue} color="#eab308" />
           </div>
 
           {/* Secondary KPIs */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 15, marginBottom: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobileViewport ? 'repeat(2, minmax(0, 1fr))' : 'repeat(auto-fit, minmax(150px, 1fr))', gap: 15, marginBottom: 20 }}>
             <StatCard title="Total Productos" value={metrics.totalProducts} color="#64748b" small />
             <StatCard title="Stock Bajo" value={metrics.lowStock} color="#ef4444" small />
             <StatCard title="Sin Stock" value={metrics.zeroStock} color="#dc2626" small />
@@ -186,7 +205,18 @@ export default function Dashboard() {
             {/* Low Stock Table */}
             <div className="card">
               <h3>Productos con Stock Bajo</h3>
-              {topLowStock.length === 0 ? (
+              {isMobileViewport ? renderMobileMetricList(
+                topLowStock.map(p => (
+                  <div key={p.id} style={{ background: 'var(--surface)', borderRadius: 10, padding: 12, display: 'grid', gap: 6 }}>
+                    <div style={{ fontWeight: 700 }}>{p.name}</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: '0.9rem' }}>
+                      <span>Stock: <strong style={{ color: '#ef4444' }}>{p.stock}</strong></span>
+                      <span style={{ color: 'var(--muted)' }}>Min: {p.minStock}</span>
+                    </div>
+                  </div>
+                )),
+                'Todo en orden.'
+              ) : topLowStock.length === 0 ? (
                 <div className="muted" style={{ padding: 10 }}>Todo en orden.</div>
               ) : (
                 <div className="table-scroll">
@@ -214,19 +244,31 @@ export default function Dashboard() {
 
             {/* Upcoming Credits */}
             <div className="card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', gap: 10, marginBottom: 10 }}>
                 <h3 style={{ margin: 0 }}>Vencimientos de Crédito</h3>
                 <select 
                     value={creditsDays} 
                     onChange={e => setCreditsDays(Number(e.target.value))}
-                    style={{ fontSize: '0.8rem', padding: 4, borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+                    style={{ fontSize: '0.8rem', padding: 4, borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', width: isMobileViewport ? '100%' : 'auto' }}
                 >
                     <option value={7}>7 días</option>
                     <option value={14}>14 días</option>
                     <option value={30}>30 días</option>
                 </select>
               </div>
-              {upcomingCredits.length === 0 ? (
+              {isMobileViewport ? renderMobileMetricList(
+                upcomingCredits.map(i => (
+                  <div key={i.id} style={{ background: 'var(--surface)', borderRadius: 10, padding: 12, display: 'grid', gap: 6 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                      <strong>{i.customerName}</strong>
+                      <span style={{ fontWeight: 700 }}>{formatMoney(i.amount, currency)}</span>
+                    </div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{i.dueDate}</div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>{i.docNo || `V-${i.saleId}`}</div>
+                  </div>
+                )),
+                'Sin vencimientos próximos.'
+              ) : upcomingCredits.length === 0 ? (
                 <div className="muted" style={{ padding: 10 }}>Sin vencimientos próximos.</div>
               ) : (
                 <div className="table-scroll">
@@ -258,6 +300,18 @@ export default function Dashboard() {
             {/* Recent Products */}
             <div className="card">
               <h3>Productos Recientes</h3>
+              {isMobileViewport ? renderMobileMetricList(
+                recentProducts.map(p => (
+                  <div key={p.id} style={{ background: 'var(--surface)', borderRadius: 10, padding: 12, display: 'grid', gap: 6 }}>
+                    <div style={{ fontWeight: 700 }}>{p.name}</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: '0.9rem' }}>
+                      <span>{formatMoney(p.price, currency)}</span>
+                      <span style={{ color: 'var(--muted)' }}>Stock: {p.stock}</span>
+                    </div>
+                  </div>
+                )),
+                'Sin productos recientes.'
+              ) : (
               <div className="table-scroll">
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
@@ -278,6 +332,7 @@ export default function Dashboard() {
                   </tbody>
                 </table>
               </div>
+              )}
             </div>
 
           </div>
