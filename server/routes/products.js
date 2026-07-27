@@ -168,6 +168,8 @@ function sanitizeSensitiveProductFields(item, includeSensitive) {
   return {
     ...item,
     cost: undefined,
+    avgCost: undefined,
+    lastCost: undefined,
     supplierId: undefined,
   }
 }
@@ -244,7 +246,7 @@ router.get('/', authMiddleware, async (req, res) => {
     const havingParams = []
 
     let query = `
-      SELECT p.id, p.name, p.sku, p.product_code, p.category_id, p.brand_id, p.supplier_id, p.price, p.price2, p.price3, p.cost, 
+      SELECT p.id, p.name, p.sku, p.product_code, p.category_id, p.brand_id, p.supplier_id, p.price, p.price2, p.price3, p.cost, p.avg_cost, p.last_cost,
               ${selectStock}, 
               (SELECT COALESCE(SUM(quantity), 0) FROM inventory_movements WHERE product_id = p.id AND type = 'INITIAL') as initial_stock, 
               p.min_stock, p.unit, p.description, p.image_url, p.product_type, p.alt_name, p.generic_name, p.shelf_location 
@@ -369,6 +371,8 @@ router.get('/', authMiddleware, async (req, res) => {
       price2: Number(r.price2 ?? 0),
       price3: Number(r.price3 ?? 0),
       cost: Number(r.cost ?? 0),
+      avgCost: Number(r.avg_cost ?? r.cost ?? 0),
+      lastCost: Number(r.last_cost ?? r.cost ?? 0),
       stock: Number(r.stock ?? 0),
       otherStock: Number(r.other_stock ?? 0),
       initialStock: Number(r.initial_stock ?? 0),
@@ -403,6 +407,94 @@ router.get('/', authMiddleware, async (req, res) => {
   }
 })
 
+router.get('/:id/cost-history', authMiddleware, async (req, res) => {
+  try {
+    const id = Number(req.params.id)
+    const pool = await getPool()
+    const includeSensitive = await canViewSensitiveProductData(req, pool)
+
+    if (!includeSensitive) {
+      return res.status(403).json({ error: 'No tienes permisos para ver el historial de costos' })
+    }
+
+    const scope = resolveWarehouseScope(req)
+    if (scope.denied) {
+      return res.status(403).json({ error: 'No tienes acceso a esa tienda' })
+    }
+
+    const productParams = [id]
+    let productWhere = 'WHERE p.id = ?'
+    if (scope.warehouseId) {
+      productWhere += ' AND pws.warehouse_id = ?'
+      productParams.push(scope.warehouseId)
+    }
+
+    const [productRows] = await pool.query(
+      `SELECT p.id, p.name, p.product_code, p.cost, p.avg_cost, p.last_cost
+       FROM products p
+       LEFT JOIN product_warehouse_stock pws ON p.id = pws.product_id
+       ${productWhere}
+       GROUP BY p.id
+       LIMIT 1`,
+      productParams
+    )
+
+    const product = productRows?.[0]
+    if (!product) {
+      return res.status(404).json({ error: 'Producto no encontrado' })
+    }
+
+    const historyParams = [id]
+    let historyWhere = 'WHERE pi.product_id = ?'
+    if (scope.warehouseId) {
+      historyWhere += ' AND pu.warehouse_id = ?'
+      historyParams.push(scope.warehouseId)
+    }
+
+    const [historyRows] = await pool.query(
+      `SELECT pu.id AS purchase_id,
+              pu.doc_no,
+              pu.created_at,
+              pu.warehouse_id,
+              w.name AS warehouse_name,
+              pi.quantity,
+              pi.unit_cost,
+              COALESCE(pi.total_cost, pi.total, pi.quantity * pi.unit_cost, 0) AS total_cost
+       FROM purchase_items pi
+       JOIN purchases pu ON pu.id = pi.purchase_id
+       LEFT JOIN warehouses w ON w.id = pu.warehouse_id
+       ${historyWhere}
+       ORDER BY pu.created_at DESC, pi.id DESC`,
+      historyParams
+    )
+
+    return res.json({
+      product: {
+        id: Number(product.id),
+        name: product.name,
+        productCode: product.product_code || undefined,
+        cost: Number(product.cost ?? 0),
+        avgCost: Number(product.avg_cost ?? product.cost ?? 0),
+        lastCost: Number(product.last_cost ?? product.cost ?? 0),
+      },
+      history: (historyRows || []).map(row => ({
+        purchaseId: Number(row.purchase_id),
+        purchaseNumber: row.doc_no ? String(row.doc_no) : `Compra #${row.purchase_id}`,
+        docNo: row.doc_no || null,
+        createdAt: row.created_at,
+        warehouseId: row.warehouse_id ? Number(row.warehouse_id) : null,
+        warehouseName: row.warehouse_name || null,
+        quantity: Number(row.quantity ?? 0),
+        unitCost: Number(row.unit_cost ?? 0),
+        totalCost: Number(row.total_cost ?? 0),
+      })),
+    })
+  } catch (err) {
+    console.error('Product cost history error:', err)
+    return res.status(500).json({ error: 'Error al obtener historial de costos' })
+  }
+})
+
 // NEW: get product with arrays for editing
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
@@ -430,7 +522,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
     params.push(id)
 
     const [rows] = await pool.query(
-      `SELECT p.id, p.name, p.sku, p.product_code, p.category_id, p.brand_id, p.supplier_id, p.price, p.price2, p.price3, p.cost, 
+      `SELECT p.id, p.name, p.sku, p.product_code, p.category_id, p.brand_id, p.supplier_id, p.price, p.price2, p.price3, p.cost, p.avg_cost, p.last_cost,
               ${selectStock}, 
               (SELECT COALESCE(SUM(quantity), 0) FROM inventory_movements WHERE product_id = p.id AND type = 'INITIAL') as initial_stock,
               p.min_stock, p.unit, p.description, p.image_url, p.product_type, p.alt_name, p.generic_name, p.shelf_location 
@@ -529,6 +621,8 @@ router.get('/:id', authMiddleware, async (req, res) => {
       price2: Number(r.price2 ?? 0),
       price3: Number(r.price3 ?? 0),
       cost: Number(r.cost ?? 0),
+      avgCost: Number(r.avg_cost ?? r.cost ?? 0),
+      lastCost: Number(r.last_cost ?? r.cost ?? 0),
       stock: Number(r.stock ?? 0),
       otherStock: Number(r.other_stock ?? 0),
       initialStock: Number(r.initial_stock ?? 0),
@@ -740,7 +834,7 @@ router.post('/', authMiddleware, upload.single('image'), async (req, res) => {
       const initialStockValue = Number(initialStock ?? derivedStock ?? 0)
 
       const [result] = await conn.query(
-        'INSERT INTO products (name, sku, product_code, category_id, brand_id, supplier_id, price, price2, price3, cost, min_stock, unit, description, image_url, product_type, alt_name, generic_name, shelf_location) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO products (name, sku, product_code, category_id, brand_id, supplier_id, price, price2, price3, cost, avg_cost, last_cost, min_stock, unit, description, image_url, product_type, alt_name, generic_name, shelf_location) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
           name,
           normalizedSku,
@@ -751,6 +845,8 @@ router.post('/', authMiddleware, upload.single('image'), async (req, res) => {
           Number(price || 0),
           Number(price2 || 0),
           Number(price3 || 0),
+          Number(cost || 0),
+          Number(cost || 0),
           Number(cost || 0),
           Number(minStock || 0),
           unit || null,
@@ -813,6 +909,8 @@ router.post('/', authMiddleware, upload.single('image'), async (req, res) => {
         price2: Number(price2 || 0),
         price3: Number(price3 || 0),
         cost: Number(cost || 0),
+        avgCost: Number(cost || 0),
+        lastCost: Number(cost || 0),
         stock: initialStockValue, // Return computed for frontend convenience
         initialStock: initialStockValue,
         minStock: Number(minStock || 0),
@@ -870,7 +968,7 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
       nextImage = rows?.[0]?.image_url ?? null
     }
     const [currRows] = await pool.query(
-      `SELECT p.id, p.name, p.sku, p.product_code, p.category_id, p.brand_id, p.supplier_id, p.price, p.price2, p.price3, p.cost, 
+      `SELECT p.id, p.name, p.sku, p.product_code, p.category_id, p.brand_id, p.supplier_id, p.price, p.price2, p.price3, p.cost, p.avg_cost, p.last_cost,
               COALESCE(SUM(pws.quantity), 0) as stock, 
               (SELECT COALESCE(SUM(quantity), 0) FROM inventory_movements WHERE product_id = p.id AND type = 'INITIAL') as initial_stock,
               p.min_stock, p.unit, p.description, p.image_url, p.product_type, p.alt_name, p.generic_name, p.shelf_location 
@@ -922,7 +1020,7 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
     const nextPrice = hasNum(price) ? Number(price) : Number(current.price ?? 0)
     const nextPrice2 = hasNum(price2) ? Number(price2) : Number(current.price2 ?? 0)
     const nextPrice3 = hasNum(price3) ? Number(price3) : Number(current.price3 ?? 0)
-    const nextCost = hasNum(cost) ? Number(cost) : Number(current.cost ?? 0)
+    const nextCost = hasNum(cost) ? Number(cost) : Number(current.avg_cost ?? current.cost ?? 0)
     const nextStock = Number(derivedStock)
     const nextInitialStock = hasNum(initialStock) ? Number(initialStock) : Number((current.initial_stock ?? current.stock ?? 0))
     const nextMinStock = hasNum(minStock) ? Number(minStock) : Number(current.min_stock ?? 0)
@@ -970,7 +1068,7 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
 
       // Actualizar tabla products con stock tienda/bodega
       await conn.query(
-        'UPDATE products SET name = ?, sku = ?, product_code = ?, category_id = ?, brand_id = ?, supplier_id = ?, price = ?, price2 = ?, price3 = ?, cost = ?, min_stock = ?, unit = ?, description = ?, image_url = ?, product_type = ?, alt_name = ?, generic_name = ?, shelf_location = ? WHERE id = ?',
+        'UPDATE products SET name = ?, sku = ?, product_code = ?, category_id = ?, brand_id = ?, supplier_id = ?, price = ?, price2 = ?, price3 = ?, cost = ?, avg_cost = ?, last_cost = ?, min_stock = ?, unit = ?, description = ?, image_url = ?, product_type = ?, alt_name = ?, generic_name = ?, shelf_location = ? WHERE id = ?',
         [
           nextName,
           nextSku,
@@ -981,6 +1079,8 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
           nextPrice,
           nextPrice2,
           nextPrice3,
+          nextCost,
+          nextCost,
           nextCost,
           nextMinStock,
           nextUnit,
@@ -1031,7 +1131,7 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
       await conn.commit()
 
       const [rows2] = await conn.query(
-        `SELECT p.id, p.name, p.sku, p.product_code, p.category_id, p.brand_id, p.supplier_id, p.price, p.price2, p.price3, p.cost, 
+        `SELECT p.id, p.name, p.sku, p.product_code, p.category_id, p.brand_id, p.supplier_id, p.price, p.price2, p.price3, p.cost, p.avg_cost, p.last_cost,
                 COALESCE(SUM(pws.quantity), 0) as stock, 
                 (SELECT COALESCE(SUM(quantity), 0) FROM inventory_movements WHERE product_id = p.id AND type = 'INITIAL') as initial_stock,
                 p.min_stock, p.unit, p.description, p.image_url, p.product_type, p.alt_name, p.generic_name, p.shelf_location 
@@ -1056,6 +1156,8 @@ router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
         price2: Number(r.price2 ?? 0),
         price3: Number(r.price3 ?? 0),
         cost: Number(r.cost ?? 0),
+        avgCost: Number(r.avg_cost ?? r.cost ?? 0),
+        lastCost: Number(r.last_cost ?? r.cost ?? 0),
         stock: Number(r.stock ?? 0),
         initialStock: Number(r.initial_stock ?? 0),
         minStock: Number(r.min_stock ?? 0),

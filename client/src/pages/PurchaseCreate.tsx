@@ -14,6 +14,8 @@ interface Product {
   altName?: string
   genericName?: string
   cost?: number
+  avgCost?: number
+  lastCost?: number
   stock: number
   productType?: string
 }
@@ -165,7 +167,7 @@ export default function PurchaseCreate() {
       name: product.name,
       code: getProductCode(product),
       quantity: 1,
-      unitCost: product.cost || 0,
+      unitCost: product.lastCost ?? product.avgCost ?? product.cost ?? 0,
       productType: product.productType,
       batches: product.productType === 'MEDICINAL' ? [{ batchNo: '', expiryDate: '', quantity: 1 }] : undefined,
       imeiEntries: (product.productType === 'IMEI' || product.productType === 'SERIAL') ? [''] : undefined,

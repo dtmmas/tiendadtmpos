@@ -2527,7 +2527,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
                   style={{
                     padding: '10px 16px',
                     backgroundColor: 'var(--accent)',
-                    color: '#052b35',
+                    color: 'var(--accent-contrast)',
                     border: 'none',
                     borderRadius: 8,
                     fontWeight: 700,

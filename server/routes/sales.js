@@ -118,6 +118,22 @@ async function ensureSalesSchema(db) {
   if (!(await columnExists(db, 'sale_items', 'price_source'))) {
     await db.query("ALTER TABLE sale_items ADD COLUMN price_source VARCHAR(30) NULL DEFAULT 'BASE'")
   }
+
+  if (!(await columnExists(db, 'sale_items', 'unit_cost_snapshot'))) {
+    await db.query('ALTER TABLE sale_items ADD COLUMN unit_cost_snapshot DECIMAL(12,2) NULL')
+  }
+
+  if (!(await columnExists(db, 'sale_items', 'total_cost_snapshot'))) {
+    await db.query('ALTER TABLE sale_items ADD COLUMN total_cost_snapshot DECIMAL(12,2) NULL')
+  }
+
+  await db.query(`
+    UPDATE sale_items si
+    JOIN products p ON p.id = si.product_id
+    SET si.unit_cost_snapshot = COALESCE(si.unit_cost_snapshot, p.avg_cost, p.cost, 0),
+        si.total_cost_snapshot = COALESCE(si.total_cost_snapshot, si.quantity * COALESCE(si.unit_cost_snapshot, p.avg_cost, p.cost, 0))
+    WHERE si.unit_cost_snapshot IS NULL OR si.total_cost_snapshot IS NULL
+  `)
 }
 
 async function buildSalesContext(db) {
@@ -158,8 +174,8 @@ async function buildSalesContext(db) {
       ) i ON i.sale_id = s.id
       LEFT JOIN (
         SELECT si.sale_id,
-               COALESCE(SUM(si.quantity * COALESCE(p.cost, 0)), 0) AS cost_total,
-               COALESCE(SUM(si.total - (si.quantity * COALESCE(p.cost, 0))), 0) AS profit
+               COALESCE(SUM(COALESCE(si.total_cost_snapshot, si.quantity * COALESCE(si.unit_cost_snapshot, p.avg_cost, p.cost, 0))), 0) AS cost_total,
+               COALESCE(SUM(si.total - COALESCE(si.total_cost_snapshot, si.quantity * COALESCE(si.unit_cost_snapshot, p.avg_cost, p.cost, 0))), 0) AS profit
         FROM sale_items si
         JOIN products p ON p.id = si.product_id
         GROUP BY si.sale_id
@@ -571,7 +587,7 @@ router.post('/', authMiddleware, async (req, res) => {
       for (const item of items) {
         // item: { productId, quantity, price, imei, serial }
         const [productRows] = await conn.query(
-          'SELECT price, price2, price3, product_type FROM products WHERE id = ? LIMIT 1',
+          'SELECT price, price2, price3, product_type, avg_cost, cost FROM products WHERE id = ? LIMIT 1',
           [item.productId]
         )
         const productPriceRow = productRows?.[0]
@@ -644,11 +660,13 @@ router.post('/', authMiddleware, async (req, res) => {
         }
 
         const itemTotal = Number(item.price) * Number(item.quantity)
+        const unitCostSnapshot = Math.round(Number(productPriceRow.avg_cost ?? productPriceRow.cost ?? 0) * 100) / 100
+        const totalCostSnapshot = Math.round(unitCostSnapshot * Number(item.quantity || 0) * 100) / 100
         
         // Insertar sale_item
         await conn.query(
-          'INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, total, serial, imei, original_unit_price, price_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [saleId, item.productId, item.quantity, item.price, itemTotal, item.serial || null, item.imei || null, originalUnitPrice, priceSource]
+          'INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, total, serial, imei, original_unit_price, price_source, unit_cost_snapshot, total_cost_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [saleId, item.productId, item.quantity, item.price, itemTotal, item.serial || null, item.imei || null, originalUnitPrice, priceSource, unitCostSnapshot, totalCostSnapshot]
         )
 
         if (item.serial) {

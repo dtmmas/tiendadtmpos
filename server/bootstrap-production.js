@@ -288,6 +288,8 @@ async function normalizeSchema(conn) {
   await ensureColumn(conn, 'products', 'price2', 'DECIMAL(12,2) NOT NULL DEFAULT 0')
   await ensureColumn(conn, 'products', 'price3', 'DECIMAL(12,2) NOT NULL DEFAULT 0')
   await ensureColumn(conn, 'products', 'cost', 'DECIMAL(12,2) NOT NULL DEFAULT 0')
+  await ensureColumn(conn, 'products', 'avg_cost', 'DECIMAL(12,2) NOT NULL DEFAULT 0')
+  await ensureColumn(conn, 'products', 'last_cost', 'DECIMAL(12,2) NOT NULL DEFAULT 0')
   await ensureColumn(conn, 'products', 'initial_stock', 'INT NOT NULL DEFAULT 0')
   await ensureColumn(conn, 'products', 'min_stock', 'INT NOT NULL DEFAULT 0')
   await ensureColumn(conn, 'products', 'unit', 'VARCHAR(50) NULL')
@@ -302,6 +304,16 @@ async function normalizeSchema(conn) {
     UPDATE products
     SET product_code = NULL
     WHERE product_code IS NOT NULL AND TRIM(product_code) = ''
+  `)
+  await conn.query(`
+    UPDATE products
+    SET avg_cost = cost
+    WHERE avg_cost IS NULL OR avg_cost = 0
+  `)
+  await conn.query(`
+    UPDATE products
+    SET last_cost = cost
+    WHERE last_cost IS NULL OR last_cost = 0
   `)
   await ensureUniqueIndex(
     conn,
@@ -399,6 +411,15 @@ async function normalizeSchema(conn) {
 
   await ensureColumn(conn, 'sale_items', 'serial', 'VARCHAR(100) NULL')
   await ensureColumn(conn, 'sale_items', 'imei', 'VARCHAR(50) NULL')
+  await ensureColumn(conn, 'sale_items', 'unit_cost_snapshot', 'DECIMAL(12,2) NULL')
+  await ensureColumn(conn, 'sale_items', 'total_cost_snapshot', 'DECIMAL(12,2) NULL')
+  await conn.query(`
+    UPDATE sale_items si
+    JOIN products p ON p.id = si.product_id
+    SET si.unit_cost_snapshot = COALESCE(si.unit_cost_snapshot, p.avg_cost, p.cost, 0),
+        si.total_cost_snapshot = COALESCE(si.total_cost_snapshot, si.quantity * COALESCE(si.unit_cost_snapshot, p.avg_cost, p.cost, 0))
+    WHERE si.unit_cost_snapshot IS NULL OR si.total_cost_snapshot IS NULL
+  `)
 
   await ensureColumn(conn, 'product_batches', 'warehouse_id', 'INT NOT NULL DEFAULT 1')
   await ensureColumn(conn, 'product_imeis', 'status', `VARCHAR(16) NOT NULL DEFAULT 'AVAILABLE'`)

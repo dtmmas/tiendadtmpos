@@ -114,6 +114,31 @@ export async function getProductDetails(id: number) {
   return data
 }
 
+export async function getProductCostHistory(id: number) {
+  const { data } = await api.get(`/products/${id}/cost-history`)
+  return data as {
+    product: {
+      id: number
+      name: string
+      productCode?: string
+      cost: number
+      avgCost: number
+      lastCost: number
+    }
+    history: Array<{
+      purchaseId: number
+      purchaseNumber: string
+      docNo?: string | null
+      createdAt: string
+      warehouseId?: number | null
+      warehouseName?: string | null
+      quantity: number
+      unitCost: number
+      totalCost: number
+    }>
+  }
+}
+
 export async function createProduct(form: FormData) {
   const { data } = await api.post('/products', form)
   return data

@@ -40,6 +40,55 @@ async function resolvePurchaseMovementType(conn, productId, warehouseId) {
   return Number(rows[0]?.quantity || 0) > 0 ? 'PURCHASE' : 'INITIAL'
 }
 
+function roundCurrency(value) {
+  return Math.round(Number(value || 0) * 100) / 100
+}
+
+async function recalculateProductCosts(conn, productId, quantity, unitCost) {
+  const normalizedQty = Number(quantity || 0)
+  const normalizedUnitCost = roundCurrency(unitCost)
+
+  if (normalizedQty <= 0) {
+    return
+  }
+
+  const [[product]] = await conn.query(
+    `SELECT cost, avg_cost, last_cost
+     FROM products
+     WHERE id = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [productId]
+  )
+
+  if (!product) {
+    throw new Error(`Producto ${productId} no encontrado para recalcular costos`)
+  }
+
+  const [stockRows] = await conn.query(
+    `SELECT quantity
+     FROM product_warehouse_stock
+     WHERE product_id = ?
+     FOR UPDATE`,
+    [productId]
+  )
+
+  const totalStockAfterPurchase = stockRows.reduce((sum, row) => sum + Number(row?.quantity || 0), 0)
+  const previousStock = Math.max(0, totalStockAfterPurchase - normalizedQty)
+  const currentAverage = roundCurrency(product.avg_cost ?? product.cost ?? 0)
+
+  const nextAverage = previousStock > 0
+    ? roundCurrency(((previousStock * currentAverage) + (normalizedQty * normalizedUnitCost)) / (previousStock + normalizedQty))
+    : normalizedUnitCost
+
+  await conn.query(
+    `UPDATE products
+     SET cost = ?, avg_cost = ?, last_cost = ?
+     WHERE id = ?`,
+    [nextAverage, nextAverage, normalizedUnitCost, productId]
+  )
+}
+
 // Listar compras
 router.get('/', authMiddleware, async (req, res) => {
   try {
@@ -253,6 +302,8 @@ router.post('/', authMiddleware, upload.single('document'), async (req, res) => 
             userId: userId,
             notes: `${movementLabel} #${docNo || purchaseId}`
         }, conn)
+
+        await recalculateProductCosts(conn, item.productId, item.quantity, item.unitCost)
       }
 
       await conn.commit()

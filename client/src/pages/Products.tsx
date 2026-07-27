@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useAuthStore } from '../store/auth'
-import { api, getProducts, getCategories, getBrands, getSuppliers, createProduct, updateProduct, deleteProduct, getProductDetails, getUnits, createBrand, createUnit, getDepartments, createDepartment, getWarehouses, getProductWarehouseStock, transferProductWarehouseStock, getShelves } from '../api'
+import { api, getProducts, getCategories, getBrands, getSuppliers, createProduct, updateProduct, deleteProduct, getProductDetails, getProductCostHistory, getUnits, createBrand, createUnit, getDepartments, createDepartment, getWarehouses, getProductWarehouseStock, transferProductWarehouseStock, getShelves } from '../api'
 import { useConfigStore } from '../store/config'
 import { formatMoney } from '../utils/currency'
 import { resolveUnitName, buildUnitNameMap } from '../utils/units'
@@ -28,6 +28,8 @@ interface Product {
   price2?: number
   price3?: number
   cost?: number
+  avgCost?: number
+  lastCost?: number
   stock: number
   otherStock?: number
   initialStock?: number
@@ -61,6 +63,18 @@ interface CatalogSerialRow {
   warehouseName: string
 }
 
+interface ProductCostHistoryRow {
+  purchaseId: number
+  purchaseNumber: string
+  docNo?: string | null
+  createdAt: string
+  warehouseId?: number | null
+  warehouseName?: string | null
+  quantity: number
+  unitCost: number
+  totalCost: number
+}
+
 export default function Products() {
   const user = useAuthStore(s => s.user)
   const hasPermission = useAuthStore(s => s.hasPermission)
@@ -89,6 +103,10 @@ export default function Products() {
   const [details, setDetails] = useState<any | null>(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [detailsError, setDetailsError] = useState<string | null>(null)
+  const [costHistoryProduct, setCostHistoryProduct] = useState<{ id: number; name: string; productCode?: string; cost?: number; avgCost?: number; lastCost?: number } | null>(null)
+  const [costHistoryRows, setCostHistoryRows] = useState<ProductCostHistoryRow[]>([])
+  const [costHistoryLoading, setCostHistoryLoading] = useState(false)
+  const [costHistoryError, setCostHistoryError] = useState<string | null>(null)
   
   // Toggles para ver/ocultar secciones del panel de detalles
   const [showBatches, setShowBatches] = useState(false)
@@ -894,6 +912,42 @@ export default function Products() {
     }
   }
 
+  function formatCostHistoryDate(value?: string) {
+    if (!value) return '—'
+    const parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) return String(value)
+    return parsed.toLocaleString('es-GT', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
+
+  function closeCostHistory() {
+    setCostHistoryProduct(null)
+    setCostHistoryRows([])
+    setCostHistoryError(null)
+    setCostHistoryLoading(false)
+  }
+
+  async function openCostHistory(product: { id: number; name: string; productCode?: string; cost?: number; avgCost?: number; lastCost?: number }) {
+    setCostHistoryProduct(product)
+    setCostHistoryRows([])
+    setCostHistoryError(null)
+    setCostHistoryLoading(true)
+    try {
+      const response = await getProductCostHistory(product.id)
+      setCostHistoryProduct(response.product || product)
+      setCostHistoryRows(Array.isArray(response.history) ? response.history : [])
+    } catch (err: any) {
+      setCostHistoryError(err?.response?.data?.error || err?.message || 'No se pudo cargar el historial de costos')
+    } finally {
+      setCostHistoryLoading(false)
+    }
+  }
+
 
   
   async function refreshWarehouseStock() {
@@ -1469,6 +1523,13 @@ export default function Products() {
                       <div style={{ padding: '8px 10px', borderRadius: 12, background: 'rgba(245, 158, 11, 0.10)', border: '1px solid rgba(245, 158, 11, 0.25)' }}>
                         <div style={{ fontSize: 11, color: '#92400E', marginBottom: 4 }}>Costo</div>
                         <div style={{ fontWeight: 700, fontSize: 14, color: '#92400E' }}>{formatMoney(p.cost ?? 0, currency)}</div>
+                        <button
+                          type="button"
+                          onClick={() => void openCostHistory(p)}
+                          style={{ marginTop: 8, padding: '6px 10px', borderRadius: 10, border: '1px solid rgba(245, 158, 11, 0.32)', background: 'rgba(255,255,255,0.75)', color: '#92400E', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+                        >
+                          Costos
+                        </button>
                       </div>
                       )}
                     </div>
@@ -1585,7 +1646,20 @@ export default function Products() {
                       </td>
                       <td style={{ padding: 8 }}>{p.brandId ? brandMap[p.brandId] : '-'}</td>
                       {canViewSensitiveProductData && <td style={{ padding: 8 }}>{p.supplierId ? supplierMap[p.supplierId] : '-'}</td>}
-                      {canViewSensitiveProductData && <td style={{ padding: 8, color: '#D97706' }}>{formatMoney(p.cost ?? 0, currency)}</td>}
+                      {canViewSensitiveProductData && (
+                        <td style={{ padding: 8, color: '#D97706' }}>
+                          <div style={{ display: 'grid', gap: 6, justifyItems: 'start' }}>
+                            <span>{formatMoney(p.cost ?? 0, currency)}</span>
+                            <button
+                              type="button"
+                              onClick={() => void openCostHistory(p)}
+                              style={{ padding: '4px 8px', borderRadius: 8, border: '1px solid rgba(245, 158, 11, 0.32)', background: 'rgba(245, 158, 11, 0.10)', color: '#92400E', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+                            >
+                              Costos
+                            </button>
+                          </div>
+                        </td>
+                      )}
                       <td style={{ padding: 8 }}>{formatMoney(p.price ?? 0, currency)}</td>
                       <td style={{ padding: 8 }}>{formatMoney(p.price2 ?? 0, currency)}</td>
                       <td style={{ padding: 8 }}>{formatMoney(p.price3 ?? 0, currency)}</td>
@@ -2164,6 +2238,13 @@ export default function Products() {
                         <div style={{ padding: 14, borderRadius: 16, background: 'rgba(245, 158, 11, 0.10)', border: '1px solid rgba(245, 158, 11, 0.22)' }}>
                           <div style={{ fontSize: 11, color: '#92400E', marginBottom: 6 }}>Costo</div>
                           <div style={{ fontWeight: 800, fontSize: 17, color: '#92400E' }}>{formatMoney(details.cost ?? 0, currency)}</div>
+                          <button
+                            type="button"
+                            onClick={() => void openCostHistory(details)}
+                            style={{ marginTop: 10, padding: '7px 10px', borderRadius: 10, border: '1px solid rgba(245, 158, 11, 0.32)', background: 'rgba(255,255,255,0.75)', color: '#92400E', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+                          >
+                            Historial de costos
+                          </button>
                         </div>
                         )}
                         <div style={{ padding: 14, borderRadius: 16, background: 'var(--bg)', border: '1px solid var(--border)' }}>
@@ -2556,6 +2637,104 @@ export default function Products() {
                 {currentWarehouseId !== null && !catalogCurrentWarehouseStock && (
                   <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 12 }}>
                     La tienda actual no apareció en el desglose devuelto por el servidor.
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {costHistoryProduct && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.62)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1250, padding: 16 }}
+          onClick={closeCostHistory}
+        >
+          <div
+            style={{ width: 760, maxWidth: '96vw', maxHeight: '88vh', overflowY: 'auto', background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 22, padding: 18, boxShadow: '0 20px 54px rgba(15, 23, 42, 0.22)' }}
+            onClick={event => event.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 22 }}>Historial de costos</h3>
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                  {costHistoryProduct.name} {costHistoryProduct.productCode ? `• ${costHistoryProduct.productCode}` : ''}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeCostHistory}
+                style={{ width: 38, height: 38, borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
+                aria-label="Cerrar historial de costos"
+                title="Cerrar"
+              >
+                ×
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 14 }}>
+              <div style={{ padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Costo actual</div>
+                <div style={{ fontWeight: 800, fontSize: 18 }}>{formatMoney(costHistoryProduct.cost ?? 0, currency)}</div>
+              </div>
+              <div style={{ padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Costo ponderado</div>
+                <div style={{ fontWeight: 800, fontSize: 18 }}>{formatMoney(costHistoryProduct.avgCost ?? costHistoryProduct.cost ?? 0, currency)}</div>
+              </div>
+              <div style={{ padding: 12, borderRadius: 14, background: 'rgba(245, 158, 11, 0.10)', border: '1px solid rgba(245, 158, 11, 0.25)' }}>
+                <div style={{ fontSize: 11, color: '#92400E', marginBottom: 4 }}>Ultimo costo</div>
+                <div style={{ fontWeight: 800, fontSize: 18, color: '#92400E' }}>{formatMoney(costHistoryProduct.lastCost ?? costHistoryProduct.cost ?? 0, currency)}</div>
+              </div>
+              <div style={{ padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Compras registradas</div>
+                <div style={{ fontWeight: 800, fontSize: 18 }}>{costHistoryRows.length}</div>
+              </div>
+            </div>
+
+            {costHistoryLoading && <div style={{ color: 'var(--muted)' }}>Cargando historial de costos...</div>}
+            {costHistoryError && <div style={{ color: '#dc2626', marginBottom: 8 }}>{costHistoryError}</div>}
+
+            {!costHistoryLoading && !costHistoryError && (
+              <>
+                {costHistoryRows.length === 0 ? (
+                  <div style={{ padding: 18, borderRadius: 14, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--muted)' }}>
+                    No hay compras registradas para este producto.
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gap: 10 }}>
+                    {costHistoryRows.map(row => (
+                      <div
+                        key={`${row.purchaseId}-${row.createdAt}-${row.unitCost}`}
+                        style={{ padding: 14, borderRadius: 16, border: '1px solid var(--border)', background: 'linear-gradient(180deg, var(--bg), var(--modal))', display: 'grid', gap: 10 }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                          <div>
+                            <div style={{ fontWeight: 800, fontSize: 15, color: 'var(--text)' }}>{row.purchaseNumber}</div>
+                            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                              {formatCostHistoryDate(row.createdAt)}
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                            {row.warehouseName ? <span className="warehouse-highlight" style={getWarehouseHighlightStyle(row.warehouseName)}>{row.warehouseName}</span> : 'Sin tienda'}
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 8 }}>
+                          <div style={{ padding: 10, borderRadius: 12, background: 'var(--modal)', border: '1px solid var(--border)' }}>
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Cantidad</div>
+                            <div style={{ fontWeight: 700 }}>{row.quantity}</div>
+                          </div>
+                          <div style={{ padding: 10, borderRadius: 12, background: 'var(--modal)', border: '1px solid var(--border)' }}>
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Costo unitario</div>
+                            <div style={{ fontWeight: 700, color: '#92400E' }}>{formatMoney(row.unitCost, currency)}</div>
+                          </div>
+                          <div style={{ padding: 10, borderRadius: 12, background: 'var(--modal)', border: '1px solid var(--border)' }}>
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Total compra</div>
+                            <div style={{ fontWeight: 700 }}>{formatMoney(row.totalCost, currency)}</div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </>

@@ -149,7 +149,7 @@ export default function InventoryReport() {
   useEffect(() => { loadStock() }, [selectedWarehouse])
 
   return (
-    <div className="page-container" style={{ padding: isMobileViewport ? 14 : 20 }}>
+    <div className="page-container" style={{ padding: isMobileViewport ? 12 : 20, boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20, alignItems: isMobileViewport ? 'stretch' : 'center', flexDirection: isMobileViewport ? 'column' : 'row', gap: 12 }}>
         <h2>Reporte de Inventario Actual</h2>
         <div style={{ display: 'flex', gap: 10, alignItems: isMobileViewport ? 'stretch' : 'center', flexWrap: 'wrap', flexDirection: isMobileViewport ? 'column' : 'row', width: isMobileViewport ? '100%' : 'auto' }}>
@@ -188,7 +188,7 @@ export default function InventoryReport() {
 
       {/* Table Layout */}
       {isMobileViewport ? (
-        <div style={{ display: 'grid', gap: 12 }}>
+        <div style={{ display: 'grid', gap: 12, width: '100%' }}>
           {loading ? (
             <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface)' }}>
               Cargando inventario...
@@ -198,17 +198,17 @@ export default function InventoryReport() {
               No hay stock registrado
             </div>
           ) : items.map((item, idx) => (
-            <div key={idx} style={{ border: '1px solid var(--border)', borderRadius: 16, background: 'linear-gradient(180deg, var(--surface), var(--modal))', padding: 14, display: 'grid', gap: 12, boxShadow: '0 10px 24px rgba(15, 23, 42, 0.06)' }}>
+            <div key={idx} style={{ width: '100%', boxSizing: 'border-box', overflow: 'hidden', border: '1px solid var(--border)', borderRadius: 16, background: 'linear-gradient(180deg, var(--surface), var(--modal))', padding: 12, display: 'grid', gap: 12, boxShadow: '0 10px 24px rgba(15, 23, 42, 0.06)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: '1rem', lineHeight: 1.3 }}>{item.product_name}</div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontWeight: 800, fontSize: '1rem', lineHeight: 1.3, wordBreak: 'break-word' }}>{item.product_name}</div>
                   <div style={{ marginTop: 6 }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', fontFamily: 'monospace', background: '#e2e8f0', padding: '4px 8px', borderRadius: 999, fontSize: '11px', color: '#334155', border: '1px solid #cbd5e1' }}>
                       {item.product_code || '-'}
                     </span>
                   </div>
                 </div>
-                <span className="warehouse-highlight" style={{ ...getWarehouseHighlightStyle(item.warehouse_name), flexShrink: 0 }}>
+                <span className="warehouse-highlight" style={{ ...getWarehouseHighlightStyle(item.warehouse_name), flexShrink: 1, minWidth: 0, maxWidth: '48%', wordBreak: 'break-word', textAlign: 'center' }}>
                   {item.warehouse_name}
                 </span>
               </div>

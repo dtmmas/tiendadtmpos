@@ -1,8 +1,8 @@
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAuthStore } from '../store/auth'
 import { useConfigStore } from '../store/config'
-import { useThemeStore } from '../store/theme'
+import { THEME_COLOR_OPTIONS, useThemeStore } from '../store/theme'
 import { formatCompanyName } from '../utils/text'
 
 export default function Layout() {
@@ -10,9 +10,10 @@ export default function Layout() {
   const navigate = useNavigate()
   const { user, logout, hasPermission, canSell } = useAuthStore()
   const config = useConfigStore(s => s.config)
-  const { mode, setMode } = useThemeStore()
+  const { mode, setMode, color, setColor } = useThemeStore()
   const companyName = formatCompanyName(config?.name)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [themePaletteOpen, setThemePaletteOpen] = useState(false)
   const [mobileMenuSections, setMobileMenuSections] = useState<Record<string, boolean>>({
     principal: true,
     procesos: false,
@@ -22,10 +23,13 @@ export default function Layout() {
     reportes: false,
     sistema: false
   })
+  const themePaletteRef = useRef<HTMLDivElement | null>(null)
   const closeMobileMenu = () => setMobileMenuOpen(false)
+  const currentThemeOption = THEME_COLOR_OPTIONS.find((option) => option.value === color) ?? THEME_COLOR_OPTIONS[0]
 
   useEffect(() => {
     setMobileMenuOpen(false)
+    setThemePaletteOpen(false)
   }, [location.pathname])
 
   useEffect(() => {
@@ -46,6 +50,29 @@ export default function Layout() {
       window.removeEventListener('keydown', handleKeyDown)
     }
   }, [mobileMenuOpen])
+
+  useEffect(() => {
+    if (!themePaletteOpen) return
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      if (!target?.closest('.theme-palette-scope') && themePaletteRef.current && !themePaletteRef.current.contains(target as Node)) {
+        setThemePaletteOpen(false)
+      }
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setThemePaletteOpen(false)
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [themePaletteOpen])
 
   const isAdmin = String(user?.role || '').toUpperCase() === 'ADMIN'
   const canManageProducts = String(user?.role || '').toUpperCase() === 'ADMIN' || hasPermission('products:write')
@@ -227,6 +254,27 @@ export default function Layout() {
     )
   }
 
+  const renderThemePalette = (mobile = false) => (
+    <div className={mobile ? 'theme-color-picker theme-color-picker-mobile' : 'theme-color-picker'} aria-label="Selector de color del tema">
+      {THEME_COLOR_OPTIONS.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          className={`theme-color-btn${color === option.value ? ' active' : ''}${mobile ? ' mobile' : ''}`}
+          onClick={() => {
+            setColor(option.value)
+            setThemePaletteOpen(false)
+          }}
+          aria-label={`Usar tema ${option.label}`}
+          title={`Tema ${option.label}`}
+        >
+          <span className="theme-color-dot" style={{ background: option.preview }} />
+          <span className="theme-color-name">{option.label}</span>
+        </button>
+      ))}
+    </div>
+  )
+
   return (
     <div className="app">
       <header className="header">
@@ -392,10 +440,37 @@ export default function Layout() {
           </div>
         </nav>
         <div className="header-actions">
-          <div className="view-toggle" aria-label="Selector de tema">
-            <button className={`toggle-btn ${mode === 'light' ? 'active' : ''}`} onClick={() => setMode('light')}>Claro</button>
-            <button className={`toggle-btn ${mode === 'dark' ? 'active' : ''}`} onClick={() => setMode('dark')}>Oscuro</button>
-            <button className={`toggle-btn ${mode === 'system' ? 'active' : ''}`} onClick={() => setMode('system')}>Sistema</button>
+          <div className="theme-controls">
+            <div className="view-toggle" aria-label="Selector de modo de tema">
+              <button className={`toggle-btn ${mode === 'light' ? 'active' : ''}`} onClick={() => setMode('light')}>Claro</button>
+              <button className={`toggle-btn ${mode === 'dark' ? 'active' : ''}`} onClick={() => setMode('dark')}>Oscuro</button>
+              <button className={`toggle-btn ${mode === 'system' ? 'active' : ''}`} onClick={() => setMode('system')}>Sistema</button>
+            </div>
+            <div className="theme-palette-dropdown theme-palette-scope" ref={themePaletteRef}>
+              <button
+                type="button"
+                className={`theme-palette-trigger${themePaletteOpen ? ' open' : ''}`}
+                onClick={() => setThemePaletteOpen((prev) => !prev)}
+                aria-expanded={themePaletteOpen}
+                aria-label="Abrir paleta de colores"
+              >
+                <span className="theme-palette-trigger-main">
+                  <span className="theme-color-dot" style={{ background: currentThemeOption.preview }} />
+                  <span className="theme-palette-trigger-label">Color</span>
+                  <span className="theme-palette-trigger-value">{currentThemeOption.label}</span>
+                </span>
+                <span className={`theme-palette-chevron${themePaletteOpen ? ' open' : ''}`}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                </span>
+              </button>
+              {themePaletteOpen && (
+                <div className="theme-palette-menu">
+                  {renderThemePalette()}
+                </div>
+              )}
+            </div>
           </div>
           <div className="user">
             <span>{user?.name} ({user?.role})</span>
@@ -510,6 +585,36 @@ export default function Layout() {
                     {hasPermission('roles:read') && renderMobileMenuLinkCard('/roles', 'Roles', 'Permisos del sistema', 'settings')}
                   </>
                 ))}
+              </div>
+
+              <div className="mobile-theme-panel theme-palette-scope">
+                <div className="mobile-theme-panel-header">
+                  <div className="mobile-theme-panel-title">Tema visual</div>
+                  <div className="mobile-theme-panel-subtitle">Combina modo y color del sistema</div>
+                </div>
+                <div className="view-toggle mobile-view-toggle" aria-label="Selector de modo de tema">
+                  <button className={`toggle-btn ${mode === 'light' ? 'active' : ''}`} onClick={() => setMode('light')}>Claro</button>
+                  <button className={`toggle-btn ${mode === 'dark' ? 'active' : ''}`} onClick={() => setMode('dark')}>Oscuro</button>
+                  <button className={`toggle-btn ${mode === 'system' ? 'active' : ''}`} onClick={() => setMode('system')}>Sistema</button>
+                </div>
+                <button
+                  type="button"
+                  className={`theme-palette-mobile-trigger${themePaletteOpen ? ' open' : ''}`}
+                  onClick={() => setThemePaletteOpen((prev) => !prev)}
+                  aria-expanded={themePaletteOpen}
+                >
+                  <span className="theme-palette-trigger-main">
+                    <span className="theme-color-dot" style={{ background: currentThemeOption.preview }} />
+                    <span className="theme-palette-trigger-label">Paleta</span>
+                    <span className="theme-palette-trigger-value">{currentThemeOption.label}</span>
+                  </span>
+                  <span className={`theme-palette-chevron${themePaletteOpen ? ' open' : ''}`}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </span>
+                </button>
+                {themePaletteOpen && renderThemePalette(true)}
               </div>
 
               <div className="mobile-menu-session">
