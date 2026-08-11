@@ -205,6 +205,97 @@ export async function getSuppliers() {
   return data
 }
 
+export async function getSupplierPendingPurchases(id: number | string) {
+  const { data } = await api.get(`/purchases/suppliers/${id}/pending`)
+  return data as {
+    supplier: { id: number; name: string }
+    totals: { pendingCount: number; totalPending: number }
+    purchases: Array<{
+      id: number
+      docNo?: string | null
+      createdAt: string
+      dueDate?: string | null
+      total: number
+      paidAmount: number
+      balanceDue: number
+      paymentStatus: string
+    }>
+  }
+}
+
+export async function getSupplierPayments(id: number | string) {
+  const { data } = await api.get(`/purchases/suppliers/${id}/payments`)
+  return data as Array<{
+    id: number
+    supplierId: number
+    amount: number
+    paymentMethod: string
+    reference?: string | null
+    notes?: string | null
+    documentPath?: string | null
+    paidAt: string
+    userName?: string | null
+    allocations: Array<{
+      purchaseId: number
+      purchasePaymentId?: number | null
+      amount: number
+      docNo?: string | null
+      createdAt: string
+      dueDate?: string | null
+    }>
+  }>
+}
+
+export async function paySupplier(id: number | string, form: FormData) {
+  const { data } = await api.post(`/purchases/suppliers/${id}/payments`, form)
+  return data as {
+    success: boolean
+    supplierId: number
+    supplierName: string
+    supplierPaymentId: number
+    amount: number
+    paymentMethod: string
+    reference?: string | null
+    notes?: string | null
+    totalPendingBefore: number
+    remainingPending: number
+    allocations: Array<{
+      purchaseId: number
+      docNo?: string | null
+      dueDate?: string | null
+      allocatedAmount: number
+      balanceDue: number
+      paymentStatus: string
+    }>
+  }
+}
+
+export async function getPurchasePayments(id: number | string) {
+  const { data } = await api.get(`/purchases/${id}/payments`)
+  return data as Array<{
+    id: number
+    purchase_id: number
+    amount: number
+    payment_method: string
+    reference?: string | null
+    notes?: string | null
+    document_path?: string | null
+    paid_at: string
+    user_name?: string | null
+  }>
+}
+
+export async function payPurchase(id: number | string, form: FormData) {
+  const { data } = await api.post(`/purchases/${id}/payments`, form)
+  return data as {
+    success: boolean
+    purchaseId: number
+    paidAmount: number
+    balanceDue: number
+    paymentStatus: string
+  }
+}
+
 // Units helpers
 export async function getUnits() {
   const { data } = await api.get('/units')
@@ -322,6 +413,15 @@ export async function getSaleDetails(id: number) {
 export async function cancelSale(id: number, reason: string) {
   const { data } = await api.post(`/sales/${id}/cancel`, { reason })
   return data
+}
+
+export async function createSaleReturn(id: number, payload: {
+  reason: string
+  refundMethod: 'CASH' | 'CARD' | 'DEPOSIT' | 'CREDIT'
+  items: Array<{ saleItemId: number; quantity: number }>
+}) {
+  const { data } = await api.post(`/sales/${id}/returns`, payload)
+  return data as { success: boolean; saleReturnId: number; refundTotal: number }
 }
 
 export async function createUnit(payload: { code: string; name: string }) {

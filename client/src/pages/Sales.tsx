@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Navigate } from 'react-router-dom'
-import { api, getSales, getSaleDetails, cancelSale } from '../api'
+import { api, getSales, getSaleDetails, cancelSale, createSaleReturn } from '../api'
 import { useConfigStore } from '../store/config'
 import { useAuthStore } from '../store/auth'
 import { formatDate, formatDateTime } from '../utils/date'
@@ -13,6 +13,8 @@ interface Sale {
   id: number
   doc_no: string
   total: number
+  returned_total?: number
+  final_total?: number
   created_at: string
   credit_fully_paid_at?: string | null
   payment_method: string
@@ -28,19 +30,48 @@ interface Sale {
   seller_name?: string | null
   cost_total?: number
   profit?: number
+  final_profit?: number
+  return_count?: number
 }
 
 interface SaleItem {
   id: number
+  product_id?: number
   product_name: string
   sku?: string
   quantity: number
   unit_price: number
   total: number
+  serial?: string | null
+  imei?: string | null
+  returned_quantity?: number
+  available_return_quantity?: number
+}
+
+interface SaleReturnRecord {
+  id: number
+  reason: string
+  refund_method: 'CASH' | 'CARD' | 'DEPOSIT' | 'CREDIT'
+  refund_total: number
+  affects_cash: boolean
+  created_at: string
+  user_name?: string
+  items: Array<{
+    id: number
+    sale_item_id: number
+    product_id: number
+    product_name: string
+    quantity: number
+    unit_price: number
+    total: number
+    serial?: string | null
+    imei?: string | null
+  }>
 }
 
 interface SaleDetail extends Sale {
   items: SaleItem[]
+  returns?: SaleReturnRecord[]
   customer_document?: string
   customer_address?: string
   customer_phone?: string
@@ -161,6 +192,14 @@ function getPaymentMethodLabel(method?: string, isCredit?: number) {
   return method || 'N/D'
 }
 
+function getRefundMethodLabel(method?: string) {
+  if (method === 'CASH') return 'Efectivo'
+  if (method === 'CARD') return 'Tarjeta'
+  if (method === 'DEPOSIT') return 'Depósito'
+  if (method === 'CREDIT') return 'Ajuste a crédito'
+  return method || 'N/D'
+}
+
 function getPaymentMethodStyles(method?: string, isCredit?: number) {
   if (method === 'CASH') {
     return {
@@ -250,6 +289,11 @@ export default function Sales() {
   const [cancelReason, setCancelReason] = useState('')
   const [saleToCancel, setSaleToCancel] = useState<Sale | null>(null)
   const [cancellingSale, setCancellingSale] = useState(false)
+  const [isReturnModalOpen, setIsReturnModalOpen] = useState(false)
+  const [returnReason, setReturnReason] = useState('')
+  const [returnRefundMethod, setReturnRefundMethod] = useState<'CASH' | 'CARD' | 'DEPOSIT' | 'CREDIT'>('CASH')
+  const [returnQuantities, setReturnQuantities] = useState<Record<number, string>>({})
+  const [processingReturn, setProcessingReturn] = useState(false)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
@@ -401,6 +445,48 @@ export default function Sales() {
     }
   }
 
+  const openPartialReturnModal = () => {
+    if (!selectedSale) return
+    resetReturnForm()
+    setReturnRefundMethod(isCreditSale(selectedSale) ? 'CREDIT' : 'CASH')
+    setIsReturnModalOpen(true)
+  }
+
+  const handleReturnQuantityChange = (saleItemId: number, value: string, maxQuantity: number) => {
+    if (value === '') {
+      setReturnQuantities(prev => ({ ...prev, [saleItemId]: '' }))
+      return
+    }
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed)) return
+    const normalized = Math.min(maxQuantity, Math.max(0, parsed))
+    setReturnQuantities(prev => ({ ...prev, [saleItemId]: String(normalized) }))
+  }
+
+  const confirmPartialReturn = async () => {
+    if (!selectedSale || !returnReason.trim() || selectedReturnLines.length === 0 || processingReturn) return
+    try {
+      setProcessingReturn(true)
+      await createSaleReturn(selectedSale.id, {
+        reason: returnReason.trim(),
+        refundMethod: returnRefundMethod,
+        items: selectedReturnLines.map(line => ({
+          saleItemId: line.item.id,
+          quantity: line.quantity,
+        })),
+      })
+      const refreshed = await getSaleDetails(selectedSale.id)
+      setSelectedSale(refreshed)
+      setIsReturnModalOpen(false)
+      resetReturnForm()
+      await loadSales()
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Error registrando devolución parcial')
+    } finally {
+      setProcessingReturn(false)
+    }
+  }
+
   const handleCancelClick = (sale: Sale) => {
     setSaleToCancel(sale)
     setCancelReason('')
@@ -424,6 +510,27 @@ export default function Sales() {
   }
 
   const formatMoney = (value?: number) => formatCurrency(Number(value || 0), config?.currency)
+  const activeReturnableItems = selectedSale?.items.filter(item => Number(item.available_return_quantity || 0) > 0) || []
+  const selectedReturnLines = activeReturnableItems
+    .map(item => {
+      const rawQuantity = Number(returnQuantities[item.id] || 0)
+      const maxQuantity = Number(item.available_return_quantity || 0)
+      const quantity = Math.min(maxQuantity, Math.max(0, rawQuantity))
+      return {
+        item,
+        quantity,
+        total: quantity * Number(item.unit_price || 0),
+      }
+    })
+    .filter(line => line.quantity > 0)
+  const selectedReturnTotal = selectedReturnLines.reduce((sum, line) => sum + line.total, 0)
+
+  const resetReturnForm = () => {
+    setReturnReason('')
+    setReturnRefundMethod(selectedSale && isCreditSale(selectedSale) ? 'CREDIT' : 'CASH')
+    setReturnQuantities({})
+    setProcessingReturn(false)
+  }
 
   const downloadTicketPdf = (blobUrl: string, saleId: number) => {
     const link = document.createElement('a')
@@ -842,6 +949,9 @@ export default function Sales() {
                 <div style={{ display: 'grid', gap: 6, fontSize: '0.92rem' }}>
                   <div><strong>Responsable:</strong> {sale.seller_name || 'SIN USUARIO'}</div>
                   <div><strong>Cliente:</strong> {sale.customer_name || 'General'}</div>
+                  {Number(sale.returned_total || 0) > 0 && (
+                    <div><strong>Devuelto:</strong> <span style={{ color: '#dc2626', fontWeight: 700 }}>{formatMoney(sale.returned_total)}</span></div>
+                  )}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <strong>Método:</strong>
                     <span
@@ -868,12 +978,12 @@ export default function Sales() {
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, background: 'var(--bg)' }}>
-                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>Total</div>
-                    <div style={{ fontWeight: 800 }}>{formatMoney(sale.total)}</div>
+                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>{Number(sale.returned_total || 0) > 0 ? 'Total neto' : 'Total'}</div>
+                    <div style={{ fontWeight: 800 }}>{formatMoney((Number(sale.returned_total || 0) > 0 ? sale.final_total : sale.total) || 0)}</div>
                   </div>
                   <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, background: 'var(--bg)' }}>
-                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>Utilidad</div>
-                    <div style={{ fontWeight: 800, color: '#22c55e' }}>{formatMoney(sale.profit)}</div>
+                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>{Number(sale.returned_total || 0) > 0 ? 'Utilidad neta' : 'Utilidad'}</div>
+                    <div style={{ fontWeight: 800, color: '#22c55e' }}>{formatMoney((Number(sale.returned_total || 0) > 0 ? sale.final_profit : sale.profit) || 0)}</div>
                   </div>
                 </div>
 
@@ -954,12 +1064,17 @@ export default function Sales() {
                   </td>
                   <td style={{ padding: 12, textAlign: 'center' }}>
                     {renderSaleStatusBadge(sale)}
+                    {Number(sale.returned_total || 0) > 0 && (
+                      <div style={{ marginTop: 6, fontSize: 12, color: '#dc2626', fontWeight: 700 }}>
+                        Devuelto: {formatMoney(sale.returned_total)}
+                      </div>
+                    )}
                   </td>
                   <td style={{ padding: 12, textAlign: 'right', fontWeight: 600 }}>
-                    {formatMoney(sale.total)}
+                    {formatMoney((Number(sale.returned_total || 0) > 0 ? sale.final_total : sale.total) || 0)}
                   </td>
                   <td style={{ padding: 12, textAlign: 'right', fontWeight: 600, color: '#22c55e' }}>
-                    {formatMoney(sale.profit)}
+                    {formatMoney((Number(sale.returned_total || 0) > 0 ? sale.final_profit : sale.profit) || 0)}
                   </td>
                   <td style={{ padding: 12, textAlign: 'center', display: 'flex', gap: 5, justifyContent: 'center' }}>
                     <button 
@@ -1062,12 +1177,22 @@ export default function Sales() {
                     <span style={{ fontWeight: 600, fontSize: 16 }}>{formatMoney(selectedSale.total)}</span>
                   </div>
                   <div>
+                    <strong style={{ display: 'block', fontSize: 13, color: 'var(--muted)', marginBottom: 2 }}>Devuelto</strong>
+                    <span style={{ fontWeight: 600, fontSize: 16, color: Number(selectedSale.returned_total || 0) > 0 ? '#dc2626' : 'inherit' }}>
+                      {formatMoney(selectedSale.returned_total)}
+                    </span>
+                  </div>
+                  <div>
+                    <strong style={{ display: 'block', fontSize: 13, color: 'var(--muted)', marginBottom: 2 }}>Total neto</strong>
+                    <span style={{ fontWeight: 600, fontSize: 16 }}>{formatMoney(selectedSale.final_total ?? selectedSale.total)}</span>
+                  </div>
+                  <div>
                     <strong style={{ display: 'block', fontSize: 13, color: 'var(--muted)', marginBottom: 2 }}>Responsable</strong>
                     {selectedSale.seller_name || 'SIN USUARIO'}
                   </div>
                   <div>
-                    <strong style={{ display: 'block', fontSize: 13, color: 'var(--muted)', marginBottom: 2 }}>Utilidad</strong>
-                    <span style={{ fontWeight: 600, fontSize: 16, color: '#22c55e' }}>{formatMoney(selectedSale.profit)}</span>
+                    <strong style={{ display: 'block', fontSize: 13, color: 'var(--muted)', marginBottom: 2 }}>Utilidad neta</strong>
+                    <span style={{ fontWeight: 600, fontSize: 16, color: '#22c55e' }}>{formatMoney(selectedSale.final_profit ?? selectedSale.profit)}</span>
                   </div>
                   <div style={{ gridColumn: '1 / -1' }}>
                     <strong style={{ display: 'block', fontSize: 13, color: 'var(--muted)', marginBottom: 4 }}>Estado</strong>
@@ -1108,6 +1233,11 @@ export default function Sales() {
                           <div><span style={{ color: 'var(--muted)' }}>Precio</span><br />{formatNumber(Number(item.unit_price))}</div>
                           <div><span style={{ color: 'var(--muted)' }}>Total</span><br />{formatNumber(Number(item.total))}</div>
                         </div>
+                        {Number(item.returned_quantity || 0) > 0 && (
+                          <div style={{ fontSize: '0.85rem', color: '#dc2626' }}>
+                            Devuelto: {formatNumber(Number(item.returned_quantity || 0), 0)} | Disponible para devolver: {formatNumber(Number(item.available_return_quantity || 0), 0)}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1125,7 +1255,14 @@ export default function Sales() {
                     <tbody>
                       {selectedSale.items.map(item => (
                         <tr key={item.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                          <td style={{ padding: '10px 16px' }}>{item.product_name}</td>
+                          <td style={{ padding: '10px 16px' }}>
+                            {item.product_name}
+                            {Number(item.returned_quantity || 0) > 0 && (
+                              <div style={{ fontSize: 12, color: '#dc2626', marginTop: 4 }}>
+                                Devuelto: {formatNumber(Number(item.returned_quantity || 0), 0)} | Disponible: {formatNumber(Number(item.available_return_quantity || 0), 0)}
+                              </div>
+                            )}
+                          </td>
                           <td style={{ padding: '10px 16px', textAlign: 'right' }}>{item.quantity}</td>
                           <td style={{ padding: '10px 16px', textAlign: 'right' }}>{formatNumber(Number(item.unit_price))}</td>
                           <td style={{ padding: '10px 16px', textAlign: 'right' }}>{formatNumber(Number(item.total))}</td>
@@ -1135,6 +1272,50 @@ export default function Sales() {
                   </table>
                 </div>
                 )}
+
+                <div style={{ marginBottom: 24, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, padding: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+                    <div>
+                      <div style={{ fontWeight: 700 }}>Historial de devoluciones</div>
+                      <div style={{ color: 'var(--muted)', fontSize: 13 }}>Cada devolución parcial queda auditada con sus productos y método de ajuste.</div>
+                    </div>
+                    {selectedSale.status !== 'CANCELLED' && activeReturnableItems.length > 0 && (
+                      <button onClick={openPartialReturnModal} className="secondary-btn" style={{ width: isMobileViewport ? '100%' : 'auto' }}>
+                        Devolución parcial
+                      </button>
+                    )}
+                  </div>
+                  {(selectedSale.returns || []).length === 0 ? (
+                    <div style={{ color: 'var(--muted)', fontSize: 14 }}>No hay devoluciones registradas para esta venta.</div>
+                  ) : (
+                    <div style={{ display: 'grid', gap: 12 }}>
+                      {(selectedSale.returns || []).map(returnRow => (
+                        <div key={returnRow.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, background: 'var(--modal)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+                            <div style={{ fontWeight: 700 }}>Devolución #{returnRow.id}</div>
+                            <div style={{ color: '#dc2626', fontWeight: 700 }}>{formatMoney(returnRow.refund_total)}</div>
+                          </div>
+                          <div style={{ display: 'grid', gap: 6, fontSize: 14, marginBottom: 8 }}>
+                            <div><strong>Fecha:</strong> {formatDateTime(returnRow.created_at)}</div>
+                            <div><strong>Método:</strong> {getRefundMethodLabel(returnRow.refund_method)}</div>
+                            <div><strong>Registrado por:</strong> {returnRow.user_name || 'SIN USUARIO'}</div>
+                            <div><strong>Motivo:</strong> {returnRow.reason}</div>
+                          </div>
+                          <div style={{ display: 'grid', gap: 6 }}>
+                            {returnRow.items.map(item => (
+                              <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', fontSize: 13, padding: '8px 10px', borderRadius: 8, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                                <div>
+                                  <strong>{item.product_name}</strong> x {formatNumber(Number(item.quantity || 0), 0)}
+                                </div>
+                                <div>{formatMoney(item.total)}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap', flexDirection: isMobileViewport ? 'column' : 'row' }}>
                    <button 
@@ -1161,6 +1342,100 @@ export default function Sales() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {isReturnModalOpen && selectedSale && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: isMobileViewport ? 'flex-end' : 'center', justifyContent: 'center', zIndex: 1150, padding: isMobileViewport ? 0 : 16 }}>
+          <div className="responsive-modal" style={{ background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: isMobileViewport ? '18px 18px 0 0' : 12, padding: isMobileViewport ? 16 : 24, width: isMobileViewport ? '100%' : '90%', maxWidth: 680, maxHeight: '90vh', overflowY: 'auto' }}>
+            <h3 style={{ marginTop: 0 }}>Devolución parcial de Venta #{selectedSale.id}</h3>
+            <p style={{ color: 'var(--muted)', marginTop: 0 }}>
+              Selecciona solo los productos con error. El sistema repone inventario y registra el ajuste para auditoría y caja.
+            </p>
+
+            <div className="responsive-form-grid" style={{ marginBottom: 16 }}>
+              <DateField label="Método de ajuste">
+                <select
+                  value={returnRefundMethod}
+                  onChange={e => setReturnRefundMethod(e.target.value as 'CASH' | 'CARD' | 'DEPOSIT' | 'CREDIT')}
+                  disabled={isCreditSale(selectedSale)}
+                  style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit' }}
+                >
+                  {isCreditSale(selectedSale) ? (
+                    <option value="CREDIT">Ajuste a crédito</option>
+                  ) : (
+                    <>
+                      <option value="CASH">Efectivo</option>
+                      <option value="CARD">Tarjeta</option>
+                      <option value="DEPOSIT">Depósito</option>
+                    </>
+                  )}
+                </select>
+              </DateField>
+            </div>
+
+            <div style={{ display: 'grid', gap: 10, marginBottom: 16 }}>
+              {activeReturnableItems.length === 0 ? (
+                <div style={{ padding: 14, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg)', color: 'var(--muted)' }}>
+                  Todos los productos de esta venta ya fueron devueltos.
+                </div>
+              ) : (
+                activeReturnableItems.map(item => (
+                  <div key={item.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, background: 'var(--bg)', display: 'grid', gap: 8 }}>
+                    <div style={{ fontWeight: 700 }}>{item.product_name}</div>
+                    <div style={{ fontSize: 13, color: 'var(--muted)' }}>
+                      Vendido: {formatNumber(Number(item.quantity || 0), 0)} | Disponible para devolver: {formatNumber(Number(item.available_return_quantity || 0), 0)}
+                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      max={Number(item.available_return_quantity || 0)}
+                      step="1"
+                      value={returnQuantities[item.id] ?? ''}
+                      onChange={e => handleReturnQuantityChange(item.id, e.target.value, Number(item.available_return_quantity || 0))}
+                      placeholder="Cantidad a devolver"
+                      style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--modal)', color: 'inherit' }}
+                    />
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', marginBottom: 8 }}>Motivo de la devolución</label>
+              <textarea
+                value={returnReason}
+                onChange={e => setReturnReason(e.target.value)}
+                placeholder="Describe qué producto falló o por qué se corrige la venta"
+                style={{ width: '100%', minHeight: 90, padding: 10, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: 20, padding: 14, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg)', display: 'grid', gap: 6 }}>
+              <div><strong>Líneas seleccionadas:</strong> {selectedReturnLines.length}</div>
+              <div><strong>Total a ajustar:</strong> <span style={{ color: '#dc2626', fontWeight: 700 }}>{formatMoney(selectedReturnTotal)}</span></div>
+              <div><strong>Método:</strong> {getRefundMethodLabel(returnRefundMethod)}</div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap', flexDirection: isMobileViewport ? 'column' : 'row' }}>
+              <button
+                onClick={() => { setIsReturnModalOpen(false); resetReturnForm() }}
+                className="secondary-btn"
+                style={{ width: isMobileViewport ? '100%' : 'auto' }}
+                disabled={processingReturn}
+              >
+                Cerrar
+              </button>
+              <button
+                onClick={confirmPartialReturn}
+                className="primary-btn"
+                style={{ width: isMobileViewport ? '100%' : 'auto' }}
+                disabled={processingReturn || !returnReason.trim() || selectedReturnLines.length === 0}
+              >
+                {processingReturn ? 'Registrando devolución...' : 'Confirmar devolución parcial'}
+              </button>
+            </div>
           </div>
         </div>
       )}

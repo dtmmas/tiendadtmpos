@@ -187,6 +187,86 @@ async function migrate() {
     WHERE si.unit_cost_snapshot IS NULL OR si.total_cost_snapshot IS NULL
   `)
 
+  await ensureColumn('purchases', 'payment_type', 'VARCHAR(20) NOT NULL DEFAULT "CASH"')
+  await ensureColumn('purchases', 'payment_status', 'VARCHAR(20) NOT NULL DEFAULT "PAID"')
+  await ensureColumn('purchases', 'payment_method', 'VARCHAR(20) NOT NULL DEFAULT "CASH"')
+  await ensureColumn('purchases', 'paid_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0')
+  await ensureColumn('purchases', 'balance_due', 'DECIMAL(12,2) NOT NULL DEFAULT 0')
+  await ensureColumn('purchases', 'due_date', 'DATE NULL')
+  await ensureColumn('purchases', 'paid_at', 'DATETIME NULL')
+  await conn.query(`
+    UPDATE purchases
+    SET payment_type = COALESCE(NULLIF(payment_type, ''), 'CASH'),
+        payment_status = COALESCE(NULLIF(payment_status, ''), 'PAID'),
+        payment_method = COALESCE(NULLIF(payment_method, ''), 'CASH'),
+        paid_amount = CASE
+          WHEN paid_amount IS NULL OR paid_amount = 0 THEN COALESCE(total, 0)
+          ELSE paid_amount
+        END
+  `)
+  await conn.query(`
+    UPDATE purchases
+    SET balance_due = GREATEST(ROUND(COALESCE(total, 0) - COALESCE(paid_amount, 0), 2), 0),
+        payment_status = CASE
+          WHEN ROUND(GREATEST(COALESCE(total, 0) - COALESCE(paid_amount, 0), 0), 2) = 0 THEN 'PAID'
+          WHEN COALESCE(paid_amount, 0) > 0 THEN 'PARTIAL'
+          ELSE 'PENDING'
+        END
+  `)
+
+  await conn.query(`CREATE TABLE IF NOT EXISTS purchase_payments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    purchase_id INT NOT NULL,
+    amount DECIMAL(12,2) NOT NULL,
+    payment_method VARCHAR(20) NOT NULL DEFAULT 'CASH',
+    reference VARCHAR(160) NULL,
+    notes TEXT NULL,
+    document_path VARCHAR(255) NULL,
+    paid_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    user_id INT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_purchase_payments_purchase FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE CASCADE
+  )`)
+  await ensureForeignKey('purchase_payments', 'user_id', 'users', 'fk_purchase_payments_user', 'SET NULL')
+  await ensureIndex('purchase_payments', 'idx_purchase_payments_purchase', 'purchase_id')
+  await ensureIndex('purchase_payments', 'idx_purchase_payments_paid_at', 'paid_at')
+
+  await conn.query(`CREATE TABLE IF NOT EXISTS supplier_payments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    supplier_id INT NOT NULL,
+    amount DECIMAL(12,2) NOT NULL,
+    payment_method VARCHAR(20) NOT NULL DEFAULT 'CASH',
+    reference VARCHAR(160) NULL,
+    notes TEXT NULL,
+    document_path VARCHAR(255) NULL,
+    paid_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    user_id INT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_supplier_payments_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE
+  )`)
+  await ensureColumn('supplier_payments', 'reference', 'VARCHAR(160) NULL')
+  await ensureColumn('supplier_payments', 'notes', 'TEXT NULL')
+  await ensureColumn('supplier_payments', 'document_path', 'VARCHAR(255) NULL')
+  await ensureColumn('supplier_payments', 'user_id', 'INT NULL')
+  await ensureForeignKey('supplier_payments', 'user_id', 'users', 'fk_supplier_payments_user', 'SET NULL')
+  await ensureIndex('supplier_payments', 'idx_supplier_payments_supplier', 'supplier_id')
+  await ensureIndex('supplier_payments', 'idx_supplier_payments_paid_at', 'paid_at')
+
+  await conn.query(`CREATE TABLE IF NOT EXISTS supplier_payment_allocations (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    supplier_payment_id INT NOT NULL,
+    purchase_id INT NOT NULL,
+    purchase_payment_id INT NULL,
+    amount DECIMAL(12,2) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_supplier_payment_allocations_payment FOREIGN KEY (supplier_payment_id) REFERENCES supplier_payments(id) ON DELETE CASCADE,
+    CONSTRAINT fk_supplier_payment_allocations_purchase FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE CASCADE
+  )`)
+  await ensureColumn('supplier_payment_allocations', 'purchase_payment_id', 'INT NULL')
+  await ensureForeignKey('supplier_payment_allocations', 'purchase_payment_id', 'purchase_payments', 'fk_supplier_payment_allocations_purchase_payment', 'SET NULL')
+  await ensureIndex('supplier_payment_allocations', 'idx_supplier_payment_allocations_payment', 'supplier_payment_id')
+  await ensureIndex('supplier_payment_allocations', 'idx_supplier_payment_allocations_purchase', 'purchase_id')
+
   // Ensure detail tables for medicinal, IMEI, serial, and variants
   await conn.query(`CREATE TABLE IF NOT EXISTS product_batches (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -315,6 +395,44 @@ async function migrate() {
   )`)
   await ensureColumn('sales', 'payment_method', 'VARCHAR(50) DEFAULT "CASH"')
   console.log('Ensured sales table and payment_method')
+
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS sale_returns (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      sale_id INT NOT NULL,
+      user_id INT NULL,
+      warehouse_id INT NULL,
+      reason TEXT NOT NULL,
+      refund_method VARCHAR(20) NOT NULL DEFAULT 'CASH',
+      refund_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+      affects_cash TINYINT(1) NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_sale_returns_sale FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE
+    )
+  `)
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS sale_return_items (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      sale_return_id INT NOT NULL,
+      sale_item_id INT NOT NULL,
+      product_id INT NOT NULL,
+      quantity DECIMAL(12,2) NOT NULL DEFAULT 0,
+      unit_price DECIMAL(12,2) NOT NULL DEFAULT 0,
+      total DECIMAL(12,2) NOT NULL DEFAULT 0,
+      unit_cost_snapshot DECIMAL(12,2) NULL,
+      total_cost_snapshot DECIMAL(12,2) NULL,
+      serial VARCHAR(100) NULL,
+      imei VARCHAR(50) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_sale_return_items_return FOREIGN KEY (sale_return_id) REFERENCES sale_returns(id) ON DELETE CASCADE,
+      CONSTRAINT fk_sale_return_items_sale_item FOREIGN KEY (sale_item_id) REFERENCES sale_items(id) ON DELETE CASCADE
+    )
+  `)
+  try {
+    await conn.query(`ALTER TABLE cash_movements MODIFY COLUMN ref_type ENUM('SALE','PURCHASE','MANUAL','PAYMENT','CREDIT_PAYMENT','SALE_RETURN') NOT NULL`)
+  } catch (error) {
+    console.warn(`Could not normalize cash_movements.ref_type with SALE_RETURN: ${error.message}`)
+  }
 
   // Create units catalog table
   await conn.query(`CREATE TABLE IF NOT EXISTS units (

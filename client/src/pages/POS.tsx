@@ -1359,8 +1359,13 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
       }
 
       const isCreditSale = paymentMethod === 'CREDIT'
+      if (isCreditSale && !selectedCustomer) {
+        alert('Para vender a crédito debes seleccionar un cliente real.')
+        return
+      }
       const received = parseFloat(receivedAmount) || 0
       const change = received - total
+      const selectedCustomerData = selectedCustomer ? customers.find(c => c.id === selectedCustomer) : undefined
 
       const res = await api.post('/sales', {
         customerId: selectedCustomer,
@@ -1394,7 +1399,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
              changeAmount: paymentMethod === 'CASH' ? change : 0,
              referenceNumber: (paymentMethod === 'CARD' || paymentMethod === 'DEPOSIT') ? referenceNumber : null
           },
-          customer: selectedCustomer ? customers.find(c => c.id === selectedCustomer) : undefined
+          customer: selectedCustomerData
         }
 
         setLastSale(saleData)
@@ -1865,39 +1870,48 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
             </div>
 
             {/* Customer Selection */}
-            <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg)', display: 'flex', gap: 8 }}>
-              <select
-                style={{
-                  flex: 1,
-                  padding: 8,
-                  borderRadius: 6,
-                  border: '1px solid var(--border)',
-                  background: 'var(--modal)',
-                  color: 'var(--text)'
-                }}
-                value={selectedCustomer || ''}
-                onChange={e => setSelectedCustomer(e.target.value ? Number(e.target.value) : null)}
-              >
-                <option value="">Seleccionar Cliente (General)</option>
-                {customers.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-              <button
-                onClick={() => setIsCustomerModalOpen(true)}
-                className="icon-btn primary"
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 6
-                }}
-                title="Agregar Cliente"
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="12" y1="5" x2="12" y2="19"></line>
-                  <line x1="5" y1="12" x2="19" y2="12"></line>
-                </svg>
-              </button>
+            <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg)' }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <select
+                  style={{
+                    flex: 1,
+                    padding: 8,
+                    borderRadius: 6,
+                    border: paymentMethod === 'CREDIT' && !selectedCustomer ? '1px solid #dc2626' : '1px solid var(--border)',
+                    background: 'var(--modal)',
+                    color: 'var(--text)'
+                  }}
+                  value={selectedCustomer || ''}
+                  onChange={e => setSelectedCustomer(e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="" disabled={paymentMethod === 'CREDIT'}>
+                    {paymentMethod === 'CREDIT' ? 'Seleccionar Cliente (Obligatorio para crédito)' : 'Seleccionar Cliente (General)'}
+                  </option>
+                  {customers.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => setIsCustomerModalOpen(true)}
+                  className="icon-btn primary"
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 6
+                  }}
+                  title="Agregar Cliente"
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                </button>
+              </div>
+              {paymentMethod === 'CREDIT' && (
+                <div style={{ marginTop: 6, fontSize: 12, color: !selectedCustomer ? '#dc2626' : 'var(--muted)', fontWeight: !selectedCustomer ? 700 : 500 }}>
+                  El crédito requiere un cliente real. `General` solo aplica para ventas al contado.
+                </div>
+              )}
             </div>
 
           </>

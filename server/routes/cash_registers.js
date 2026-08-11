@@ -245,6 +245,13 @@ async function getClosedShiftDetail(pool, shiftId) {
     [shift.id]
   )
 
+  const [refundCashRows] = await pool.query(
+    `SELECT COALESCE(SUM(amount), 0) AS total
+     FROM cash_movements
+     WHERE shift_id = ? AND ref_type = 'SALE_RETURN' AND type = 'OUT'`,
+    [shift.id]
+  )
+
   let movementsIn = 0
   let movementsOut = 0
   for (const row of movements || []) {
@@ -271,7 +278,8 @@ async function getClosedShiftDetail(pool, shiftId) {
   const openingBalance = Number(shift.opening_balance || 0)
   const closingBalance = Number(shift.closing_balance || 0)
   const salesCash = Number(salesCashRows?.[0]?.total || 0)
-  const expected = openingBalance + salesCash + creditPaymentsCash + movementsIn - movementsOut
+  const refundsCash = Number(refundCashRows?.[0]?.total || 0)
+  const expected = openingBalance + salesCash + creditPaymentsCash + movementsIn - movementsOut - refundsCash
   const difference = closingBalance - expected
 
   return {
@@ -287,6 +295,7 @@ async function getClosedShiftDetail(pool, shiftId) {
     salesByMethod,
     totalSales,
     salesCash,
+    refundsCash,
     creditPaymentsByMethod,
     creditPaymentsCash,
     movementsIn,
@@ -406,9 +415,17 @@ router.get('/summary', authMiddleware, async (req, res) => {
       [shift.id]
     )
 
+    const [refundCashRows] = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total
+       FROM cash_movements
+       WHERE shift_id = ? AND ref_type = 'SALE_RETURN' AND type = 'OUT'`,
+      [shift.id]
+    )
+
     const salesByMethod = {}
     let totalSales = 0
     let salesCashReal = Number(salesCashRows?.[0]?.total || 0)
+    const refundsCash = Number(refundCashRows?.[0]?.total || 0)
 
     if (Array.isArray(salesStats)) {
       salesStats.forEach(row => {
@@ -433,7 +450,7 @@ router.get('/summary', authMiddleware, async (req, res) => {
     }
 
     const openingAmount = Number(shift.opening_balance || 0)
-    const expectedCash = openingAmount + salesCashReal + creditPaymentsCash + movementsIn - movementsOut
+    const expectedCash = openingAmount + salesCashReal + creditPaymentsCash + movementsIn - movementsOut - refundsCash
 
     res.json({
       userId: targetUserId,
@@ -443,6 +460,7 @@ router.get('/summary', authMiddleware, async (req, res) => {
       salesByMethod,
       totalSales,
       salesCash: salesCashReal,
+      refundsCash,
       creditPaymentsByMethod,
       creditPaymentsCash,
       movementsIn,
@@ -561,7 +579,15 @@ router.post('/close', authMiddleware, async (req, res) => {
       [shift.id]
     )
 
+    const [refundCashRows] = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total
+       FROM cash_movements
+       WHERE shift_id = ? AND ref_type = 'SALE_RETURN' AND type = 'OUT'`,
+      [shift.id]
+    )
+
     const salesCash = Number(salesCashRows?.[0]?.total || 0)
+    const refundsCash = Number(refundCashRows?.[0]?.total || 0)
     const creditPaymentsByMethod = Object.fromEntries(
       (creditPaymentRows || []).map(row => [row.payment_method || 'CASH', Number(row.total_amount || 0)])
     )
@@ -574,7 +600,7 @@ router.post('/close', authMiddleware, async (req, res) => {
       if (row.type === 'OUT') movementsOut = Number(row.total)
     })
 
-    const expected = Number(shift.opening_balance || 0) + salesCash + creditPaymentsCash + movementsIn - movementsOut
+    const expected = Number(shift.opening_balance || 0) + salesCash + creditPaymentsCash + movementsIn - movementsOut - refundsCash
 
     await pool.query(
       `UPDATE cashbox_shifts 
@@ -587,6 +613,7 @@ router.post('/close', authMiddleware, async (req, res) => {
       success: true, 
       expected, 
       difference: finalAmount - expected,
+      refundsCash,
       creditPaymentsByMethod,
       creditPaymentsCash,
     })

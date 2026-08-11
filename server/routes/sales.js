@@ -5,6 +5,15 @@ import { registerMovement } from '../services/inventory.js'
 
 const router = express.Router()
 
+function roundCurrency(value) {
+  return Math.round(Number(value || 0) * 100) / 100
+}
+
+function normalizeRefundMethod(value) {
+  const method = String(value || '').trim().toUpperCase()
+  return ['CASH', 'CARD', 'DEPOSIT', 'CREDIT'].includes(method) ? method : 'CASH'
+}
+
 async function columnExists(db, table, column) {
   const [rows] = await db.query(`SHOW COLUMNS FROM \`${table}\` LIKE ?`, [column])
   return Array.isArray(rows) && rows.length > 0
@@ -128,6 +137,49 @@ async function ensureSalesSchema(db) {
   }
 
   await db.query(`
+    CREATE TABLE IF NOT EXISTS sale_returns (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      sale_id INT NOT NULL,
+      user_id INT NULL,
+      warehouse_id INT NULL,
+      reason TEXT NOT NULL,
+      refund_method VARCHAR(20) NOT NULL DEFAULT 'CASH',
+      refund_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+      affects_cash TINYINT(1) NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_sale_returns_sale FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE
+    )
+  `)
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS sale_return_items (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      sale_return_id INT NOT NULL,
+      sale_item_id INT NOT NULL,
+      product_id INT NOT NULL,
+      quantity DECIMAL(12,2) NOT NULL DEFAULT 0,
+      unit_price DECIMAL(12,2) NOT NULL DEFAULT 0,
+      total DECIMAL(12,2) NOT NULL DEFAULT 0,
+      unit_cost_snapshot DECIMAL(12,2) NULL,
+      total_cost_snapshot DECIMAL(12,2) NULL,
+      serial VARCHAR(100) NULL,
+      imei VARCHAR(50) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_sale_return_items_return FOREIGN KEY (sale_return_id) REFERENCES sale_returns(id) ON DELETE CASCADE,
+      CONSTRAINT fk_sale_return_items_sale_item FOREIGN KEY (sale_item_id) REFERENCES sale_items(id) ON DELETE CASCADE
+    )
+  `)
+
+  try {
+    await db.query(`
+      ALTER TABLE cash_movements
+      MODIFY COLUMN ref_type ENUM('SALE','PURCHASE','MANUAL','PAYMENT','CREDIT_PAYMENT','SALE_RETURN') NOT NULL
+    `)
+  } catch (error) {
+    console.warn(`Skipped cash_movements.ref_type SALE_RETURN normalization: ${error.message}`)
+  }
+
+  await db.query(`
     UPDATE sale_items si
     JOIN products p ON p.id = si.product_id
     SET si.unit_cost_snapshot = COALESCE(si.unit_cost_snapshot, p.avg_cost, p.cost, 0),
@@ -195,6 +247,16 @@ async function buildSalesContext(db) {
         WHERE cm.ref_type = 'SALE' AND cm.ref_id IS NOT NULL
         GROUP BY cm.ref_id
       ) sale_shift ON sale_shift.sale_id = s.id
+      LEFT JOIN (
+        SELECT sr.sale_id,
+               COUNT(DISTINCT sr.id) AS return_count,
+               COALESCE(SUM(sri.total), 0) AS returned_total,
+               COALESCE(SUM(COALESCE(sri.total_cost_snapshot, sri.quantity * COALESCE(sri.unit_cost_snapshot, 0))), 0) AS returned_cost_total,
+               COALESCE(SUM(sri.total - COALESCE(sri.total_cost_snapshot, sri.quantity * COALESCE(sri.unit_cost_snapshot, 0))), 0) AS returned_profit
+        FROM sale_returns sr
+        JOIN sale_return_items sri ON sri.sale_return_id = sr.id
+        GROUP BY sr.sale_id
+      ) return_calc ON return_calc.sale_id = s.id
       LEFT JOIN users cu ON cu.id = sale_shift.opened_by
     `,
   }
@@ -330,9 +392,14 @@ function buildSalesSelect(context, canSeeProfit) {
     SELECT s.*, c.name AS customer_name,
            i.credit_fully_paid,
            i.credit_fully_paid_at,
+           COALESCE(return_calc.return_count, 0) AS return_count,
+           COALESCE(return_calc.returned_total, 0) AS returned_total,
+           CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE COALESCE(s.total, 0) - COALESCE(return_calc.returned_total, 0) END AS final_total,
            sw.name AS warehouse_name,
            ${canSeeProfit ? 'COALESCE(calc.cost_total, 0)' : 'NULL'} AS cost_total,
+           ${canSeeProfit ? 'COALESCE(return_calc.returned_cost_total, 0)' : 'NULL'} AS returned_cost_total,
            ${canSeeProfit ? "CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE COALESCE(calc.profit, 0) END" : 'NULL'} AS profit,
+           ${canSeeProfit ? "CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE COALESCE(calc.profit, 0) - COALESCE(return_calc.returned_profit, 0) END" : 'NULL'} AS final_profit,
            ${context.sellerIdExpr} AS seller_id,
            ${context.sellerNameExpr} AS seller_name
     FROM sales s
@@ -374,8 +441,8 @@ router.get('/', authMiddleware, async (req, res) => {
       `
         SELECT COUNT(*) AS records,
                COALESCE(SUM(s.total), 0) AS gross_total,
-               COALESCE(SUM(CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE s.total END), 0) AS net_total,
-               COALESCE(SUM(CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE COALESCE(calc.profit, 0) END), 0) AS total_profit,
+               COALESCE(SUM(CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE s.total - COALESCE(return_calc.returned_total, 0) END), 0) AS net_total,
+               COALESCE(SUM(CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE COALESCE(calc.profit, 0) - COALESCE(return_calc.returned_profit, 0) END), 0) AS total_profit,
                COALESCE(SUM(CASE WHEN s.status = 'CANCELLED' THEN 1 ELSE 0 END), 0) AS cancelled_count
         FROM sales s
         ${context.baseJoins}
@@ -392,7 +459,7 @@ router.get('/', authMiddleware, async (req, res) => {
             WHEN s.payment_method = 'CREDIT' OR COALESCE(s.is_credit, 0) = 1 THEN 'CREDIT'
             ELSE COALESCE(s.payment_method, 'N/D')
           END AS payment_method,
-          COALESCE(SUM(CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE s.total END), 0) AS net_total
+          COALESCE(SUM(CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE s.total - COALESCE(return_calc.returned_total, 0) END), 0) AS net_total
         FROM sales s
         ${context.baseJoins}
         ${context.sellerJoin}
@@ -413,8 +480,8 @@ router.get('/', authMiddleware, async (req, res) => {
                    ${context.sellerNameExpr} AS user_name,
                    COUNT(*) AS sales_count,
                    COALESCE(SUM(s.total), 0) AS gross_total,
-                   COALESCE(SUM(CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE s.total END), 0) AS total,
-                   COALESCE(SUM(CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE COALESCE(calc.profit, 0) END), 0) AS profit,
+                   COALESCE(SUM(CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE s.total - COALESCE(return_calc.returned_total, 0) END), 0) AS total,
+                   COALESCE(SUM(CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE COALESCE(calc.profit, 0) - COALESCE(return_calc.returned_profit, 0) END), 0) AS profit,
                    COALESCE(SUM(CASE WHEN s.status = 'CANCELLED' THEN 1 ELSE 0 END), 0) AS cancelled_count
             FROM sales s
             ${context.baseJoins}
@@ -491,7 +558,7 @@ router.get('/my-report', authMiddleware, async (req, res) => {
     const [summaryRows] = await pool.query(
       `
         SELECT COUNT(*) AS records,
-               COALESCE(SUM(CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE s.total END), 0) AS net_total,
+               COALESCE(SUM(CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE s.total - COALESCE(return_calc.returned_total, 0) END), 0) AS net_total,
                COALESCE(SUM(CASE WHEN s.status = 'CANCELLED' THEN 1 ELSE 0 END), 0) AS cancelled_count
         FROM sales s
         ${context.baseJoins}
@@ -560,14 +627,31 @@ router.post('/', authMiddleware, async (req, res) => {
       }
 
       const finalPaymentMethod = paymentMethod || (isCredit ? 'CREDIT' : 'CASH')
+      const normalizedCustomerId = Number(customerId || 0)
+
+      if (isCredit) {
+        if (!normalizedCustomerId) {
+          await conn.rollback()
+          return res.status(400).json({ error: 'Para vender a crédito debes seleccionar un cliente real' })
+        }
+
+        const [customerRows] = await conn.query(
+          'SELECT id, name FROM customers WHERE id = ? LIMIT 1',
+          [normalizedCustomerId]
+        )
+        if (!customerRows?.length) {
+          await conn.rollback()
+          return res.status(400).json({ error: 'El cliente seleccionado para el crédito no existe o ya no está disponible' })
+        }
+      }
 
       // 1. Crear Venta
       const saleInsertSql = hasSalesUserId
         ? 'INSERT INTO sales (customer_id, user_id, warehouse_id, doc_no, total, is_credit, payment_method, received_amount, change_amount, reference_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         : 'INSERT INTO sales (customer_id, warehouse_id, doc_no, total, is_credit, payment_method, received_amount, change_amount, reference_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
       const saleInsertParams = hasSalesUserId
-        ? [customerId || null, req.user.id, saleWarehouseId, docNo || null, total, isCredit ? 1 : 0, finalPaymentMethod, receivedAmount || 0, changeAmount || 0, referenceNumber || null]
-        : [customerId || null, saleWarehouseId, docNo || null, total, isCredit ? 1 : 0, finalPaymentMethod, receivedAmount || 0, changeAmount || 0, referenceNumber || null]
+        ? [normalizedCustomerId || null, req.user.id, saleWarehouseId, docNo || null, total, isCredit ? 1 : 0, finalPaymentMethod, receivedAmount || 0, changeAmount || 0, referenceNumber || null]
+        : [normalizedCustomerId || null, saleWarehouseId, docNo || null, total, isCredit ? 1 : 0, finalPaymentMethod, receivedAmount || 0, changeAmount || 0, referenceNumber || null]
       const [saleResult] = await conn.query(saleInsertSql, saleInsertParams)
       const saleId = saleResult.insertId
 
@@ -928,8 +1012,12 @@ router.get('/:id', authMiddleware, async (req, res) => {
         SELECT s.*, c.name AS customer_name, c.document AS customer_document, c.address AS customer_address, c.phone AS customer_phone,
                i.credit_fully_paid,
                i.credit_fully_paid_at,
+               COALESCE(return_calc.return_count, 0) AS return_count,
+               COALESCE(return_calc.returned_total, 0) AS returned_total,
+               CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE COALESCE(s.total, 0) - COALESCE(return_calc.returned_total, 0) END AS final_total,
                ${canSeeProfit ? 'COALESCE(calc.cost_total, 0)' : 'NULL'} AS cost_total,
                ${canSeeProfit ? "CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE COALESCE(calc.profit, 0) END" : 'NULL'} AS profit,
+               ${canSeeProfit ? "CASE WHEN s.status = 'CANCELLED' THEN 0 ELSE COALESCE(calc.profit, 0) - COALESCE(return_calc.returned_profit, 0) END" : 'NULL'} AS final_profit,
                ${context.sellerIdExpr} AS seller_id,
                ${context.sellerNameExpr} AS seller_name
         FROM sales s
@@ -947,15 +1035,358 @@ router.get('/:id', authMiddleware, async (req, res) => {
 
     // Items
     const [items] = await pool.query(`
-      SELECT si.*, p.name as product_name, p.sku
+      SELECT si.*, p.name as product_name, p.sku,
+             COALESCE(ret.returned_quantity, 0) AS returned_quantity,
+             GREATEST(si.quantity - COALESCE(ret.returned_quantity, 0), 0) AS available_return_quantity
       FROM sale_items si
       JOIN products p ON si.product_id = p.id
+      LEFT JOIN (
+        SELECT sri.sale_item_id, COALESCE(SUM(sri.quantity), 0) AS returned_quantity
+        FROM sale_return_items sri
+        JOIN sale_returns sr ON sr.id = sri.sale_return_id
+        WHERE sr.sale_id = ?
+        GROUP BY sri.sale_item_id
+      ) ret ON ret.sale_item_id = si.id
       WHERE si.sale_id = ?
+    `, [saleId, saleId])
+
+    const [returnRows] = await pool.query(`
+      SELECT sr.id,
+             sr.sale_id,
+             sr.reason,
+             sr.refund_method,
+             sr.refund_total,
+             sr.affects_cash,
+             sr.created_at,
+             u.name AS user_name,
+             sri.id AS return_item_id,
+             sri.sale_item_id,
+             sri.product_id,
+             sri.quantity,
+             sri.unit_price,
+             sri.total,
+             sri.serial,
+             sri.imei,
+             p.name AS product_name
+      FROM sale_returns sr
+      LEFT JOIN users u ON u.id = sr.user_id
+      LEFT JOIN sale_return_items sri ON sri.sale_return_id = sr.id
+      LEFT JOIN products p ON p.id = sri.product_id
+      WHERE sr.sale_id = ?
+      ORDER BY sr.created_at DESC, sri.id ASC
     `, [saleId])
 
-    res.json({ ...sale, items })
+    const returnsMap = new Map()
+    for (const row of returnRows || []) {
+      if (!returnsMap.has(row.id)) {
+        returnsMap.set(row.id, {
+          id: row.id,
+          sale_id: row.sale_id,
+          reason: row.reason,
+          refund_method: row.refund_method,
+          refund_total: Number(row.refund_total || 0),
+          affects_cash: Boolean(row.affects_cash),
+          created_at: row.created_at,
+          user_name: row.user_name || 'SIN USUARIO',
+          items: [],
+        })
+      }
+      if (row.return_item_id) {
+        returnsMap.get(row.id).items.push({
+          id: row.return_item_id,
+          sale_item_id: row.sale_item_id,
+          product_id: row.product_id,
+          product_name: row.product_name || 'Producto',
+          quantity: Number(row.quantity || 0),
+          unit_price: Number(row.unit_price || 0),
+          total: Number(row.total || 0),
+          serial: row.serial || null,
+          imei: row.imei || null,
+        })
+      }
+    }
+
+    res.json({ ...sale, items, returns: Array.from(returnsMap.values()) })
   } catch (err) {
     console.error('Sale detail error:', err)
+    res.status(500).json({ error: 'Server error' })
+  }
+})
+
+router.post('/:id/returns', authMiddleware, async (req, res) => {
+  try {
+    const saleId = Number(req.params.id || 0)
+    const reason = String(req.body?.reason || '').trim()
+    const refundMethod = normalizeRefundMethod(req.body?.refundMethod)
+    const requestedItems = Array.isArray(req.body?.items) ? req.body.items : []
+
+    if (!saleId) {
+      return res.status(400).json({ error: 'Venta inválida' })
+    }
+    if (!reason) {
+      return res.status(400).json({ error: 'Debes indicar el motivo de la devolución' })
+    }
+    if (requestedItems.length === 0) {
+      return res.status(400).json({ error: 'Debes seleccionar al menos un producto para devolver' })
+    }
+
+    const canReturnSales = isAdminUser(req.user) || (Array.isArray(req.user?.permissions) && req.user.permissions.includes('sales:cancel'))
+    if (!canReturnSales) {
+      return res.status(403).json({ error: 'No tienes permiso para registrar devoluciones de ventas' })
+    }
+
+    const pool = await getPool()
+    const conn = await pool.getConnection()
+
+    try {
+      await conn.beginTransaction()
+      await ensureSalesSchema(conn)
+
+      const isAdmin = isAdminUser(req.user)
+      const userWarehouseId = getUserWarehouseId(req.user)
+      if (!isAdmin && !userWarehouseId) {
+        await conn.rollback()
+        return res.status(403).json({ error: 'No tienes una tienda asignada para registrar devoluciones' })
+      }
+
+      const saleWhere = !isAdmin ? ' AND warehouse_id = ?' : ''
+      const saleParams = !isAdmin ? [saleId, userWarehouseId] : [saleId]
+      const [saleRows] = await conn.query(`SELECT * FROM sales WHERE id = ?${saleWhere} FOR UPDATE`, saleParams)
+      if (saleRows.length === 0) {
+        await conn.rollback()
+        return res.status(404).json({ error: 'Venta no encontrada' })
+      }
+
+      const sale = saleRows[0]
+      if (sale.status === 'CANCELLED') {
+        await conn.rollback()
+        return res.status(400).json({ error: 'No se puede devolver una venta cancelada' })
+      }
+
+      const isCredit = sale.payment_method === 'CREDIT' || Number(sale.is_credit || 0) === 1
+      if (isCredit && refundMethod !== 'CREDIT') {
+        await conn.rollback()
+        return res.status(400).json({ error: 'Las devoluciones de ventas a crédito solo pueden aplicarse reduciendo el saldo del crédito' })
+      }
+      if (!isCredit && refundMethod === 'CREDIT') {
+        await conn.rollback()
+        return res.status(400).json({ error: 'El ajuste a crédito solo aplica para ventas a crédito' })
+      }
+
+      const [saleItems] = await conn.query(
+        `
+          SELECT si.*,
+                 COALESCE(ret.returned_quantity, 0) AS returned_quantity
+          FROM sale_items si
+          LEFT JOIN (
+            SELECT sri.sale_item_id, COALESCE(SUM(sri.quantity), 0) AS returned_quantity
+            FROM sale_return_items sri
+            JOIN sale_returns sr ON sr.id = sri.sale_return_id
+            WHERE sr.sale_id = ?
+            GROUP BY sri.sale_item_id
+          ) ret ON ret.sale_item_id = si.id
+          WHERE si.sale_id = ?
+          FOR UPDATE
+        `,
+        [saleId, saleId]
+      )
+
+      const saleItemMap = new Map()
+      for (const item of saleItems || []) {
+        saleItemMap.set(Number(item.id), item)
+      }
+
+      const normalizedItems = []
+      let refundTotal = 0
+
+      for (const entry of requestedItems) {
+        const saleItemId = Number(entry?.saleItemId || 0)
+        const quantity = Number(entry?.quantity || 0)
+        if (!saleItemId || !Number.isFinite(quantity) || quantity <= 0) {
+          throw new Error('Hay productos con cantidades inválidas en la devolución')
+        }
+
+        const saleItem = saleItemMap.get(saleItemId)
+        if (!saleItem) {
+          throw new Error('Uno de los productos ya no pertenece a esta venta')
+        }
+
+        const soldQuantity = Number(saleItem.quantity || 0)
+        const returnedQuantity = Number(saleItem.returned_quantity || 0)
+        const availableReturnQuantity = roundCurrency(soldQuantity - returnedQuantity)
+        if (quantity - availableReturnQuantity > 0.0001) {
+          throw new Error(`La cantidad a devolver excede lo disponible en ${saleItemId}`)
+        }
+
+        if ((saleItem.serial || saleItem.imei) && Math.abs(quantity - 1) > 0.0001) {
+          throw new Error('Los productos con serie o IMEI solo pueden devolverse en cantidad 1')
+        }
+
+        const unitPrice = Number(saleItem.unit_price || 0)
+        const unitCost = Number(
+          saleItem.unit_cost_snapshot != null
+            ? saleItem.unit_cost_snapshot
+            : (soldQuantity > 0 ? Number(saleItem.total_cost_snapshot || 0) / soldQuantity : 0)
+        )
+        const lineRefund = roundCurrency(unitPrice * quantity)
+        const lineCost = roundCurrency(unitCost * quantity)
+
+        normalizedItems.push({
+          saleItem,
+          quantity,
+          unitPrice,
+          unitCost,
+          lineRefund,
+          lineCost,
+        })
+        refundTotal = roundCurrency(refundTotal + lineRefund)
+      }
+
+      if (refundTotal <= 0) {
+        throw new Error('El total de la devolución no es válido')
+      }
+
+      let activeShift = null
+      const affectsCash = refundMethod === 'CASH'
+      if (affectsCash) {
+        const [shiftRows] = await conn.query(
+          'SELECT id FROM cashbox_shifts WHERE opened_by = ? AND closed_at IS NULL ORDER BY id DESC LIMIT 1 FOR UPDATE',
+          [req.user.id]
+        )
+        activeShift = shiftRows?.[0] || null
+        if (!activeShift) {
+          throw new Error('Caja cerrada. Debes abrir caja para registrar devoluciones en efectivo.')
+        }
+      }
+
+      if (refundMethod === 'CREDIT') {
+        const [installments] = await conn.query(
+          `
+            SELECT i.id, i.amount, i.paid, i.paid_at, i.due_date,
+                   COALESCE(SUM(cp.amount), 0) AS paid_so_far
+            FROM installments i
+            LEFT JOIN credit_payments cp ON cp.installment_id = i.id
+            WHERE i.sale_id = ?
+            GROUP BY i.id, i.amount, i.paid, i.paid_at, i.due_date
+            ORDER BY i.due_date ASC, i.id ASC
+            FOR UPDATE
+          `,
+          [saleId]
+        )
+
+        let outstandingTotal = 0
+        for (const installment of installments || []) {
+          outstandingTotal += Math.max(0, Number(installment.amount || 0) - Number(installment.paid_so_far || 0))
+        }
+        outstandingTotal = roundCurrency(outstandingTotal)
+
+        if (refundTotal - outstandingTotal > 0.009) {
+          throw new Error(`La devolución excede el saldo pendiente del crédito (${outstandingTotal.toFixed(2)})`)
+        }
+
+        let remainingAdjustment = refundTotal
+        for (const installment of installments || []) {
+          if (remainingAdjustment <= 0.009) break
+          const currentAmount = Number(installment.amount || 0)
+          const paidSoFar = Number(installment.paid_so_far || 0)
+          const outstanding = Math.max(0, currentAmount - paidSoFar)
+          if (outstanding <= 0.009) continue
+
+          const applied = Math.min(outstanding, remainingAdjustment)
+          const nextAmount = roundCurrency(currentAmount - applied)
+          const shouldMarkPaid = nextAmount - paidSoFar <= 0.009
+
+          await conn.query(
+            'UPDATE installments SET amount = ?, paid = ?, paid_at = ? WHERE id = ?',
+            [
+              nextAmount,
+              shouldMarkPaid ? 1 : 0,
+              shouldMarkPaid ? (installment.paid_at || new Date()) : null,
+              installment.id,
+            ]
+          )
+
+          remainingAdjustment = roundCurrency(remainingAdjustment - applied)
+        }
+      }
+
+      const [returnInsert] = await conn.query(
+        `
+          INSERT INTO sale_returns (sale_id, user_id, warehouse_id, reason, refund_method, refund_total, affects_cash)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `,
+        [saleId, req.user?.id || null, Number(sale.warehouse_id || userWarehouseId || 0), reason, refundMethod, refundTotal, affectsCash ? 1 : 0]
+      )
+      const saleReturnId = Number(returnInsert.insertId)
+
+      for (const item of normalizedItems) {
+        await conn.query(
+          `
+            INSERT INTO sale_return_items
+            (sale_return_id, sale_item_id, product_id, quantity, unit_price, total, unit_cost_snapshot, total_cost_snapshot, serial, imei)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          [
+            saleReturnId,
+            item.saleItem.id,
+            item.saleItem.product_id,
+            item.quantity,
+            item.unitPrice,
+            item.lineRefund,
+            item.unitCost,
+            item.lineCost,
+            item.saleItem.serial || null,
+            item.saleItem.imei || null,
+          ]
+        )
+
+        if (item.saleItem.serial) {
+          const [serialRestore] = await conn.query(
+            'UPDATE product_serials SET status = "AVAILABLE", warehouse_id = ? WHERE product_id = ? AND serial_no = ? AND status = "SOLD"',
+            [Number(sale.warehouse_id || userWarehouseId || 0), item.saleItem.product_id, item.saleItem.serial]
+          )
+          if (!serialRestore.affectedRows) {
+            throw new Error(`No se pudo reactivar la serie ${item.saleItem.serial}`)
+          }
+        } else if (item.saleItem.imei) {
+          const [imeiRestore] = await conn.query(
+            'UPDATE product_imeis SET status = "AVAILABLE", warehouse_id = ? WHERE product_id = ? AND imei = ? AND status = "SOLD"',
+            [Number(sale.warehouse_id || userWarehouseId || 0), item.saleItem.product_id, item.saleItem.imei]
+          )
+          if (!imeiRestore.affectedRows) {
+            throw new Error(`No se pudo reactivar el IMEI ${item.saleItem.imei}`)
+          }
+        }
+
+        await registerMovement({
+          productId: item.saleItem.product_id,
+          warehouseId: Number(sale.warehouse_id || userWarehouseId || 0),
+          type: 'ADJUSTMENT',
+          quantity: item.quantity,
+          referenceId: saleReturnId,
+          userId: req.user?.id,
+          notes: `Devolución parcial venta #${saleId} / devolución #${saleReturnId}`,
+        }, conn)
+      }
+
+      if (affectsCash) {
+        await conn.query(
+          'INSERT INTO cash_movements (shift_id, type, concept, amount, ref_type, ref_id) VALUES (?, "OUT", ?, ?, "SALE_RETURN", ?)',
+          [activeShift.id, `Devolución parcial venta #${saleId}`, refundTotal, saleReturnId]
+        )
+      }
+
+      await conn.commit()
+      res.json({ success: true, saleReturnId, refundTotal })
+    } catch (error) {
+      await conn.rollback()
+      console.error('Sale partial return error:', error)
+      res.status(400).json({ error: error.message || 'No se pudo registrar la devolución parcial' })
+    } finally {
+      conn.release()
+    }
+  } catch (err) {
+    console.error('Sale partial return route error:', err)
     res.status(500).json({ error: 'Server error' })
   }
 })
