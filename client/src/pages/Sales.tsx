@@ -37,7 +37,10 @@ interface Sale {
 interface SaleItem {
   id: number
   product_id?: number
+  product_type?: string
   product_name: string
+  product_description?: string
+  batch_no?: string | null
   sku?: string
   quantity: number
   unit_price: number
@@ -60,7 +63,10 @@ interface SaleReturnRecord {
     id: number
     sale_item_id: number
     product_id: number
+    product_type?: string
     product_name: string
+    product_description?: string
+    batch_no?: string | null
     quantity: number
     unit_price: number
     total: number
@@ -113,6 +119,36 @@ const EMPTY_SUMMARY: SalesSummary = {
 
 type PaymentFilter = 'NON_CREDIT' | 'CASH' | 'CARD' | 'DEPOSIT' | 'CREDIT' | 'CREDIT_PAID' | 'REALIZED' | 'ALL'
 type StatusFilter = 'ACTIVE' | 'CANCELLED' | 'ALL'
+
+function estimateTicketDescriptionHeight(text?: string) {
+  if (!text) return 0
+  const normalized = String(text).replace(/\r/g, '')
+  const paragraphs = normalized.split('\n')
+  let lines = 0
+
+  for (const paragraph of paragraphs) {
+    const trimmed = paragraph.trim()
+    if (!trimmed) {
+      lines += 1
+      continue
+    }
+
+    const words = trimmed.split(/\s+/)
+    let currentLineLength = 0
+    for (const word of words) {
+      const nextLength = currentLineLength === 0 ? word.length : currentLineLength + 1 + word.length
+      if (nextLength > 34) {
+        lines += 1
+        currentLineLength = word.length
+      } else {
+        currentLineLength = nextLength
+      }
+    }
+    if (currentLineLength > 0) lines += 1
+  }
+
+  return lines * 3.2 + 1
+}
 
 function getPaymentFilterLabel(filter: PaymentFilter) {
   if (filter === 'NON_CREDIT') return 'Sin crédito'
@@ -198,6 +234,33 @@ function getRefundMethodLabel(method?: string) {
   if (method === 'DEPOSIT') return 'Depósito'
   if (method === 'CREDIT') return 'Ajuste a crédito'
   return method || 'N/D'
+}
+
+function renderTrackedItemMeta(item: { product_type?: string; batch_no?: string | null; serial?: string | null; imei?: string | null }) {
+  const normalizedType = String(item.product_type || '').toUpperCase()
+  const showMissingBatch = normalizedType === 'MEDICINAL' && !item.batch_no
+
+  if (!item.batch_no && !item.serial && !item.imei && !showMissingBatch) return null
+
+  const chipStyle = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '4px 10px',
+    borderRadius: 999,
+    background: 'var(--bg)',
+    border: '1px solid var(--border)',
+    fontSize: 12,
+    fontWeight: 600,
+  } as const
+
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+      {item.batch_no && <span style={chipStyle}>Lote: {item.batch_no}</span>}
+      {showMissingBatch && <span style={{ ...chipStyle, color: '#b45309', borderColor: 'rgba(245, 158, 11, 0.35)', background: 'rgba(245, 158, 11, 0.12)' }}>Lote no registrado</span>}
+      {item.serial && <span style={chipStyle}>Serie: {item.serial}</span>}
+      {item.imei && <span style={chipStyle}>IMEI: {item.imei}</span>}
+    </div>
+  )
 }
 
 function getPaymentMethodStyles(method?: string, isCredit?: number) {
@@ -545,9 +608,9 @@ export default function Sales() {
   const generateTicket = async (sale: SaleDetail) => {
      // Calcular altura dinámica
      const headerHeight = 58
-     const itemHeight = 5
-     const footerHeight = 40
-     const totalHeight = headerHeight + (sale.items.length * itemHeight) + footerHeight
+     const itemHeight = sale.items.reduce((sum, item) => sum + 6 + estimateTicketDescriptionHeight(item.product_description), 0)
+     const footerHeight = 58
+     const totalHeight = headerHeight + itemHeight + footerHeight + 16
      
      const doc = new jsPDF({
        orientation: 'portrait',
@@ -578,6 +641,15 @@ export default function Sales() {
        doc.text(`${formatNumber(Number(item.quantity), 0)} x ${formatNumber(Number(item.unit_price))}`, 50, y, { align: 'right' })
        doc.text(formatNumber(Number(lineTotal)), 75, y, { align: 'right' })
        y += 5
+       if (item.product_description) {
+         const descriptionLines = doc.splitTextToSize(item.product_description, 43)
+         doc.setFontSize(5.2)
+         doc.setTextColor(107, 114, 128)
+         doc.text(descriptionLines, 5, y)
+         doc.setTextColor(0, 0, 0)
+         doc.setFontSize(8)
+         y += Math.max(3, descriptionLines.length * 3)
+       }
      })
  
      doc.line(5, y, 75, y)
@@ -1228,6 +1300,10 @@ export default function Sales() {
                     {selectedSale.items.map(item => (
                       <div key={item.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, background: 'var(--bg)', display: 'grid', gap: 6 }}>
                         <div style={{ fontWeight: 700 }}>{item.product_name}</div>
+                        {item.product_description && (
+                          <div style={{ fontSize: '0.84rem', color: 'var(--muted)', lineHeight: 1.4 }}>{item.product_description}</div>
+                        )}
+                        {renderTrackedItemMeta(item)}
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, fontSize: '0.9rem' }}>
                           <div><span style={{ color: 'var(--muted)' }}>Cant.</span><br />{item.quantity}</div>
                           <div><span style={{ color: 'var(--muted)' }}>Precio</span><br />{formatNumber(Number(item.unit_price))}</div>
@@ -1257,6 +1333,12 @@ export default function Sales() {
                         <tr key={item.id} style={{ borderBottom: '1px solid var(--border)' }}>
                           <td style={{ padding: '10px 16px' }}>
                             {item.product_name}
+                            {item.product_description && (
+                              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4, lineHeight: 1.4 }}>
+                                {item.product_description}
+                              </div>
+                            )}
+                            {renderTrackedItemMeta(item)}
                             {Number(item.returned_quantity || 0) > 0 && (
                               <div style={{ fontSize: 12, color: '#dc2626', marginTop: 4 }}>
                                 Devuelto: {formatNumber(Number(item.returned_quantity || 0), 0)} | Disponible: {formatNumber(Number(item.available_return_quantity || 0), 0)}
@@ -1306,6 +1388,12 @@ export default function Sales() {
                               <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', fontSize: 13, padding: '8px 10px', borderRadius: 8, background: 'var(--bg)', border: '1px solid var(--border)' }}>
                                 <div>
                                   <strong>{item.product_name}</strong> x {formatNumber(Number(item.quantity || 0), 0)}
+                                  {item.product_description && (
+                                    <div style={{ marginTop: 4, color: 'var(--muted)', lineHeight: 1.4 }}>
+                                      {item.product_description}
+                                    </div>
+                                  )}
+                                  {renderTrackedItemMeta(item)}
                                 </div>
                                 <div>{formatMoney(item.total)}</div>
                               </div>
@@ -1384,6 +1472,12 @@ export default function Sales() {
                 activeReturnableItems.map(item => (
                   <div key={item.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, background: 'var(--bg)', display: 'grid', gap: 8 }}>
                     <div style={{ fontWeight: 700 }}>{item.product_name}</div>
+                    {item.product_description && (
+                      <div style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.4 }}>
+                        {item.product_description}
+                      </div>
+                    )}
+                    {renderTrackedItemMeta(item)}
                     <div style={{ fontSize: 13, color: 'var(--muted)' }}>
                       Vendido: {formatNumber(Number(item.quantity || 0), 0)} | Disponible para devolver: {formatNumber(Number(item.available_return_quantity || 0), 0)}
                     </div>

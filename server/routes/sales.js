@@ -136,6 +136,14 @@ async function ensureSalesSchema(db) {
     await db.query('ALTER TABLE sale_items ADD COLUMN total_cost_snapshot DECIMAL(12,2) NULL')
   }
 
+  if (!(await columnExists(db, 'sale_items', 'batch_no'))) {
+    await db.query('ALTER TABLE sale_items ADD COLUMN batch_no VARCHAR(100) NULL')
+  }
+
+  if (!(await columnExists(db, 'sale_items', 'product_description_snapshot'))) {
+    await db.query('ALTER TABLE sale_items ADD COLUMN product_description_snapshot TEXT NULL')
+  }
+
   await db.query(`
     CREATE TABLE IF NOT EXISTS sale_returns (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -170,6 +178,14 @@ async function ensureSalesSchema(db) {
     )
   `)
 
+  if (!(await columnExists(db, 'sale_return_items', 'batch_no'))) {
+    await db.query('ALTER TABLE sale_return_items ADD COLUMN batch_no VARCHAR(100) NULL')
+  }
+
+  if (!(await columnExists(db, 'sale_return_items', 'product_description_snapshot'))) {
+    await db.query('ALTER TABLE sale_return_items ADD COLUMN product_description_snapshot TEXT NULL')
+  }
+
   try {
     await db.query(`
       ALTER TABLE cash_movements
@@ -183,8 +199,21 @@ async function ensureSalesSchema(db) {
     UPDATE sale_items si
     JOIN products p ON p.id = si.product_id
     SET si.unit_cost_snapshot = COALESCE(si.unit_cost_snapshot, p.avg_cost, p.cost, 0),
-        si.total_cost_snapshot = COALESCE(si.total_cost_snapshot, si.quantity * COALESCE(si.unit_cost_snapshot, p.avg_cost, p.cost, 0))
-    WHERE si.unit_cost_snapshot IS NULL OR si.total_cost_snapshot IS NULL
+        si.total_cost_snapshot = COALESCE(si.total_cost_snapshot, si.quantity * COALESCE(si.unit_cost_snapshot, p.avg_cost, p.cost, 0)),
+        si.product_description_snapshot = COALESCE(si.product_description_snapshot, p.description)
+    WHERE si.unit_cost_snapshot IS NULL
+       OR si.total_cost_snapshot IS NULL
+       OR si.product_description_snapshot IS NULL
+  `)
+
+  await db.query(`
+    UPDATE sale_return_items sri
+    JOIN products p ON p.id = sri.product_id
+    LEFT JOIN sale_items si ON si.id = sri.sale_item_id
+    SET sri.product_description_snapshot = COALESCE(sri.product_description_snapshot, si.product_description_snapshot, p.description),
+        sri.batch_no = COALESCE(sri.batch_no, si.batch_no)
+    WHERE sri.product_description_snapshot IS NULL
+       OR sri.batch_no IS NULL
   `)
 }
 
@@ -671,7 +700,7 @@ router.post('/', authMiddleware, async (req, res) => {
       for (const item of items) {
         // item: { productId, quantity, price, imei, serial }
         const [productRows] = await conn.query(
-          'SELECT price, price2, price3, product_type, avg_cost, cost FROM products WHERE id = ? LIMIT 1',
+          'SELECT price, price2, price3, product_type, avg_cost, cost, description FROM products WHERE id = ? LIMIT 1',
           [item.productId]
         )
         const productPriceRow = productRows?.[0]
@@ -746,11 +775,12 @@ router.post('/', authMiddleware, async (req, res) => {
         const itemTotal = Number(item.price) * Number(item.quantity)
         const unitCostSnapshot = Math.round(Number(productPriceRow.avg_cost ?? productPriceRow.cost ?? 0) * 100) / 100
         const totalCostSnapshot = Math.round(unitCostSnapshot * Number(item.quantity || 0) * 100) / 100
+        const productDescriptionSnapshot = String(productPriceRow.description || '').trim() || null
         
         // Insertar sale_item
         await conn.query(
-          'INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, total, serial, imei, original_unit_price, price_source, unit_cost_snapshot, total_cost_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [saleId, item.productId, item.quantity, item.price, itemTotal, item.serial || null, item.imei || null, originalUnitPrice, priceSource, unitCostSnapshot, totalCostSnapshot]
+          'INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, total, serial, imei, batch_no, product_description_snapshot, original_unit_price, price_source, unit_cost_snapshot, total_cost_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [saleId, item.productId, item.quantity, item.price, itemTotal, item.serial || null, item.imei || null, item.batchNo || null, productDescriptionSnapshot, originalUnitPrice, priceSource, unitCostSnapshot, totalCostSnapshot]
         )
 
         if (item.serial) {
@@ -789,7 +819,12 @@ router.post('/', authMiddleware, async (req, res) => {
             quantity: item.quantity,
             referenceId: saleId,
             userId: req.user?.id,
-            notes: `Venta #${saleResult.insertId}`
+            notes: [
+              `Venta #${saleResult.insertId}`,
+              item.batchNo ? `Lote: ${item.batchNo}` : null,
+              item.serial ? `Serie: ${item.serial}` : null,
+              item.imei ? `IMEI: ${item.imei}` : null,
+            ].filter(Boolean).join(' | ')
         }, conn)
       }
 
@@ -1035,7 +1070,8 @@ router.get('/:id', authMiddleware, async (req, res) => {
 
     // Items
     const [items] = await pool.query(`
-      SELECT si.*, p.name as product_name, p.sku,
+      SELECT si.*, p.name as product_name, p.sku, p.product_type,
+             COALESCE(si.product_description_snapshot, p.description) AS product_description,
              COALESCE(ret.returned_quantity, 0) AS returned_quantity,
              GREATEST(si.quantity - COALESCE(ret.returned_quantity, 0), 0) AS available_return_quantity
       FROM sale_items si
@@ -1067,7 +1103,10 @@ router.get('/:id', authMiddleware, async (req, res) => {
              sri.total,
              sri.serial,
              sri.imei,
-             p.name AS product_name
+             sri.batch_no,
+             p.name AS product_name,
+             p.product_type,
+             COALESCE(sri.product_description_snapshot, p.description) AS product_description
       FROM sale_returns sr
       LEFT JOIN users u ON u.id = sr.user_id
       LEFT JOIN sale_return_items sri ON sri.sale_return_id = sr.id
@@ -1097,11 +1136,14 @@ router.get('/:id', authMiddleware, async (req, res) => {
           sale_item_id: row.sale_item_id,
           product_id: row.product_id,
           product_name: row.product_name || 'Producto',
+          product_description: row.product_description || '',
+          product_type: row.product_type || 'GENERAL',
           quantity: Number(row.quantity || 0),
           unit_price: Number(row.unit_price || 0),
           total: Number(row.total || 0),
           serial: row.serial || null,
           imei: row.imei || null,
+          batch_no: row.batch_no || null,
         })
       }
     }
@@ -1323,8 +1365,8 @@ router.post('/:id/returns', authMiddleware, async (req, res) => {
         await conn.query(
           `
             INSERT INTO sale_return_items
-            (sale_return_id, sale_item_id, product_id, quantity, unit_price, total, unit_cost_snapshot, total_cost_snapshot, serial, imei)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (sale_return_id, sale_item_id, product_id, quantity, unit_price, total, unit_cost_snapshot, total_cost_snapshot, serial, imei, batch_no, product_description_snapshot)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           [
             saleReturnId,
@@ -1337,6 +1379,8 @@ router.post('/:id/returns', authMiddleware, async (req, res) => {
             item.lineCost,
             item.saleItem.serial || null,
             item.saleItem.imei || null,
+            item.saleItem.batch_no || null,
+            item.saleItem.product_description_snapshot || null,
           ]
         )
 

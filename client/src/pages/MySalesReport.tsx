@@ -24,11 +24,16 @@ interface Sale {
 
 interface SaleItem {
   id: number
+  product_type?: string
   product_name: string
+  product_description?: string
+  batch_no?: string | null
   sku?: string
   quantity: number
   unit_price: number
   total: number
+  serial?: string | null
+  imei?: string | null
 }
 
 interface SaleDetail extends Sale {
@@ -128,6 +133,33 @@ function getSaleStatusLabel(sale: Pick<Sale, 'status' | 'payment_method' | 'is_c
   if (isCreditSale(sale) && !sale.credit_fully_paid) return 'PENDIENTE'
   if (isCreditSale(sale)) return 'LIQUIDADO'
   return 'PAGADO'
+}
+
+function renderTrackedItemMeta(item: { product_type?: string; batch_no?: string | null; serial?: string | null; imei?: string | null }) {
+  const normalizedType = String(item.product_type || '').toUpperCase()
+  const showMissingBatch = normalizedType === 'MEDICINAL' && !item.batch_no
+
+  if (!item.batch_no && !item.serial && !item.imei && !showMissingBatch) return null
+
+  const chipStyle = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '4px 10px',
+    borderRadius: 999,
+    background: 'var(--bg)',
+    border: '1px solid var(--border)',
+    fontSize: 12,
+    fontWeight: 600,
+  } as const
+
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+      {item.batch_no && <span style={chipStyle}>Lote: {item.batch_no}</span>}
+      {showMissingBatch && <span style={{ ...chipStyle, color: '#b45309', borderColor: 'rgba(245, 158, 11, 0.35)', background: 'rgba(245, 158, 11, 0.12)' }}>Lote no registrado</span>}
+      {item.serial && <span style={chipStyle}>Serie: {item.serial}</span>}
+      {item.imei && <span style={chipStyle}>IMEI: {item.imei}</span>}
+    </div>
+  )
 }
 
 export default function MySalesReport() {
@@ -423,7 +455,15 @@ export default function MySalesReport() {
                     <tbody>
                       {selectedSale.items.map(item => (
                         <tr key={item.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                          <td style={{ padding: '10px 16px' }}>{item.product_name}</td>
+                          <td style={{ padding: '10px 16px' }}>
+                            {item.product_name}
+                            {item.product_description && (
+                              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4, lineHeight: 1.4 }}>
+                                {item.product_description}
+                              </div>
+                            )}
+                            {renderTrackedItemMeta(item)}
+                          </td>
                           <td style={{ padding: '10px 16px', textAlign: 'right' }}>{item.quantity}</td>
                           <td style={{ padding: '10px 16px', textAlign: 'right' }}>{formatNumber(Number(item.unit_price))}</td>
                           <td style={{ padding: '10px 16px', textAlign: 'right' }}>{formatNumber(Number(item.total))}</td>

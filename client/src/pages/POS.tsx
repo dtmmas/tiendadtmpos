@@ -14,6 +14,7 @@ import MobileBarcodeScannerButton from '../components/MobileBarcodeScannerButton
 interface Product {
   id: number
   name: string
+  description?: string
   price: number
   price2?: number
   price3?: number
@@ -84,14 +85,46 @@ type CompletedSale = {
 }
 
 type GeneratedQuote = {
+  id: string
   quoteNo: string
   date: string
+  createdAt: string
   items: CartItem[]
   total: number
   customer?: Customer
 }
 
 type POSMode = 'sale' | 'quote'
+
+function estimateTicketDescriptionHeight(text?: string) {
+  if (!text) return 0
+  const normalized = String(text).replace(/\r/g, '')
+  const paragraphs = normalized.split('\n')
+  let lines = 0
+
+  for (const paragraph of paragraphs) {
+    const trimmed = paragraph.trim()
+    if (!trimmed) {
+      lines += 1
+      continue
+    }
+
+    const words = trimmed.split(/\s+/)
+    let currentLineLength = 0
+    for (const word of words) {
+      const nextLength = currentLineLength === 0 ? word.length : currentLineLength + 1 + word.length
+      if (nextLength > 34) {
+        lines += 1
+        currentLineLength = word.length
+      } else {
+        currentLineLength = nextLength
+      }
+    }
+    if (currentLineLength > 0) lines += 1
+  }
+
+  return lines * 3.2 + 1
+}
 
 export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
   const isQuoteMode = mode === 'quote'
@@ -120,6 +153,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
   const [isPhoneViewport, setIsPhoneViewport] = useState(false)
   const [isPhonePaymentPanelOpen, setIsPhonePaymentPanelOpen] = useState(false)
   const [isPhoneHeldSalesOpen, setIsPhoneHeldSalesOpen] = useState(false)
+  const [isPhoneGeneratedQuotesOpen, setIsPhoneGeneratedQuotesOpen] = useState(false)
 
   // Batch Selection State
   const [selectedProductForBatch, setSelectedProductForBatch] = useState<Product | null>(null)
@@ -155,6 +189,10 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
   const [lastQuote, setLastQuote] = useState<GeneratedQuote | null>(null)
   const [heldSales, setHeldSales] = useState<HeldSale[]>([])
   const [heldSalesLoaded, setHeldSalesLoaded] = useState(false)
+  const [generatedQuotes, setGeneratedQuotes] = useState<GeneratedQuote[]>([])
+  const [generatedQuotesLoaded, setGeneratedQuotesLoaded] = useState(false)
+  const [selectedQuote, setSelectedQuote] = useState<GeneratedQuote | null>(null)
+  const [isQuoteViewerOpen, setIsQuoteViewerOpen] = useState(false)
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
@@ -170,9 +208,13 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
 
   const navigate = useNavigate()
   const heldSalesStorageKey = `dtmpos_${isQuoteMode ? 'quotes' : 'pos'}_held_sales_${user?.id || 'guest'}`
+  const generatedQuotesStorageKey = `dtmpos_quote_history_${user?.id || 'guest'}`
+  const quoteToSaleStorageKey = `dtmpos_quote_to_sale_${user?.id || 'guest'}`
   const currentOrderLabel = isQuoteMode ? 'Cotización Actual' : 'Orden Actual'
   const heldOrderLabel = isQuoteMode ? 'Cotizaciones En Espera' : 'Ventas En Espera'
   const emptyHeldOrderLabel = isQuoteMode ? 'No hay cotizaciones guardadas en espera.' : 'No hay ventas guardadas en espera.'
+  const generatedQuotesLabel = 'Cotizaciones Generadas'
+  const emptyGeneratedQuotesLabel = 'No hay cotizaciones generadas para consultar.'
   const backButtonLabel = isQuoteMode ? 'Cerrar cotizador' : 'Cerrar POS'
   const scannerTitle = isQuoteMode ? 'Escanear producto en cotización' : 'Escanear producto en POS'
   const modeChipLabel = isQuoteMode ? 'Modo cotización' : 'Modo venta'
@@ -209,6 +251,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
       if (!isPhone) {
         setIsPhonePaymentPanelOpen(false)
         setIsPhoneHeldSalesOpen(false)
+        setIsPhoneGeneratedQuotesOpen(false)
       }
     }
 
@@ -266,6 +309,63 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
       console.error('Error saving held POS sales:', err)
     }
   }, [heldSales, heldSalesStorageKey, heldSalesLoaded])
+
+  useEffect(() => {
+    setGeneratedQuotesLoaded(false)
+    try {
+      const raw = localStorage.getItem(generatedQuotesStorageKey)
+      const parsed = raw ? JSON.parse(raw) : []
+      if (Array.isArray(parsed)) {
+        setGeneratedQuotes(
+          parsed.map((quote, index) => ({
+            ...quote,
+            id: quote?.id || `${Date.now()}_${index}`,
+            createdAt: quote?.createdAt || quote?.date || new Date().toISOString(),
+          }))
+        )
+      } else {
+        setGeneratedQuotes([])
+      }
+    } catch (err) {
+      console.error('Error loading generated quotes:', err)
+      setGeneratedQuotes([])
+    } finally {
+      setGeneratedQuotesLoaded(true)
+    }
+  }, [generatedQuotesStorageKey])
+
+  useEffect(() => {
+    if (!generatedQuotesLoaded) return
+    try {
+      localStorage.setItem(generatedQuotesStorageKey, JSON.stringify(generatedQuotes))
+    } catch (err) {
+      console.error('Error saving generated quotes:', err)
+    }
+  }, [generatedQuotes, generatedQuotesStorageKey, generatedQuotesLoaded])
+
+  useEffect(() => {
+    if (isQuoteMode) return
+    try {
+      const raw = localStorage.getItem(quoteToSaleStorageKey)
+      if (!raw) return
+
+      const pendingQuote = JSON.parse(raw) as GeneratedQuote | null
+      localStorage.removeItem(quoteToSaleStorageKey)
+
+      if (!pendingQuote || !Array.isArray(pendingQuote.items) || pendingQuote.items.length === 0) return
+
+      setCart(pendingQuote.items)
+      setSelectedCustomer(pendingQuote.customer?.id || null)
+      setPaymentMethod('CASH')
+      setReceivedAmount('')
+      setReferenceNumber('')
+      setLastQuote(pendingQuote)
+      setIsMobileCartOpen(true)
+    } catch (err) {
+      console.error('Error loading quote transferred to sale:', err)
+      localStorage.removeItem(quoteToSaleStorageKey)
+    }
+  }, [isQuoteMode, quoteToSaleStorageKey])
 
   useEffect(() => {
     if (isQuoteMode) return
@@ -870,6 +970,146 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
     </div>
   )
 
+  const openQuoteViewer = (quote: GeneratedQuote) => {
+    setSelectedQuote(quote)
+    setIsQuoteViewerOpen(true)
+  }
+
+  const closeQuoteViewer = () => {
+    setIsQuoteViewerOpen(false)
+    setSelectedQuote(null)
+  }
+
+  const reprintGeneratedQuote = (quote: GeneratedQuote) => {
+    setLastQuote(quote)
+    printQuoteHtml(quote.quoteNo, quote.date, quote.items, quote.total, quote.customer)
+  }
+
+  const loadGeneratedQuote = (quote: GeneratedQuote) => {
+    if (cart.length > 0) {
+      const confirmReplace = window.confirm('Ya tienes una cotización activa. ¿Quieres reemplazarla por la cotización guardada?')
+      if (!confirmReplace) return
+    }
+
+    setCart(quote.items)
+    setSelectedCustomer(quote.customer?.id || null)
+    setPaymentMethod('CASH')
+    setReceivedAmount('')
+    setReferenceNumber('')
+    setLastQuote(quote)
+    closeQuoteViewer()
+  }
+
+  const moveGeneratedQuoteToSale = (quote: GeneratedQuote) => {
+    try {
+      localStorage.setItem(quoteToSaleStorageKey, JSON.stringify(quote))
+      closeQuoteViewer()
+      navigate('/pos')
+    } catch (err) {
+      console.error('Error sending quote to POS sale:', err)
+      alert('No se pudo pasar la cotización a venta.')
+    }
+  }
+
+  const deleteGeneratedQuote = (quoteId: string) => {
+    setGeneratedQuotes(prev => prev.filter(quote => quote.id !== quoteId))
+    if (selectedQuote?.id === quoteId) {
+      closeQuoteViewer()
+    }
+  }
+
+  const renderGeneratedQuotesSection = (compact = false) => (
+    <div
+      className={compact ? 'pos-held-sales-block pos-held-sales-block-compact' : 'pos-held-sales-block'}
+      style={{ padding: compact ? '0 16px 12px' : '10px 16px', borderBottom: compact ? 'none' : '1px solid var(--border)', backgroundColor: 'var(--bg)' }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: generatedQuotes.length ? 10 : 0 }}>
+        <div style={{ fontWeight: 700, color: 'var(--text)' }}>{generatedQuotesLabel}</div>
+        <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{generatedQuotes.length}</div>
+      </div>
+      {generatedQuotes.length === 0 ? (
+        <div style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
+          {emptyGeneratedQuotesLabel}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: compact ? 240 : 220, overflowY: 'auto' }}>
+          {generatedQuotes.map(quote => (
+            <div key={quote.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, background: 'var(--modal)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+                <div>
+                  <div style={{ fontWeight: 700, color: 'var(--text)' }}>{quote.quoteNo}</div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
+                    {quote.customer?.name || 'Cliente general'} | {quote.items.length} item(s)
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>
+                    {quote.date}
+                  </div>
+                </div>
+                <div style={{ fontWeight: 700, color: 'var(--accent)' }}>
+                  {formatMoney(quote.total)}
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr 1fr' : 'repeat(5, minmax(0, 1fr))', gap: 8, marginTop: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => openQuoteViewer(quote)}
+                  style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  Ver
+                </button>
+                <button
+                  type="button"
+                  onClick={() => reprintGeneratedQuote(quote)}
+                  style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  Imprimir
+                </button>
+                <button
+                  type="button"
+                  onClick={() => loadGeneratedQuote(quote)}
+                  style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid rgba(37, 99, 235, 0.35)', background: 'rgba(37, 99, 235, 0.08)', color: '#2563eb', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  Cargar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => moveGeneratedQuoteToSale(quote)}
+                  style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid rgba(22, 163, 74, 0.35)', background: 'rgba(22, 163, 74, 0.08)', color: '#16a34a', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  Pasar a venta
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deleteGeneratedQuote(quote.id)}
+                  style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid rgba(239, 68, 68, 0.35)', background: 'transparent', color: '#ef4444', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  Eliminar
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+
+  const renderPhoneGeneratedQuotesAccordion = () => (
+    <div className="pos-phone-held-sales-accordion">
+      <button
+        type="button"
+        className="pos-phone-held-sales-toggle"
+        onClick={() => setIsPhoneGeneratedQuotesOpen(prev => !prev)}
+      >
+        <span>{generatedQuotesLabel}</span>
+        <span className="pos-phone-held-sales-toggle-meta">
+          {generatedQuotes.length}
+          <span className={`pos-phone-held-sales-chevron${isPhoneGeneratedQuotesOpen ? ' open' : ''}`}>▾</span>
+        </span>
+      </button>
+      {isPhoneGeneratedQuotesOpen && renderGeneratedQuotesSection(true)}
+    </div>
+  )
+
   const buildPrintableTicketHtml = (
     saleId: number,
     date: string,
@@ -896,7 +1136,10 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
         const lineTotal = item.price * item.quantity
         return `
           <div class="row item">
-            <div class="name">${escapeHtml(item.name)}</div>
+            <div class="name-wrap">
+              <div class="name">${escapeHtml(item.name)}</div>
+              ${item.description ? `<div class="desc">${escapeHtml(item.description)}</div>` : ''}
+            </div>
             <div class="qty">${escapeHtml(formatNumber(item.quantity, 0))} x ${escapeHtml(formatNumber(item.price))}</div>
             <div class="line-total">${escapeHtml(formatNumber(lineTotal))}</div>
           </div>
@@ -923,7 +1166,9 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
       .divider { border-top: 1px dashed #000; margin: 3mm 0; }
       .row { display: flex; gap: 2mm; align-items: flex-start; }
       .item { margin-bottom: 2mm; }
-      .name { flex: 1; word-break: break-word; }
+      .name-wrap { flex: 1; min-width: 0; }
+      .name { word-break: break-word; }
+      .desc { margin-top: 0.4mm; font-size: 7px; line-height: 1.1; color: #4b5563; white-space: pre-wrap; word-break: break-word; }
       .qty, .line-total { white-space: nowrap; }
       .line-total { margin-left: auto; }
       .total { font-weight: 700; font-size: 12px; text-align: right; }
@@ -1169,16 +1414,22 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
   const handleGenerateQuote = () => {
     if (cart.length === 0) return
 
+    const now = new Date()
     const quoteData: GeneratedQuote = {
+      id: `${now.getTime()}_${Math.random().toString(36).slice(2, 8)}`,
       quoteNo: buildQuoteNo(),
-      date: formatDateTime(new Date()),
+      date: formatDateTime(now),
+      createdAt: now.toISOString(),
       items: [...cart],
       total,
       customer: selectedCustomer ? customers.find(c => c.id === selectedCustomer) : undefined,
     }
 
     setLastQuote(quoteData)
+    setGeneratedQuotes(prev => [quoteData, ...prev])
+    setIsPhoneGeneratedQuotesOpen(true)
     printQuoteHtml(quoteData.quoteNo, quoteData.date, quoteData.items, quoteData.total, quoteData.customer)
+    resetCurrentSale()
   }
 
   const buildHeldSale = (): HeldSale => {
@@ -1245,9 +1496,9 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
   const generateTicket = async (saleId: number, date: string, items: CartItem[], totalAmount: number, paymentDetails?: any, customer?: Customer, printWindow?: Window | null) => {
     // Calcular altura dinámica
     const headerHeight = 58
-    const itemHeight = 5
-    const footerHeight = 40
-    const totalHeight = headerHeight + (items.length * itemHeight) + footerHeight
+    const itemHeight = items.reduce((sum, item) => sum + 6 + estimateTicketDescriptionHeight(item.description), 0)
+    const footerHeight = 58
+    const totalHeight = headerHeight + itemHeight + footerHeight + 16
 
     const doc = new jsPDF({
       orientation: 'portrait',
@@ -1278,6 +1529,15 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
       doc.text(`${formatNumber(item.quantity, 0)} x ${formatNumber(item.price)}`, 50, y, { align: 'right' })
       doc.text(formatNumber(lineTotal), 75, y, { align: 'right' })
       y += 5
+      if (item.description) {
+        const descriptionLines = doc.splitTextToSize(item.description, 43)
+        doc.setFontSize(5.2)
+        doc.setTextColor(107, 114, 128)
+        doc.text(descriptionLines, 5, y)
+        doc.setTextColor(0, 0, 0)
+        doc.setFontSize(8)
+        y += Math.max(3, descriptionLines.length * 3)
+      }
     })
 
     doc.line(5, y, 75, y)
@@ -1823,6 +2083,7 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
       {/* Right: Cart */}
       <div className={`pos-cart ${isMobileCartOpen ? 'open' : ''}`}>
         {isPhoneViewport && renderPhoneHeldSalesAccordion()}
+        {isPhoneViewport && isQuoteMode && renderPhoneGeneratedQuotesAccordion()}
         {showPhoneCheckoutContext && (
           <>
             <div style={{ padding: 16, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1956,6 +2217,11 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
                     <div className="pos-cart-item-head">
                       <div className="pos-cart-item-title-wrap">
                         <div className="pos-cart-item-name">{item.name}</div>
+                        {item.description && (
+                          <div style={{ fontSize: '0.8rem', color: 'var(--muted)', lineHeight: 1.35 }}>
+                            {item.description}
+                          </div>
+                        )}
                         <div className="pos-cart-item-line">
                           <span>{config?.currency}</span>
                           {(item.price2 || item.price3) && canChangePosPrice ? (
@@ -2406,7 +2672,12 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
           </div>
         </div>
 
-        {!isPhoneViewport && renderHeldSalesSection(showPhoneProductsOnly)}
+        {!isPhoneViewport && (
+          <>
+            {renderHeldSalesSection(showPhoneProductsOnly)}
+            {isQuoteMode && renderGeneratedQuotesSection(showPhoneProductsOnly)}
+          </>
+        )}
       </div>
       {/* Customer Modal */}
       {isCustomerModalOpen && (
@@ -2760,6 +3031,112 @@ export default function POS({ mode = 'sale' }: { mode?: POSMode }) {
                 >
                     Cancelar
                 </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isQuoteViewerOpen && selectedQuote && (
+        <div className="modal-overlay" style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1100,
+          padding: 16
+        }}>
+          <div className="modal-content" style={{
+            backgroundColor: 'var(--modal)',
+            padding: 24,
+            borderRadius: 16,
+            width: '100%',
+            maxWidth: 720,
+            maxHeight: '85vh',
+            overflowY: 'auto',
+            boxShadow: '0 10px 30px rgba(0,0,0,0.18)',
+            border: '1px solid var(--border)',
+            color: 'var(--text)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 18 }}>
+              <div>
+                <h2 style={{ margin: 0, color: 'var(--text)' }}>{selectedQuote.quoteNo}</h2>
+                <div style={{ marginTop: 6, fontSize: '0.92rem', color: 'var(--muted)' }}>
+                  {selectedQuote.customer?.name || 'Cliente general'} | {selectedQuote.date}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeQuoteViewer}
+                style={{ background: 'transparent', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 8, padding: '8px 12px', cursor: 'pointer', fontWeight: 600 }}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div style={{ border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', marginBottom: 18 }}>
+              <div style={{ overflowX: 'auto' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.6fr) minmax(90px, 0.5fr) minmax(110px, 0.6fr) minmax(120px, 0.7fr)', gap: 12, padding: '12px 14px', background: 'var(--surface)', fontSize: '0.85rem', color: 'var(--muted)', fontWeight: 700 }}>
+                <span>Producto</span>
+                <span style={{ textAlign: 'center' }}>Cant.</span>
+                <span style={{ textAlign: 'right' }}>Precio</span>
+                <span style={{ textAlign: 'right' }}>Importe</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {selectedQuote.items.map((item, index) => (
+                  <div
+                    key={`${selectedQuote.id}_${item.id}_${index}`}
+                    style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.6fr) minmax(90px, 0.5fr) minmax(110px, 0.6fr) minmax(120px, 0.7fr)', gap: 12, padding: '12px 14px', borderTop: index === 0 ? 'none' : '1px solid var(--border)', alignItems: 'start' }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, color: 'var(--text)' }}>{item.name}</div>
+                      {item.description && (
+                        <div style={{ marginTop: 4, fontSize: '0.82rem', color: 'var(--muted)', whiteSpace: 'pre-wrap' }}>
+                          {item.description}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ textAlign: 'center', fontWeight: 600, color: 'var(--text)' }}>{formatNumber(item.quantity, 0)}</div>
+                    <div style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text)' }}>{formatMoney(item.price)}</div>
+                    <div style={{ textAlign: 'right', fontWeight: 700, color: 'var(--text)' }}>{formatMoney(item.price * item.quantity)}</div>
+                  </div>
+                ))}
+              </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: '0.82rem', color: 'var(--muted)' }}>Total cotizado</div>
+                <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--accent)' }}>{formatMoney(selectedQuote.total)}</div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => reprintGeneratedQuote(selectedQuote)}
+                  style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', cursor: 'pointer', fontWeight: 700 }}
+                >
+                  Imprimir
+                </button>
+                <button
+                  type="button"
+                  onClick={() => loadGeneratedQuote(selectedQuote)}
+                  style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid rgba(37, 99, 235, 0.35)', background: 'rgba(37, 99, 235, 0.08)', color: '#2563eb', cursor: 'pointer', fontWeight: 700 }}
+                >
+                  Cargar en cotizador
+                </button>
+                <button
+                  type="button"
+                  onClick={() => moveGeneratedQuoteToSale(selectedQuote)}
+                  style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid rgba(22, 163, 74, 0.35)', background: 'rgba(22, 163, 74, 0.08)', color: '#16a34a', cursor: 'pointer', fontWeight: 700 }}
+                >
+                  Pasar a venta
+                </button>
+              </div>
             </div>
           </div>
         </div>
