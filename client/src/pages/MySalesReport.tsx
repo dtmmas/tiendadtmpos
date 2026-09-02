@@ -315,7 +315,7 @@ export default function MySalesReport() {
         <form onSubmit={applyFilters} className="page-toolbar-actions" style={{ width: '100%' }}>
           <input
             type="text"
-            placeholder="Buscar por Doc / Cliente / ID"
+            placeholder="Buscar por Doc / Cliente / ID / Producto / Código / Descripción / IMEI / Serie / Lote"
             value={searchInput}
             onChange={e => setSearchInput(e.target.value)}
             style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit', minWidth: 220, maxWidth: '100%' }}

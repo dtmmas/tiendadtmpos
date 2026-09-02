@@ -314,8 +314,41 @@ function getSalesFilters(req, context, forceUserId = null) {
   }
 
   if (search) {
-    where.push(`(s.doc_no LIKE ? OR c.name LIKE ? OR s.id = ? OR ${context.sellerNameExpr} LIKE ?)`)
-    params.push(`%${search}%`, `%${search}%`, Number(search) || 0, `%${search}%`)
+    where.push(`(
+      s.doc_no LIKE ?
+      OR c.name LIKE ?
+      OR s.id = ?
+      OR ${context.sellerNameExpr} LIKE ?
+      OR EXISTS (
+        SELECT 1
+        FROM sale_items si_search
+        JOIN products p_search ON p_search.id = si_search.product_id
+        WHERE si_search.sale_id = s.id
+          AND (
+            p_search.name LIKE ?
+            OR COALESCE(p_search.sku, '') LIKE ?
+            OR COALESCE(p_search.product_code, '') LIKE ?
+            OR COALESCE(si_search.product_description_snapshot, p_search.description, '') LIKE ?
+            OR COALESCE(si_search.imei, '') LIKE ?
+            OR COALESCE(si_search.serial, '') LIKE ?
+            OR COALESCE(si_search.batch_no, '') LIKE ?
+          )
+      )
+    )`)
+    const likeSearch = `%${search}%`
+    params.push(
+      likeSearch,
+      likeSearch,
+      Number(search) || 0,
+      likeSearch,
+      likeSearch,
+      likeSearch,
+      likeSearch,
+      likeSearch,
+      likeSearch,
+      likeSearch,
+      likeSearch,
+    )
   }
   if (startDate) {
     if (isRealizedFilter) {
