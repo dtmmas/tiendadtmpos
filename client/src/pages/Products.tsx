@@ -1488,9 +1488,46 @@ export default function Products() {
                       >
                         {p.name}
                       </div>
-                      <div style={{ fontSize: 11, letterSpacing: 0.2, color: '#60A5FA' }}>
-                        SKU: {p.sku || '—'}
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4, alignItems: 'center' }}>
+                        <div style={{ fontSize: 11, letterSpacing: 0.2, color: '#60A5FA' }}>
+                          SKU: {p.sku || '—'}
+                        </div>
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            padding: '4px 9px',
+                            borderRadius: 999,
+                            background: 'rgba(217, 119, 6, 0.12)',
+                            border: '1px solid rgba(217, 119, 6, 0.22)',
+                            color: '#a16207',
+                            fontSize: 11,
+                            fontWeight: 800,
+                            letterSpacing: 0.3,
+                            fontFamily: 'Consolas, Monaco, monospace'
+                          }}
+                          title={`Codigo de producto: ${p.productCode || 'Sin codigo'}`}
+                        >
+                          COD: {p.productCode || '—'}
+                        </span>
                       </div>
+                      {p.description && (
+                        <div
+                          style={{
+                            marginTop: 8,
+                            fontSize: 12,
+                            lineHeight: 1.45,
+                            color: 'var(--muted)',
+                            display: '-webkit-box',
+                            WebkitLineClamp: 3,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden'
+                          }}
+                          title={p.description}
+                        >
+                          {p.description}
+                        </div>
+                      )}
                     </div>
 
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
