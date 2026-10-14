@@ -29,6 +29,9 @@ interface Product {
   sku: string
   productCode?: string
   description?: string
+  altName?: string
+  genericName?: string
+  shelfLocation?: string
   price: number
   cost?: number
   stock: number
@@ -36,12 +39,48 @@ interface Product {
   categoryId?: number
   brandId?: number
   productType?: string
+  trackingProfile?: string
+  trackingMeta?: Partial<TrackingMeta>
+}
+
+interface TrackingMeta {
+  storageNotes?: string
+  presentation?: string
+  activeIngredient?: string
+  concentration?: string
+  dosageForm?: string
+  sanitaryRegistry?: string
+  packageType?: string
+  originInfo?: string
+  regulatoryNotes?: string
 }
 
 interface Batch {
   batchNo: string
   expiryDate: string
   quantity: number
+}
+
+interface SerializedVariantAdjustUnit {
+  id?: number
+  imei: string
+  serialNo: string
+  warehouseId?: number | null
+  warehouseName?: string
+}
+
+interface SerializedVariantAdjust {
+  variantId: number
+  name: string
+  sku?: string
+  color?: string
+  ram?: string
+  storage?: string
+  carrier?: string
+  simType?: string
+  identifierMode: 'IMEI' | 'SERIAL'
+  availableUnits: SerializedVariantAdjustUnit[]
+  units: SerializedVariantAdjustUnit[]
 }
 
 interface WarehouseStock {
@@ -57,6 +96,111 @@ interface ExportDataset {
   columns: string[]
   rows: Array<Array<string | number>>
   excelRows: Array<Record<string, string | number>>
+}
+
+function formatProductTypeLabel(productType?: string) {
+  switch (String(productType || 'GENERAL').trim().toUpperCase()) {
+    case 'MEDICINAL':
+      return 'Con fecha de vencimiento y lotes'
+    case 'IMEI':
+      return 'IMEI'
+    case 'SERIAL':
+      return 'Serie'
+    case 'VARIANT_SERIALIZED':
+      return 'IMEI-SERIAL VARIANTE'
+    default:
+      return 'General'
+  }
+}
+
+function normalizeTrackingProfile(profile?: string) {
+  switch (String(profile || '').trim().toUpperCase()) {
+    case 'ALIMENTO':
+    case 'MEDICAMENTO':
+    case 'COSMETICO':
+    case 'QUIMICO':
+      return String(profile).trim().toUpperCase()
+    default:
+      return 'GENERAL'
+  }
+}
+
+function formatTrackingProfileLabel(profile?: string) {
+  switch (normalizeTrackingProfile(profile)) {
+    case 'ALIMENTO':
+      return 'Alimento'
+    case 'MEDICAMENTO':
+      return 'Medicamento'
+    case 'COSMETICO':
+      return 'Cosmetico'
+    case 'QUIMICO':
+      return 'Quimico'
+    default:
+      return 'General'
+  }
+}
+
+function buildTrackingSummary(product?: Partial<Product> | null) {
+  if (!product) return []
+  const meta = product.trackingMeta || {}
+  const summary: string[] = []
+  const profile = normalizeTrackingProfile(product.trackingProfile)
+  if (profile !== 'GENERAL') summary.push(`Perfil: ${formatTrackingProfileLabel(profile)}`)
+  if (product.genericName) summary.push(`Generico: ${product.genericName}`)
+  if (meta.activeIngredient) summary.push(`Activo: ${meta.activeIngredient}`)
+  if (meta.concentration) summary.push(`Concentracion: ${meta.concentration}`)
+  if (meta.presentation) summary.push(`Presentacion: ${meta.presentation}`)
+  if (meta.packageType) summary.push(`Empaque: ${meta.packageType}`)
+  if (meta.storageNotes) summary.push(`Almacenaje: ${meta.storageNotes}`)
+  if (product.shelfLocation) summary.push(`Ubicacion: ${product.shelfLocation}`)
+  return summary
+}
+
+function normalizeVariantIdentifierMode(value?: string): 'IMEI' | 'SERIAL' {
+  return String(value || '').trim().toUpperCase() === 'SERIAL' ? 'SERIAL' : 'IMEI'
+}
+
+function buildVariantLabel(variant: Partial<SerializedVariantAdjust> | any) {
+  const explicitName = String(variant?.name || '').trim()
+  if (explicitName) return explicitName
+  const parts = [variant?.color, variant?.ram, variant?.storage, variant?.carrier, variant?.simType]
+    .map(value => String(value || '').trim())
+    .filter(Boolean)
+  return parts.length > 0 ? parts.join(' / ') : 'Variante'
+}
+
+function parseAdjustmentVariants(raw: any): SerializedVariantAdjust[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map((variant: any) => ({
+    variantId: Number(variant?.id || variant?.variantId || 0),
+    name: String(variant?.name || ''),
+    sku: variant?.sku ? String(variant.sku) : undefined,
+    color: variant?.color ? String(variant.color) : undefined,
+    ram: variant?.ram ? String(variant.ram) : undefined,
+    storage: variant?.storage ? String(variant.storage) : undefined,
+    carrier: variant?.carrier ? String(variant.carrier) : undefined,
+    simType: variant?.simType ? String(variant.simType) : undefined,
+    identifierMode: normalizeVariantIdentifierMode(variant?.identifierMode),
+    availableUnits: Array.isArray(variant?.units)
+      ? variant.units.map((unit: any) => ({
+          id: Number(unit?.id || 0) || undefined,
+          imei: String(unit?.imei || ''),
+          serialNo: String(unit?.serialNo || unit?.serial || ''),
+          warehouseId: unit?.warehouseId ? Number(unit.warehouseId) : null,
+          warehouseName: unit?.warehouseName ? String(unit.warehouseName) : undefined,
+        })).filter((unit: SerializedVariantAdjustUnit) => unit.imei || unit.serialNo)
+      : [],
+    units: [],
+  })).filter((variant: SerializedVariantAdjust) => variant.variantId > 0)
+}
+
+function buildVariantUnitKey(unit: Partial<SerializedVariantAdjustUnit>, identifierMode?: string) {
+  const mode = normalizeVariantIdentifierMode(identifierMode)
+  return `${Number(unit?.id || 0) || 0}:${mode === 'SERIAL' ? String(unit?.serialNo || '').trim().toUpperCase() : String(unit?.imei || '').trim().toUpperCase()}`
+}
+
+function countSerializedVariantUnits(variants: SerializedVariantAdjust[]) {
+  return variants.reduce((sum, variant) => sum + variant.units.length, 0)
 }
 
 export default function InventoryMovements() {
@@ -118,6 +262,7 @@ export default function InventoryMovements() {
     batches: Batch[]
     imeis: string[]
     serials: string[]
+    variants: SerializedVariantAdjust[]
   }>({
     productId: '',
     warehouseId: '',
@@ -126,7 +271,8 @@ export default function InventoryMovements() {
     notes: '',
     batches: [],
     imeis: [],
-    serials: []
+    serials: [],
+    variants: []
   })
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [currentWarehouseStock, setCurrentWarehouseStock] = useState<number | null>(null)
@@ -164,6 +310,71 @@ export default function InventoryMovements() {
     const newSerials = [...adjustForm.serials]
     newSerials[idx] = val
     setAdjustForm({ ...adjustForm, serials: newSerials })
+  }
+
+  const syncVariantAdjustQuantity = (nextVariants: SerializedVariantAdjust[]) => {
+    const count = countSerializedVariantUnits(nextVariants)
+    const currentQty = Number(adjustForm.quantity || 0)
+    const sign = currentQty < 0 ? -1 : 1
+    setAdjustForm(prev => ({
+      ...prev,
+      variants: nextVariants,
+      quantity: count > 0 ? String(sign * count) : ''
+    }))
+  }
+
+  const updateVariantUnit = (variantIndex: number, unitIndex: number, key: 'imei' | 'serialNo', value: string) => {
+    const nextVariants = [...adjustForm.variants]
+    const currentVariant = nextVariants[variantIndex]
+    const currentUnit = currentVariant?.units?.[unitIndex]
+    if (!currentVariant || !currentUnit) return
+    const nextUnits = [...currentVariant.units]
+    nextUnits[unitIndex] = { ...currentUnit, [key]: value }
+    nextVariants[variantIndex] = { ...currentVariant, units: nextUnits }
+    syncVariantAdjustQuantity(nextVariants)
+  }
+
+  const addVariantUnit = (variantIndex: number) => {
+    const nextVariants = [...adjustForm.variants]
+    const currentVariant = nextVariants[variantIndex]
+    if (!currentVariant) return
+    nextVariants[variantIndex] = {
+      ...currentVariant,
+      units: [...currentVariant.units, { imei: '', serialNo: '' }]
+    }
+    syncVariantAdjustQuantity(nextVariants)
+  }
+
+  const removeVariantUnit = (variantIndex: number, unitIndex: number) => {
+    const nextVariants = [...adjustForm.variants]
+    const currentVariant = nextVariants[variantIndex]
+    if (!currentVariant) return
+    nextVariants[variantIndex] = {
+      ...currentVariant,
+      units: currentVariant.units.filter((_, index) => index !== unitIndex)
+    }
+    syncVariantAdjustQuantity(nextVariants)
+  }
+
+  const toggleAvailableVariantUnit = (variantIndex: number, unit: SerializedVariantAdjustUnit) => {
+    const nextVariants = [...adjustForm.variants]
+    const currentVariant = nextVariants[variantIndex]
+    if (!currentVariant) return
+    const unitKey = buildVariantUnitKey(unit, currentVariant.identifierMode)
+    const exists = currentVariant.units.some(selected => buildVariantUnitKey(selected, currentVariant.identifierMode) === unitKey)
+    nextVariants[variantIndex] = {
+      ...currentVariant,
+      units: exists
+        ? currentVariant.units.filter(selected => buildVariantUnitKey(selected, currentVariant.identifierMode) !== unitKey)
+        : [...currentVariant.units, {
+            id: unit.id,
+            imei: unit.imei,
+            serialNo: unit.serialNo,
+            warehouseId: unit.warehouseId,
+            warehouseName: unit.warehouseName,
+          }]
+    }
+    syncVariantAdjustQuantity(nextVariants)
   }
 
   // Effect to sync IMEI/Serial inputs with Quantity
@@ -251,6 +462,7 @@ export default function InventoryMovements() {
       setProductWarehouseStocks([])
       setAvailableAdjustImeis([])
       setAvailableAdjustSerials([])
+      setAdjustForm(prev => ({ ...prev, variants: [] }))
 
       const fetchStockAndDetails = async () => {
         try {
@@ -270,10 +482,15 @@ export default function InventoryMovements() {
             setCurrentWarehouseStock(whStock ? whStock.quantity : 0)
             setAvailableAdjustImeis(Array.isArray(detailRes?.data?.imeis) ? detailRes.data.imeis : [])
             setAvailableAdjustSerials(Array.isArray(detailRes?.data?.serials) ? detailRes.data.serials : [])
+            if (String(selectedProduct.productType || '').toUpperCase() === 'VARIANT_SERIALIZED') {
+              const nextVariants = parseAdjustmentVariants(detailRes?.data?.variants)
+              setAdjustForm(prev => ({ ...prev, variants: nextVariants }))
+            }
           } else {
             setCurrentWarehouseStock(null)
             setAvailableAdjustImeis([])
             setAvailableAdjustSerials([])
+            setAdjustForm(prev => ({ ...prev, variants: [] }))
           }
         } catch (err) {
           if (cancelled) return
@@ -282,6 +499,7 @@ export default function InventoryMovements() {
           setProductWarehouseStocks([])
           setAvailableAdjustImeis([])
           setAvailableAdjustSerials([])
+          setAdjustForm(prev => ({ ...prev, variants: [] }))
         }
       }
       fetchStockAndDetails()
@@ -522,7 +740,8 @@ export default function InventoryMovements() {
       notes: '',
       batches: [],
       imeis: [],
-      serials: []
+      serials: [],
+      variants: []
     })
     setSelectedProduct(product || null)
     setShowAdjust(true)
@@ -544,6 +763,19 @@ export default function InventoryMovements() {
     const qty = Number(adjustForm.quantity)
     const pt = (selectedProduct?.productType || 'GENERAL').toUpperCase()
     const debugTraceId = `adj-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const normalizedVariants = adjustForm.variants
+      .map(variant => ({
+        variantId: Number(variant.variantId || 0),
+        name: String(variant.name || '').trim(),
+        sku: variant.sku ? String(variant.sku).trim().toUpperCase() : undefined,
+        identifierMode: normalizeVariantIdentifierMode(variant.identifierMode),
+        units: variant.units.map(unit => ({
+          id: unit.id ? Number(unit.id) : undefined,
+          imei: String(unit.imei || '').trim().toUpperCase(),
+          serialNo: String(unit.serialNo || '').trim().toUpperCase(),
+        })).filter(unit => unit.imei || unit.serialNo)
+      }))
+      .filter(variant => variant.variantId > 0 && variant.units.length > 0)
 
     // #region debug-point A:adjust-click
     fetch('http://127.0.0.1:7777/event', {
@@ -599,6 +831,38 @@ export default function InventoryMovements() {
                 alert('Hay Series duplicadas en la entrada')
                 return
             }
+        } else if (pt === 'VARIANT_SERIALIZED') {
+            const enteredCount = normalizedVariants.reduce((sum, variant) => sum + variant.units.length, 0)
+            if (enteredCount === 0) {
+                alert('Debes ingresar al menos una unidad serializada por variante')
+                return
+            }
+            if (enteredCount !== qty) {
+                alert(`La cantidad (${qty}) debe coincidir con las unidades serializadas ingresadas (${enteredCount})`)
+                return
+            }
+            for (const variant of normalizedVariants) {
+              for (const unit of variant.units) {
+                if (variant.identifierMode === 'IMEI' && !unit.imei) {
+                  alert(`Completa el IMEI en la variante ${buildVariantLabel(variant)}`)
+                  return
+                }
+                if (variant.identifierMode === 'SERIAL' && !unit.serialNo) {
+                  alert(`Completa la serie en la variante ${buildVariantLabel(variant)}`)
+                  return
+                }
+              }
+            }
+            const imeis = normalizedVariants.flatMap(variant => variant.units.map(unit => unit.imei).filter(Boolean))
+            const serials = normalizedVariants.flatMap(variant => variant.units.map(unit => unit.serialNo).filter(Boolean))
+            if (new Set(imeis).size !== imeis.length) {
+              alert('Hay IMEIs duplicados entre las unidades serializadas')
+              return
+            }
+            if (new Set(serials).size !== serials.length) {
+              alert('Hay series duplicadas entre las unidades serializadas')
+              return
+            }
         }
     }
 
@@ -622,6 +886,18 @@ export default function InventoryMovements() {
         const unique = new Set(adjustForm.serials.map(s => s.trim().toUpperCase()))
         if (unique.size !== adjustForm.serials.length || adjustForm.serials.length !== requiredCount) {
           alert(`Debes seleccionar exactamente ${requiredCount} serie(s) diferentes`)
+          return
+        }
+      } else if (pt === 'VARIANT_SERIALIZED') {
+        const selectedCount = normalizedVariants.reduce((sum, variant) => sum + variant.units.length, 0)
+        if (selectedCount !== requiredCount) {
+          alert(`Debes seleccionar exactamente ${requiredCount} unidad(es) serializadas`)
+          return
+        }
+        const imeis = normalizedVariants.flatMap(variant => variant.units.map(unit => unit.imei).filter(Boolean))
+        const serials = normalizedVariants.flatMap(variant => variant.units.map(unit => unit.serialNo).filter(Boolean))
+        if (new Set(imeis).size !== imeis.length || new Set(serials).size !== serials.length) {
+          alert('No puedes repetir unidades serializadas dentro del mismo ajuste')
           return
         }
       }
@@ -655,6 +931,7 @@ export default function InventoryMovements() {
       // #endregion
       await api.post('/inventory/adjust', {
         ...adjustForm,
+        variants: normalizedVariants,
         debugTraceId,
         productType: selectedProduct?.productType || 'GENERAL'
       })
@@ -1514,9 +1791,24 @@ export default function InventoryMovements() {
                           <div style={{ fontWeight: 600, fontSize: 14, whiteSpace: isMobileViewport ? 'normal' : 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={p.name}>{p.name}</div>
                           <div style={{ fontSize: 12, color: 'var(--muted)' }}>SKU: {p.sku}</div>
                           <div style={{ fontSize: 12, color: 'var(--muted)' }}>COD: {p.productCode || '-'}</div>
+                          <div style={{ fontSize: 12, color: 'var(--muted)' }}>TIPO: {formatProductTypeLabel(p.productType)}</div>
+                          {String(p.productType || '').toUpperCase() === 'MEDICINAL' && (
+                            <div style={{ fontSize: 12, color: '#1d4ed8', fontWeight: 600 }}>
+                              PERFIL: {formatTrackingProfileLabel(p.trackingProfile)}
+                            </div>
+                          )}
                           <div style={{ fontSize: 12, color: 'var(--muted)', display: '-webkit-box', WebkitLineClamp: 2 as any, WebkitBoxOrient: 'vertical', overflow: 'hidden' }} title={p.description || ''}>
                             DETALLE: {p.description || '-'}
                           </div>
+                          {String(p.productType || '').toUpperCase() === 'MEDICINAL' && buildTrackingSummary(p).length > 0 && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                              {buildTrackingSummary(p).slice(0, 3).map(line => (
+                                <span key={line} style={{ fontSize: 10, padding: '4px 8px', borderRadius: 999, border: '1px solid rgba(37,99,235,0.14)', background: 'rgba(37,99,235,0.08)', color: '#1d4ed8' }}>
+                                  {line}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                           <div style={{ fontSize: 12, color: 'var(--muted)' }}>
                             {p.categoryId ? categoryMap[p.categoryId] : ''} 
                             {p.brandId ? ` • ${brandMap[p.brandId]}` : ''}
@@ -1574,9 +1866,22 @@ export default function InventoryMovements() {
                                 <div style={{ fontWeight: 500 }}>{p.name}</div>
                                 <div style={{ fontSize: 11, color: 'var(--muted)' }}>SKU: {p.sku}</div>
                                 <div style={{ fontSize: 11, color: 'var(--muted)' }}>COD: {p.productCode || '-'}</div>
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>TIPO: {formatProductTypeLabel(p.productType)}</div>
+                                {String(p.productType || '').toUpperCase() === 'MEDICINAL' && (
+                                  <div style={{ fontSize: 11, color: '#1d4ed8', fontWeight: 600 }}>PERFIL: {formatTrackingProfileLabel(p.trackingProfile)}</div>
+                                )}
                                 <div style={{ fontSize: 11, color: 'var(--muted)', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.description || ''}>
                                   DETALLE: {p.description || '-'}
                                 </div>
+                                {String(p.productType || '').toUpperCase() === 'MEDICINAL' && buildTrackingSummary(p).length > 0 && (
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, maxWidth: 320 }}>
+                                    {buildTrackingSummary(p).slice(0, 3).map(line => (
+                                      <span key={line} style={{ fontSize: 10, padding: '4px 8px', borderRadius: 999, border: '1px solid rgba(37,99,235,0.14)', background: 'rgba(37,99,235,0.08)', color: '#1d4ed8' }}>
+                                        {line}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </td>
@@ -1902,6 +2207,23 @@ export default function InventoryMovements() {
                     <div>
                       <div style={{ fontWeight: 600 }}>{selectedProduct.name}</div>
                       <div style={{ fontSize: 12, color: 'var(--muted)' }}>SKU: {selectedProduct.sku}</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                        <span style={{ fontSize: 11, padding: '4px 8px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg)' }}>
+                          {formatProductTypeLabel(selectedProduct.productType)}
+                        </span>
+                        {String(selectedProduct.productType || '').toUpperCase() === 'MEDICINAL' && (
+                          <span style={{ fontSize: 11, padding: '4px 8px', borderRadius: 999, border: '1px solid rgba(37,99,235,0.18)', background: 'rgba(37,99,235,0.08)', color: '#1d4ed8' }}>
+                            {formatTrackingProfileLabel(selectedProduct.trackingProfile)}
+                          </span>
+                        )}
+                      </div>
+                      {String(selectedProduct.productType || '').toUpperCase() === 'MEDICINAL' && buildTrackingSummary(selectedProduct).length > 0 && (
+                        <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 10, background: 'rgba(37,99,235,0.06)', border: '1px solid rgba(37,99,235,0.12)', display: 'grid', gap: 3 }}>
+                          {buildTrackingSummary(selectedProduct).map(line => (
+                            <div key={line} style={{ fontSize: 12, color: '#1e3a8a' }}>{line}</div>
+                          ))}
+                        </div>
+                      )}
                       {productWarehouseStocks.length > 0 && (
                         <div style={{ marginTop: 8, display: 'grid', gap: 4 }}>
                           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)' }}>
@@ -1979,6 +2301,11 @@ export default function InventoryMovements() {
                   value={adjustForm.quantity}
                   onChange={e => setAdjustForm({...adjustForm, quantity: e.target.value})}
                 />
+                {selectedProduct?.productType === 'VARIANT_SERIALIZED' && (
+                  <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>
+                    Escribe un valor positivo para ingreso o negativo para salida. La cantidad se ajusta sola segun las unidades marcadas por variante.
+                  </div>
+                )}
               </div>
 
               {/* Dynamic inputs for tracked product details */}
@@ -2046,6 +2373,51 @@ export default function InventoryMovements() {
                       ))}
                     </div>
                   )}
+
+                  {(selectedProduct.productType === 'VARIANT_SERIALIZED') && (
+                    <div style={{ background: 'var(--surface)', padding: 10, borderRadius: 8, display: 'grid', gap: 12 }}>
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Ingreso por variantes serializadas</div>
+                        <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                          Agrega unidades nuevas por variante. Cada unidad debe llevar su IMEI o serie segun corresponda.
+                        </div>
+                      </div>
+                      {adjustForm.variants.length === 0 && (
+                        <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                          Este producto no tiene variantes configuradas.
+                        </div>
+                      )}
+                      {adjustForm.variants.map((variant, variantIndex) => (
+                        <div key={variant.variantId} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, background: 'var(--bg)', display: 'grid', gap: 8 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 700 }}>{buildVariantLabel(variant)}</div>
+                              <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                {variant.identifierMode === 'SERIAL' ? 'Control por serie' : 'Control por IMEI'}
+                              </div>
+                            </div>
+                            <button onClick={() => addVariantUnit(variantIndex)} style={{ fontSize: 11, padding: '4px 8px' }}>
+                              + Agregar unidad
+                            </button>
+                          </div>
+                          {variant.units.length === 0 && (
+                            <div style={{ fontSize: 12, color: 'var(--muted)' }}>Aun no hay unidades agregadas para esta variante.</div>
+                          )}
+                          {variant.units.map((unit, unitIndex) => (
+                            <div key={`${variant.variantId}-${unitIndex}`} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6, alignItems: 'center' }}>
+                              <input
+                                placeholder={variant.identifierMode === 'SERIAL' ? `Serie #${unitIndex + 1}` : `IMEI #${unitIndex + 1}`}
+                                value={variant.identifierMode === 'SERIAL' ? unit.serialNo : unit.imei}
+                                onChange={e => updateVariantUnit(variantIndex, unitIndex, variant.identifierMode === 'SERIAL' ? 'serialNo' : 'imei', e.target.value)}
+                                style={{ width: '100%', padding: 6, fontSize: 12 }}
+                              />
+                              <button onClick={() => removeVariantUnit(variantIndex, unitIndex)} style={{ color: 'red', border: 'none', background: 'none' }}>✕</button>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </>
               )}
 
@@ -2096,6 +2468,58 @@ export default function InventoryMovements() {
                       </select>
                     )
                   })}
+                </div>
+              )}
+
+              {selectedProduct && Number(adjustForm.quantity) < 0 && selectedProduct.productType === 'VARIANT_SERIALIZED' && (
+                <div style={{ background: 'var(--surface)', padding: 10, borderRadius: 8, display: 'grid', gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Unidades serializadas a descontar</div>
+                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                      Marca las unidades disponibles por variante en el almacén seleccionado.
+                    </div>
+                  </div>
+                  {adjustForm.variants.length === 0 && (
+                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                      No hay variantes disponibles para este producto en la bodega seleccionada.
+                    </div>
+                  )}
+                  {adjustForm.variants.map((variant, variantIndex) => (
+                    <div key={variant.variantId} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, background: 'var(--bg)', display: 'grid', gap: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700 }}>{buildVariantLabel(variant)}</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                          {variant.identifierMode === 'SERIAL' ? 'Series disponibles' : 'IMEIs disponibles'}: {variant.availableUnits.length}
+                        </div>
+                      </div>
+                      {variant.availableUnits.length === 0 && (
+                        <div style={{ fontSize: 12, color: 'var(--muted)' }}>Sin unidades disponibles en esta variante.</div>
+                      )}
+                      {variant.availableUnits.map(unit => {
+                        const unitKey = buildVariantUnitKey(unit, variant.identifierMode)
+                        const checked = variant.units.some(selected => buildVariantUnitKey(selected, variant.identifierMode) === unitKey)
+                        const identifier = variant.identifierMode === 'SERIAL' ? (unit.serialNo || 'Sin serie') : (unit.imei || 'Sin IMEI')
+                        return (
+                          <label key={unitKey} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 8, alignItems: 'start', padding: '6px 4px', cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleAvailableVariantUnit(variantIndex, unit)}
+                              style={{ marginTop: 2 }}
+                            />
+                            <div>
+                              <div style={{ fontSize: 12, fontWeight: 600 }}>{identifier}</div>
+                              {unit.warehouseName && (
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                  Almacen: <span className="warehouse-highlight" style={getWarehouseHighlightStyle(unit.warehouseName)}>{unit.warehouseName}</span>
+                                </div>
+                              )}
+                            </div>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  ))}
                 </div>
               )}
 

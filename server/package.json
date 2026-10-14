@@ -13,7 +13,9 @@
     "seed": "node seeds/seed.js",
     "migrate": "node migrations/migrate.js",
     "seed:departments": "node seeds/seed_departments.js",
-    "seed:shelves": "node seeds/seed_shelves.js"
+    "seed:shelves": "node seeds/seed_shelves.js",
+    "test": "node --test tests/*.test.mjs",
+    "test:variants": "node --test tests/products-variants.*.test.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -23,6 +25,7 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
     "mysql2": "^3.9.7",
-    "morgan": "^1.10.0"
+    "morgan": "^1.10.0",
+    "xlsx": "^0.18.5"
   }
 }

@@ -2,6 +2,7 @@ import express from 'express'
 import bcrypt from 'bcryptjs'
 import { signToken } from '../auth.js'
 import { getPool } from '../db.js'
+import { ensureRootAccessSchema, getAuthenticatedSecurityContext } from '../services/root_access.js'
 
 const router = express.Router()
 
@@ -10,6 +11,7 @@ router.post('/login', async (req, res) => {
   try {
     const pool = await getPool()
     if (pool) {
+      await ensureRootAccessSchema(pool)
       const [canSellCols] = await pool.query("SHOW COLUMNS FROM users LIKE 'can_sell'")
       const hasCanSellColumn = Array.isArray(canSellCols) && canSellCols.length > 0
 
@@ -37,25 +39,19 @@ router.post('/login', async (req, res) => {
       if (!ok) return res.status(401).json({ error: 'Invalid credentials' })
 
       // Fetch permissions
-      const [perms] = await pool.query(
-        `SELECT p.code 
-         FROM permissions p 
-         JOIN role_permissions rp ON p.id = rp.permission_id 
-         WHERE rp.role_id = ?`,
-        [user.role_id]
-      )
-      const permissions = perms.map(p => p.code)
+      const securityContext = await getAuthenticatedSecurityContext(pool, user.id)
+      const permissions = Array.isArray(securityContext?.permissions) ? securityContext.permissions : []
 
       // Prepare user object for token and response
       // Map role_code to role for frontend compatibility
       const userData = {
         id: user.id,
         name: user.name,
-        role: user.role_code || user.role_name || 'USER', // Fallback
+        role: securityContext?.role || user.role_code || user.role_name || 'USER',
         permissions,
-        canSell: Boolean(Number(user.can_sell ?? 1)),
-        warehouseId: user.warehouse_id ?? null,
-        warehouseName: user.warehouse_name ?? null
+        canSell: securityContext?.canSell ?? Boolean(Number(user.can_sell ?? 1)),
+        warehouseId: securityContext?.warehouseId ?? (user.warehouse_id ?? null),
+        warehouseName: securityContext?.warehouseName ?? (user.warehouse_name ?? null)
       }
 
       const token = signToken(userData)

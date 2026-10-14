@@ -221,6 +221,9 @@ export default function Config() {
       await fetchConfig()
       alert('Configuración guardada')
       setLogoFile(null)
+    } catch (err: any) {
+      console.error(err)
+      alert(err?.response?.data?.error || 'No se pudo guardar la configuración')
     } finally {
       setSaving(false)
     }
@@ -480,6 +483,9 @@ export default function Config() {
                     {logoFile && <div className="file-name" style={{ marginTop: 4 }}>{logoFile.name}</div>}
                     <small style={{ color: 'var(--muted)', display: 'block', marginTop: 6 }}>Opcional: también puedes usar una URL.</small>
                     <input placeholder="Logo URL" value={logoUrl} onChange={e=>setLogoUrl(e.target.value)} style={{ width: '100%', marginTop: 6, padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'inherit', boxSizing: 'border-box' }} />
+                  </div>
+                  <div style={{ padding: 12, borderRadius: 12, background: 'var(--bg)', border: '1px solid var(--border)', fontSize: 13, color: 'var(--muted)' }}>
+                    Los tipos de producto habilitados y la activación global de la tienda en línea ahora se administran exclusivamente desde el módulo <strong>Root Core</strong>.
                   </div>
                 </div>
 

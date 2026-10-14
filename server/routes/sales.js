@@ -32,7 +32,7 @@ async function fkExists(db, table, fkName) {
   return Number(rows?.[0]?.c || 0) > 0
 }
 
-async function ensureSalesSchema(db) {
+export async function ensureSalesSchema(db) {
   const hasSalesUserId = await columnExists(db, 'sales', 'user_id')
   if (!hasSalesUserId) {
     await db.query('ALTER TABLE sales ADD COLUMN user_id INT NULL')

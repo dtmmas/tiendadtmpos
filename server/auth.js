@@ -1,4 +1,6 @@
 import jwt from 'jsonwebtoken'
+import { getPool } from './db.js'
+import { getAuthenticatedSecurityContext } from './services/root_access.js'
 
 export function signToken(user) {
   const secret = process.env.JWT_SECRET || 'devsecret'
@@ -81,30 +83,28 @@ export function canAccessWarehouse(user, warehouseId) {
 // But for simplicity, let's assume if I change a role, the user needs to re-login to get new permissions if I put them in token.
 // Or I can fetch permissions in the middleware.
 
-// Let's go with fetching permissions in middleware for `permissionMiddleware`.
-// It requires `getPool`.
-
-import { getPool } from './db.js'
-
 export function permissionMiddleware(requiredPermission) {
   return async (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'No auth' })
     
-    // Admin always has access? Maybe.
-    if (req.user.role === 'ADMIN') return next()
-
     try {
       const pool = await getPool()
-      const [rows] = await pool.query(
-        `SELECT 1 
-         FROM users u
-         JOIN role_permissions rp ON u.role_id = rp.role_id
-         JOIN permissions p ON rp.permission_id = p.id
-         WHERE u.id = ? AND p.code = ?`,
-        [req.user.id, requiredPermission]
-      )
-      
-      if (rows.length > 0) {
+      const context = await getAuthenticatedSecurityContext(pool, req.user.id)
+
+      if (!context) {
+        res.status(401).json({ error: 'Sesion invalida o usuario inactivo' })
+        return
+      }
+
+      if (context.role === 'ADMIN' || context.permissions.includes(requiredPermission)) {
+        req.user = {
+          ...req.user,
+          role: context.role,
+          permissions: context.permissions,
+          warehouseId: context.warehouseId,
+          warehouseName: context.warehouseName,
+          canSell: context.canSell,
+        }
         next()
       } else {
         res.status(403).json({ error: 'Forbidden: Missing permission ' + requiredPermission })

@@ -1,12 +1,32 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useAuthStore } from '../store/auth'
-import { api, getProducts, getCategories, getBrands, getSuppliers, createProduct, updateProduct, deleteProduct, getProductDetails, getProductCostHistory, getUnits, createBrand, createUnit, getDepartments, createDepartment, getWarehouses, getProductWarehouseStock, transferProductWarehouseStock, getShelves } from '../api'
+import { api, getProducts, getCategories, getBrands, getSuppliers, createProduct, updateProduct, deleteProduct, getProductDetails, getProductCostHistory, getUnits, createBrand, createUnit, getDepartments, createDepartment, getWarehouses, getProductWarehouseStock, transferProductWarehouseStock, getShelves, importProductsFile, downloadProductsImportTemplate } from '../api'
 import { useConfigStore } from '../store/config'
 import { formatMoney } from '../utils/currency'
+import { resolveUploadedAssetUrl } from '../utils/assets'
 import { resolveUnitName, buildUnitNameMap } from '../utils/units'
 import { getWarehouseHighlightStyle } from '../utils/warehouseHighlight'
 import MobileBarcodeScannerButton from '../components/MobileBarcodeScannerButton'
-import CameraCaptureButton from '../components/CameraCaptureButton'
+import ProductImageManager from '../components/ProductImageManager'
+import CatalogPdfModal from '../components/CatalogPdfModal'
+import {
+  ProductImageDraft,
+  ProductImageRecord,
+  buildProductImagesUploadPayload,
+  createExistingProductImageDraft,
+} from '../components/productImageManagerUtils'
+import {
+  filterCatalogProducts,
+  generateProductCatalogPdf,
+  normalizeCatalogTitleText,
+  type CatalogPdfProduct,
+  getCatalogProductPrimaryImageUrl,
+} from '../utils/catalogPdf'
+import {
+  buildCatalogPdfProductQuery,
+  getCatalogPdfParentCategories,
+  getCatalogPdfSubcategories,
+} from '../utils/catalogPdfFilters'
 
 interface Category {
   id: number
@@ -40,16 +60,32 @@ interface Product {
   brandId?: number
   supplierId?: number
   imageUrl?: string
+  images?: ProductImageRecord[]
   productType?: string
   altName?: string
   genericName?: string
   shelfLocation?: string
+  trackingProfile?: string
+  trackingMeta?: Partial<TrackingMeta>
 }
 
 interface Batch {
   batchNo: string
   expiryDate: string
   quantity: string
+}
+
+interface TrackingMeta {
+  storageNotes: string
+  presentation: string
+  activeIngredient: string
+  concentration: string
+  dosageForm: string
+  sanitaryRegistry: string
+  packageType: string
+  originInfo: string
+  regulatoryNotes: string
+  serializedDeviceProfile: SerializedDeviceProfile | ''
 }
 
 interface WarehouseStockRow {
@@ -75,9 +111,359 @@ interface ProductCostHistoryRow {
   totalCost: number
 }
 
+type SerializedDeviceProfile = 'PHONE_IMEI' | 'DEVICE_SERIAL'
+
+interface SerializedVariantMeta {
+  deviceCategory: SerializedDeviceProfile
+  modelCode: string
+  notes: string
+}
+
+interface SerializedVariantUnitMeta {
+  supplierName: string
+  purchaseReference: string
+  notes: string
+}
+
+interface SerializedVariantUnitForm {
+  imei: string
+  serialNo: string
+  warehouseId: string
+  meta: SerializedVariantUnitMeta
+}
+
+interface SerializedVariantForm {
+  name: string
+  sku: string
+  color: string
+  ram: string
+  storage: string
+  carrier: string
+  simType: string
+  identifierMode: 'IMEI' | 'SERIAL'
+  price: string
+  cost: string
+  sortOrder: string
+  meta: SerializedVariantMeta
+  units: SerializedVariantUnitForm[]
+}
+
+interface ProductFormState {
+  id?: number
+  name: string
+  sku: string
+  productCode: string
+  price: string
+  price2: string
+  price3: string
+  cost: string
+  initialStock: string
+  minStock: string
+  unit: string
+  description: string
+  categoryId: string
+  brandId: string
+  supplierId: string
+  imageFile?: File | null
+  imagePreview?: string | null
+  productImages: ProductImageDraft[]
+  initialWarehouseId?: string
+  initialShelfId?: string
+  productType: string
+  altName: string
+  genericName: string
+  shelfLocation: string
+  trackingProfile: string
+  trackingMeta: TrackingMeta
+  batches: Batch[]
+  imeis: string[]
+  serials: string[]
+  serializedDeviceProfile: SerializedDeviceProfile
+  variants: SerializedVariantForm[]
+}
+
+const PRODUCT_TYPE_OPTIONS = [
+  {
+    value: 'GENERAL',
+    label: 'General',
+    description: 'Productos estándar sin características especiales',
+  },
+  {
+    value: 'MEDICINAL',
+    label: 'Con fecha de vencimiento y lotes',
+    description: 'Productos con control por lotes y fecha de vencimiento',
+  },
+  {
+    value: 'IMEI',
+    label: 'IMEI',
+    description: 'Dispositivos con códigos IMEI únicos',
+  },
+  {
+    value: 'SERIAL',
+    label: 'Serie',
+    description: 'Productos con números de serie únicos',
+  },
+  {
+    value: 'VARIANT_SERIALIZED',
+    label: 'IMEI-SERIAL VARIANTE',
+    description: 'Producto maestro con variantes por color, RAM, almacenamiento, compañía o SIM y unidades individuales con IMEI o serie.',
+  },
+] as const
+
+const SERIALIZED_DEVICE_PROFILE_OPTIONS: Array<{
+  value: SerializedDeviceProfile
+  label: string
+  description: string
+}> = [
+  {
+    value: 'PHONE_IMEI',
+    label: 'IMEI - Telefono / celular',
+    description: 'Activa compañia y tipo de SIM para variantes de telefonos.',
+  },
+  {
+    value: 'DEVICE_SERIAL',
+    label: 'SERIE - Computadora / otro equipo',
+    description: 'Activa numero de serie y oculta compañia y SIM para equipos no telefonicos.',
+  },
+]
+
+function formatProductTypeLabel(productType?: string) {
+  switch (String(productType || 'GENERAL').trim().toUpperCase()) {
+    case 'MEDICINAL':
+      return 'Con fecha de vencimiento y lotes'
+    case 'IMEI':
+      return 'IMEI'
+    case 'SERIAL':
+      return 'Serie'
+    case 'VARIANT_SERIALIZED':
+      return 'IMEI-SERIAL VARIANTE'
+    default:
+      return 'General'
+  }
+}
+
+function createEmptyTrackingMeta(): TrackingMeta {
+  return {
+    storageNotes: '',
+    presentation: '',
+    activeIngredient: '',
+    concentration: '',
+    dosageForm: '',
+    sanitaryRegistry: '',
+    packageType: '',
+    originInfo: '',
+    regulatoryNotes: '',
+    serializedDeviceProfile: '',
+  }
+}
+
+function normalizeTrackingProfile(profile?: string) {
+  switch (String(profile || '').trim().toUpperCase()) {
+    case 'ALIMENTO':
+    case 'MEDICAMENTO':
+    case 'COSMETICO':
+    case 'QUIMICO':
+      return String(profile).trim().toUpperCase()
+    default:
+      return 'GENERAL'
+  }
+}
+
+function formatTrackingProfileLabel(profile?: string) {
+  switch (normalizeTrackingProfile(profile)) {
+    case 'ALIMENTO':
+      return 'Alimento'
+    case 'MEDICAMENTO':
+      return 'Medicamento'
+    case 'COSMETICO':
+      return 'Cosmetico'
+    case 'QUIMICO':
+      return 'Quimico'
+    default:
+      return 'General'
+  }
+}
+
+function parseTrackingMeta(raw: any): TrackingMeta {
+  const base = createEmptyTrackingMeta()
+  if (!raw || typeof raw !== 'object') return base
+  return {
+    storageNotes: String(raw.storageNotes || ''),
+    presentation: String(raw.presentation || ''),
+    activeIngredient: String(raw.activeIngredient || ''),
+    concentration: String(raw.concentration || ''),
+    dosageForm: String(raw.dosageForm || ''),
+    sanitaryRegistry: String(raw.sanitaryRegistry || ''),
+    packageType: String(raw.packageType || ''),
+    originInfo: String(raw.originInfo || ''),
+    regulatoryNotes: String(raw.regulatoryNotes || ''),
+    serializedDeviceProfile: normalizeSerializedDeviceProfile(raw.serializedDeviceProfile || raw.deviceCategory || ''),
+  }
+}
+
+function createEmptySerializedVariantMeta(deviceCategory: SerializedDeviceProfile = 'PHONE_IMEI'): SerializedVariantMeta {
+  return {
+    deviceCategory,
+    modelCode: '',
+    notes: '',
+  }
+}
+
+function createEmptySerializedVariantUnitMeta(): SerializedVariantUnitMeta {
+  return {
+    supplierName: '',
+    purchaseReference: '',
+    notes: '',
+  }
+}
+
+function normalizeVariantIdentifierMode(value?: string): 'IMEI' | 'SERIAL' {
+  return String(value || '').trim().toUpperCase() === 'SERIAL' ? 'SERIAL' : 'IMEI'
+}
+
+function normalizeSerializedDeviceProfile(value?: string): SerializedDeviceProfile {
+  return String(value || '').trim().toUpperCase() === 'DEVICE_SERIAL' ? 'DEVICE_SERIAL' : 'PHONE_IMEI'
+}
+
+function getIdentifierModeForSerializedDeviceProfile(profile?: string): 'IMEI' | 'SERIAL' {
+  return normalizeSerializedDeviceProfile(profile) === 'DEVICE_SERIAL' ? 'SERIAL' : 'IMEI'
+}
+
+function formatSerializedDeviceProfileLabel(profile?: string) {
+  return normalizeSerializedDeviceProfile(profile) === 'DEVICE_SERIAL'
+    ? 'Computadora / otro equipo'
+    : 'Telefono / celular'
+}
+
+function createEmptySerializedVariantUnit(identifierMode: 'IMEI' | 'SERIAL' = 'IMEI', warehouseId = ''): SerializedVariantUnitForm {
+  return {
+    imei: identifierMode === 'IMEI' ? '' : '',
+    serialNo: identifierMode === 'SERIAL' ? '' : '',
+    warehouseId,
+    meta: createEmptySerializedVariantUnitMeta(),
+  }
+}
+
+function createEmptySerializedVariant(profile: SerializedDeviceProfile = 'PHONE_IMEI', warehouseId = ''): SerializedVariantForm {
+  const identifierMode = getIdentifierModeForSerializedDeviceProfile(profile)
+  return {
+    name: '',
+    sku: '',
+    color: '',
+    ram: '',
+    storage: '',
+    carrier: '',
+    simType: '',
+    identifierMode,
+    price: '',
+    cost: '',
+    sortOrder: '',
+    meta: createEmptySerializedVariantMeta(profile),
+    units: [],
+  }
+}
+
+function buildSerializedVariantLabel(variant: Partial<SerializedVariantForm> | any) {
+  const explicitName = String(variant?.name || '').trim()
+  if (explicitName) return explicitName
+
+  const parts = [
+    variant?.color,
+    variant?.ram,
+    variant?.storage,
+    variant?.carrier,
+    variant?.simType,
+  ]
+    .map(value => String(value || '').trim())
+    .filter(Boolean)
+
+  return parts.length > 0 ? parts.join(' / ') : 'Variante sin nombre'
+}
+
+function parseSerializedVariants(raw: any): SerializedVariantForm[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map((variant: any, index: number) => {
+    const identifierMode = normalizeVariantIdentifierMode(variant?.identifierMode)
+    return {
+      name: String(variant?.name || ''),
+      sku: String(variant?.sku || ''),
+      color: String(variant?.color || ''),
+      ram: String(variant?.ram || ''),
+      storage: String(variant?.storage || ''),
+      carrier: String(variant?.carrier || ''),
+      simType: String(variant?.simType || ''),
+      identifierMode,
+      price: variant?.price === undefined || variant?.price === null ? '' : String(variant.price),
+      cost: variant?.cost === undefined || variant?.cost === null ? '' : String(variant.cost),
+      sortOrder: variant?.sortOrder === undefined || variant?.sortOrder === null ? String(index) : String(variant.sortOrder),
+      meta: {
+        deviceCategory: normalizeSerializedDeviceProfile(variant?.meta?.deviceCategory || variant?.deviceCategory || (identifierMode === 'SERIAL' ? 'DEVICE_SERIAL' : 'PHONE_IMEI')),
+        modelCode: String(variant?.meta?.modelCode || ''),
+        notes: String(variant?.meta?.notes || ''),
+      },
+      units: [],
+    }
+  })
+}
+
+function inferSerializedDeviceProfileFromVariants(raw: any): SerializedDeviceProfile {
+  if (!Array.isArray(raw) || raw.length === 0) return 'PHONE_IMEI'
+  const firstVariant = raw[0]
+  return normalizeSerializedDeviceProfile(
+    firstVariant?.meta?.deviceCategory || firstVariant?.deviceCategory || (normalizeVariantIdentifierMode(firstVariant?.identifierMode) === 'SERIAL' ? 'DEVICE_SERIAL' : 'PHONE_IMEI')
+  )
+}
+
+function inferSerializedDeviceProfile(details: any): SerializedDeviceProfile {
+  const storedProfile = normalizeSerializedDeviceProfile(details?.trackingMeta?.serializedDeviceProfile || details?.tracking_meta?.serializedDeviceProfile)
+  if (Array.isArray(details?.variants) && details.variants.length > 0) {
+    return inferSerializedDeviceProfileFromVariants(details.variants)
+  }
+  return storedProfile
+}
+
+function mapProductImagesForForm(product: Partial<Product> & { images?: ProductImageRecord[] }) {
+  const imageList = Array.isArray(product?.images) && product.images.length > 0
+    ? product.images
+    : (product?.imageUrl ? [{ imageUrl: product.imageUrl }] : [])
+
+  return imageList
+    .map(image => createExistingProductImageDraft(image))
+    .filter(Boolean) as ProductImageDraft[]
+}
+
+type ImageViewerState = {
+  name: string | null
+  images: string[]
+  activeIndex: number
+  description: string | null
+  price: number | null
+}
+
+function buildViewerImages(source: { imageUrl?: string | null; images?: Array<{ imageUrl?: string | null }> }, preferredUrl?: string | null) {
+  const urls = [
+    ...(preferredUrl ? [preferredUrl] : []),
+    ...(Array.isArray(source?.images) ? source.images.map(image => image?.imageUrl || null) : []),
+    source?.imageUrl || null,
+  ]
+    .map(value => {
+      const trimmed = String(value || '').trim()
+      if (!trimmed) return ''
+      if (trimmed.startsWith('/uploads/') || trimmed.startsWith('uploads/') || trimmed.includes('/uploads/')) {
+        return resolveUploadedAssetUrl(trimmed)
+      }
+      return trimmed
+    })
+    .filter(Boolean)
+
+  const uniqueUrls = [...new Set(urls)]
+  return uniqueUrls.length > 0 ? uniqueUrls : ['https://via.placeholder.com/800x600?text=IMG']
+}
+
 export default function Products() {
   const user = useAuthStore(s => s.user)
   const hasPermission = useAuthStore(s => s.hasPermission)
+  const { config, fetchConfig } = useConfigStore()
   const [products, setProducts] = useState<Product[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [brands, setBrands] = useState<Brand[]>([])
@@ -86,7 +472,7 @@ export default function Products() {
   const [departments, setDepartments] = useState<Department[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const currency = useConfigStore(s => s.config?.currency || 'USD')
+  const currency = config?.currency || 'USD'
   
   // Stock por almacén
   const [warehouses, setWarehouses] = useState<Array<{ id: number; name: string }>>([])
@@ -99,7 +485,11 @@ export default function Products() {
   const [view, setView] = useState<'grid' | 'list'>('grid')
   const [showCreate, setShowCreate] = useState(false)
   const [showProductTypeSelector, setShowProductTypeSelector] = useState(false)
+  const [showSerializedVariantProfileSelector, setShowSerializedVariantProfileSelector] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<any | null>(null)
   const [details, setDetails] = useState<any | null>(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [detailsError, setDetailsError] = useState<string | null>(null)
@@ -112,11 +502,28 @@ export default function Products() {
   const [showBatches, setShowBatches] = useState(false)
   const [showImeis, setShowImeis] = useState(false)
   const [showSerials, setShowSerials] = useState(false)
+  const [showVariants, setShowVariants] = useState(false)
   
   // Visualizador de imagen (lightbox)
-  const [imageViewer, setImageViewer] = useState<{ url: string | null; name: string | null } | null>(null)
+  const [imageViewer, setImageViewer] = useState<ImageViewerState | null>(null)
+  const [showCatalogPdfModal, setShowCatalogPdfModal] = useState(false)
+  const [catalogPdfProducts, setCatalogPdfProducts] = useState<CatalogPdfProduct[]>([])
+  const [catalogPdfLoading, setCatalogPdfLoading] = useState(false)
+  const [catalogPdfGenerating, setCatalogPdfGenerating] = useState(false)
+  const [catalogPdfProgress, setCatalogPdfProgress] = useState(0)
+  const [catalogPdfProgressLabel, setCatalogPdfProgressLabel] = useState('Preparando catálogo...')
+  const [catalogPdfError, setCatalogPdfError] = useState<string | null>(null)
+  const [catalogPdfSelectedIds, setCatalogPdfSelectedIds] = useState<number[]>([])
+  const [catalogPdfTitle, setCatalogPdfTitle] = useState('Catalogo de productos')
+  const [catalogPdfSubtitle, setCatalogPdfSubtitle] = useState('Descubre una selección visual con imagen, descripción y precio actualizado para impulsar la conversión.')
+  const [catalogPdfOnlyWithImage, setCatalogPdfOnlyWithImage] = useState(true)
+  const [catalogPdfDepartmentId, setCatalogPdfDepartmentId] = useState<number | null>(null)
+  const [catalogPdfCategoryId, setCatalogPdfCategoryId] = useState<number | null>(null)
+  const [catalogPdfSubcategoryId, setCatalogPdfSubcategoryId] = useState<number | null>(null)
+  const [catalogPdfBrandId, setCatalogPdfBrandId] = useState<number | null>(null)
   const [catalogStockProduct, setCatalogStockProduct] = useState<Product | null>(null)
   const [catalogWarehouseStock, setCatalogWarehouseStock] = useState<WarehouseStockRow[]>([])
+  const [catalogVariantSummaries, setCatalogVariantSummaries] = useState<any[]>([])
   const [catalogStockLoading, setCatalogStockLoading] = useState(false)
   const [catalogStockError, setCatalogStockError] = useState<string | null>(null)
   const [catalogSerials, setCatalogSerials] = useState<CatalogSerialRow[]>([])
@@ -148,40 +555,34 @@ export default function Products() {
   const [formParentId, setFormParentId] = useState<number | null>(null)
   const [newCategoryParentId, setNewCategoryParentId] = useState<number | null>(null)
   const [formDepartmentId, setFormDepartmentId] = useState<number | null>(null)
+  const enabledProductTypes = useMemo(() => {
+    const raw = Array.isArray(config?.enabledProductTypes) ? config.enabledProductTypes : ['GENERAL', 'MEDICINAL', 'IMEI', 'SERIAL', 'VARIANT_SERIALIZED']
+    const normalized = raw.map(value => String(value || '').trim().toUpperCase()).filter(Boolean)
+    return normalized.length > 0 ? [...new Set(normalized)] : ['GENERAL']
+  }, [config?.enabledProductTypes])
+  const availableProductTypeOptions = useMemo(
+    () => PRODUCT_TYPE_OPTIONS.filter(option => enabledProductTypes.includes(option.value)),
+    [enabledProductTypes]
+  )
 
   const [editTarget, setEditTarget] = useState<Product | null>(null)
+  const [variantEditorTarget, setVariantEditorTarget] = useState<Product | null>(null)
+  const [showVariantEditor, setShowVariantEditor] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null)
-  const [formState, setFormState] = useState<{
-    id?: number
-    name: string
-    sku: string
-    productCode: string
-    price: string
-    price2: string
-    price3: string
-    cost: string
-    minStock: string
-    unit: string
-    description: string
-    categoryId: string
-    brandId: string
-    supplierId: string
-    imageFile?: File | null
-    imagePreview?: string | null
-    productType: string
-    altName: string
-    genericName: string
-    shelfLocation: string
-    batches: Batch[]
-    imeis: string[]
-    serials: string[]
-  }>({
-    name: '', sku: '', productCode: '', price: '', price2: '', price3: '', cost: '', minStock: '', unit: '', description: '', categoryId: '', brandId: '', supplierId: '', imageFile: null, imagePreview: null,
-    productType: 'GENERAL', altName: '', genericName: '', shelfLocation: '', batches: [], imeis: [], serials: []
+  const [imageUploadProgress, setImageUploadProgress] = useState<number | null>(null)
+  const [formState, setFormState] = useState<ProductFormState>({
+    name: '', sku: '', productCode: '', price: '', price2: '', price3: '', cost: '', initialStock: '', minStock: '', unit: '', description: '', categoryId: '', brandId: '', supplierId: '', imageFile: null, imagePreview: null, productImages: [],
+    initialWarehouseId: '', initialShelfId: '',
+    productType: 'GENERAL', altName: '', genericName: '', shelfLocation: '', trackingProfile: 'GENERAL', trackingMeta: createEmptyTrackingMeta(), batches: [], imeis: [], serials: [], serializedDeviceProfile: 'PHONE_IMEI', variants: []
   })
+  const isSerializedDeviceProfileLocked = Boolean(editTarget?.id) && String(formState.productType || '').toUpperCase() === 'VARIANT_SERIALIZED'
+  const serializedVariantIdentifierLabel = formState.serializedDeviceProfile === 'PHONE_IMEI' ? 'IMEI' : 'SERIE'
 
   const [imeiInput, setImeiInput] = useState('')
   const [serialInput, setSerialInput] = useState('')
+  const defaultVariantWarehouseId = useMemo(() => {
+    return String(formState.initialWarehouseId || warehouses[0]?.id || 1)
+  }, [formState.initialWarehouseId, warehouses])
   
   // Helper: comprobar si un estante pertenece al almacén seleccionado
   function shelfMatchesWarehouse(shelf: { warehouseId?: number | null; warehouseIds?: number[] }, warehouseId: number) {
@@ -193,6 +594,10 @@ export default function Products() {
   }
   
   // Ajusta la cantidad de campos IMEI (ahora siempre 0 al crear)
+  useEffect(() => {
+    fetchConfig()
+  }, [fetchConfig])
+
   useEffect(() => {
     const isImei = String(formState.productType || 'GENERAL').toUpperCase() === 'IMEI'
     if (!isImei) return
@@ -426,8 +831,34 @@ export default function Products() {
   }
 
   // Cerrar lightbox con ESC
+  function openImageViewer(source: { name?: string | null; imageUrl?: string | null; images?: Array<{ imageUrl?: string | null }>; description?: string | null; price?: number | string | null }, preferredUrl?: string | null) {
+    const images = buildViewerImages(source, preferredUrl)
+    const preferredResolved = preferredUrl ? buildViewerImages({ imageUrl: preferredUrl }, preferredUrl)[0] : null
+    const activeIndex = preferredResolved ? Math.max(0, images.indexOf(preferredResolved)) : 0
+    const rawPrice = Number(source?.price)
+    setImageViewer({
+      name: source?.name || null,
+      images,
+      activeIndex: activeIndex >= 0 ? activeIndex : 0,
+      description: String(source?.description || '').trim() || null,
+      price: Number.isFinite(rawPrice) ? rawPrice : null,
+    })
+  }
+
+  function moveImageViewer(step: number) {
+    setImageViewer(prev => {
+      if (!prev || prev.images.length === 0) return prev
+      const nextIndex = (prev.activeIndex + step + prev.images.length) % prev.images.length
+      return { ...prev, activeIndex: nextIndex }
+    })
+  }
+
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setImageViewer(null) }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setImageViewer(null)
+      if (e.key === 'ArrowLeft') moveImageViewer(-1)
+      if (e.key === 'ArrowRight') moveImageViewer(1)
+    }
     if (imageViewer) window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [imageViewer])
@@ -522,6 +953,10 @@ export default function Products() {
     return String(user.role || '').toUpperCase() === 'ADMIN' || hasPermission('products:write')
   }, [user, hasPermission])
   const productsPageTitle = canManageProducts ? 'Productos' : 'Catalogo de productos'
+  const catalogPdfVisibleProducts = useMemo(
+    () => filterCatalogProducts(catalogPdfProducts, { onlyWithImage: catalogPdfOnlyWithImage }),
+    [catalogPdfProducts, catalogPdfOnlyWithImage]
+  )
 
   const departmentMap = useMemo(() => {
     const map: Record<number, string> = {}
@@ -595,6 +1030,10 @@ export default function Products() {
     return String(catalogStockProduct?.productType || '').toUpperCase() === 'SERIAL'
   }, [catalogStockProduct])
 
+  const canShowCatalogVariantSummary = useMemo(() => {
+    return String(catalogStockProduct?.productType || '').toUpperCase() === 'VARIANT_SERIALIZED'
+  }, [catalogStockProduct])
+
   const detailImeis = useMemo(() => {
     if (Array.isArray(details?.imeiDetails) && details.imeiDetails.length > 0) {
       return details.imeiDetails
@@ -635,8 +1074,20 @@ export default function Products() {
     return []
   }, [details])
 
+  const detailVariants = useMemo(() => {
+    return Array.isArray(details?.variants) ? details.variants : []
+  }, [details])
+
   const parentCategories = useMemo(() => categories.filter(c => !c.parentId && (formDepartmentId ? c.departmentId === formDepartmentId : true)), [categories, formDepartmentId])
   const subcategoriesForParent = useMemo(() => categories.filter(c => c.parentId === formParentId), [categories, formParentId])
+  const catalogPdfParentCategories = useMemo(
+    () => getCatalogPdfParentCategories(categories, catalogPdfDepartmentId),
+    [categories, catalogPdfDepartmentId]
+  )
+  const catalogPdfSubcategories = useMemo(
+    () => getCatalogPdfSubcategories(categories, catalogPdfCategoryId),
+    [categories, catalogPdfCategoryId]
+  )
   const hasActiveFilters = useMemo(() => {
     return (selectedSubcategoryId !== null) || (selectedCategoryId !== null) || (selectedBrandId !== null) || (selectedSupplierId !== null) || (selectedDepartmentId !== null) || (selectedStockFilter !== 'with_stock') || (query.trim() !== '')
   }, [selectedSubcategoryId, selectedCategoryId, selectedBrandId, selectedSupplierId, selectedDepartmentId, selectedStockFilter, query])
@@ -772,13 +1223,18 @@ export default function Products() {
       alert('Solo tienes acceso al catalogo de productos en modo visualizacion')
       return
     }
+    if (availableProductTypeOptions.length <= 1) {
+      startCreateWithType(availableProductTypeOptions[0]?.value || 'GENERAL')
+      return
+    }
     setShowProductTypeSelector(true)
+    setShowSerializedVariantProfileSelector(false)
     setEditTarget(null)
   }
 
-  function startCreateWithType(productType: string) {
-    setShowProductTypeSelector(false)
+  function openCreateFormWithType(productType: string, serializedDeviceProfile: SerializedDeviceProfile = 'PHONE_IMEI') {
     setShowCreate(true)
+    setImageUploadProgress(null)
     setFormParentId(null)
     setNewCategoryParentId(null)
 
@@ -788,6 +1244,7 @@ export default function Products() {
           return 'PZ'
         case 'IMEI':
         case 'SERIAL':
+        case 'VARIANT_SERIALIZED':
         case 'GENERAL':
         default:
           return 'PZ'
@@ -797,9 +1254,28 @@ export default function Products() {
     const unitCode = units.some(u => u.code === def) ? def : ''
 
     setFormState({
-      name: '', sku: '', productCode: '', price: '', price2: '', price3: '', cost: '', minStock: '', unit: unitCode, description: '', categoryId: '', brandId: '', supplierId: '', imageFile: null, imagePreview: null,
-      productType: productType, altName: '', genericName: '', shelfLocation: '', batches: [], imeis: [], serials: []
+      name: '', sku: '', productCode: '', price: '', price2: '', price3: '', cost: '', initialStock: '', minStock: '', unit: unitCode, description: '', categoryId: '', brandId: '', supplierId: '', imageFile: null, imagePreview: null, productImages: [],
+      initialWarehouseId: '', initialShelfId: '',
+      productType: productType, altName: '', genericName: '', shelfLocation: '', trackingProfile: 'GENERAL', trackingMeta: { ...createEmptyTrackingMeta(), serializedDeviceProfile: productType === 'VARIANT_SERIALIZED' ? serializedDeviceProfile : '' }, batches: [], imeis: [], serials: [],
+      serializedDeviceProfile,
+      variants: []
     })
+  }
+
+  function startCreateWithType(productType: string) {
+    setShowProductTypeSelector(false)
+    setEditTarget(null)
+    if (String(productType || '').trim().toUpperCase() === 'VARIANT_SERIALIZED') {
+      setShowSerializedVariantProfileSelector(true)
+      return
+    }
+    setShowSerializedVariantProfileSelector(false)
+    openCreateFormWithType(productType)
+  }
+
+  function startCreateSerializedVariantWithProfile(profile: SerializedDeviceProfile) {
+    setShowSerializedVariantProfileSelector(false)
+    openCreateFormWithType('VARIANT_SERIALIZED', profile)
   }
 
   async function startEdit(p: Product) {
@@ -808,6 +1284,9 @@ export default function Products() {
       return
     }
     try {
+      setShowSerializedVariantProfileSelector(false)
+      setShowVariantEditor(false)
+      setVariantEditorTarget(null)
       setEditTarget(p)
       setShowCreate(true)
       setLoading(true)
@@ -820,6 +1299,8 @@ export default function Products() {
       })) : []
       const imeisFs = Array.isArray(details.imeis) ? details.imeis.map((x: any) => String(x || '')) : []
       const serialsFs = Array.isArray(details.serials) ? details.serials.map((x: any) => String(x || '')) : []
+      const serializedDeviceProfile = inferSerializedDeviceProfile(details)
+      const productImages = mapProductImagesForForm(details)
 
       setFormState({
         id: details.id,
@@ -830,6 +1311,7 @@ export default function Products() {
         price2: String(details.price2 ?? ''),
         price3: String(details.price3 ?? ''),
         cost: String(details.cost ?? ''),
+        initialStock: String(details.initialStock ?? ''),
         minStock: String(details.minStock ?? ''),
         unit: details.unit || '',
         description: details.description || '',
@@ -837,16 +1319,21 @@ export default function Products() {
         brandId: details.brandId ? String(details.brandId) : '',
         supplierId: details.supplierId ? String(details.supplierId) : '',
         imageFile: null,
-        imagePreview: details.imageUrl || null,
+        imagePreview: productImages[0]?.previewUrl || details.imageUrl || null,
+        productImages,
         initialWarehouseId: '',
         initialShelfId: '',
         productType: (details.productType || 'GENERAL').toUpperCase(),
         altName: details.altName || '',
         genericName: details.genericName || '',
         shelfLocation: details.shelfLocation || '',
+        trackingProfile: normalizeTrackingProfile(details.trackingProfile),
+        trackingMeta: { ...parseTrackingMeta(details.trackingMeta), serializedDeviceProfile },
         batches: batchesFs,
         imeis: imeisFs,
         serials: serialsFs,
+        serializedDeviceProfile,
+        variants: parseSerializedVariants(details.variants),
       })
       {
         const catSel = details.categoryId ? categories.find(c => c.id === details.categoryId) : undefined
@@ -865,6 +1352,7 @@ export default function Products() {
         price2: String(p.price2 ?? ''),
         price3: String(p.price3 ?? ''),
         cost: String(p.cost ?? ''),
+        initialStock: String(p.initialStock ?? ''),
         minStock: String(p.minStock ?? ''),
         unit: p.unit || '',
         description: p.description || '',
@@ -873,23 +1361,88 @@ export default function Products() {
         supplierId: p.supplierId ? String(p.supplierId) : '',
         imageFile: null,
         imagePreview: p.imageUrl || null,
+        productImages: mapProductImagesForForm(p),
         initialWarehouseId: '',
         initialShelfId: '',
         productType: (p.productType || 'GENERAL').toUpperCase(),
         altName: p.altName || '',
         genericName: p.genericName || '',
         shelfLocation: p.shelfLocation || '',
-        batches: [], imeis: [], serials: []
+        trackingProfile: normalizeTrackingProfile(p.trackingProfile),
+        trackingMeta: parseTrackingMeta(p.trackingMeta),
+        batches: [], imeis: [], serials: [], serializedDeviceProfile: normalizeSerializedDeviceProfile(p.trackingMeta?.serializedDeviceProfile), variants: []
       })
     } finally {
       setLoading(false)
     }
   }
 
+  async function openVariantEditor(product: Product) {
+    if (!canManageProducts) {
+      alert('No tienes permisos para gestionar variantes')
+      return
+    }
+    try {
+      setShowCreate(false)
+      setEditTarget(null)
+      setShowSerializedVariantProfileSelector(false)
+      setVariantEditorTarget(product)
+      setShowVariantEditor(true)
+      setLoading(true)
+      const details = await getProductDetails(product.id)
+      const serializedDeviceProfile = inferSerializedDeviceProfile(details)
+      const productImages = mapProductImagesForForm(details)
+      setFormState({
+        id: details.id,
+        name: details.name || '',
+        sku: details.sku || '',
+        productCode: details.productCode || '',
+        price: String(details.price ?? ''),
+        price2: String(details.price2 ?? ''),
+        price3: String(details.price3 ?? ''),
+        cost: String(details.cost ?? ''),
+        initialStock: String(details.initialStock ?? ''),
+        minStock: String(details.minStock ?? ''),
+        unit: details.unit || '',
+        description: details.description || '',
+        categoryId: details.categoryId ? String(details.categoryId) : '',
+        brandId: details.brandId ? String(details.brandId) : '',
+        supplierId: details.supplierId ? String(details.supplierId) : '',
+        imageFile: null,
+        imagePreview: productImages[0]?.previewUrl || details.imageUrl || null,
+        productImages,
+        initialWarehouseId: '',
+        initialShelfId: '',
+        productType: (details.productType || 'GENERAL').toUpperCase(),
+        altName: details.altName || '',
+        genericName: details.genericName || '',
+        shelfLocation: details.shelfLocation || '',
+        trackingProfile: normalizeTrackingProfile(details.trackingProfile),
+        trackingMeta: { ...parseTrackingMeta(details.trackingMeta), serializedDeviceProfile },
+        batches: [],
+        imeis: [],
+        serials: [],
+        serializedDeviceProfile,
+        variants: parseSerializedVariants(details.variants),
+      })
+    } catch (err: any) {
+      setShowVariantEditor(false)
+      setVariantEditorTarget(null)
+      setError(err?.message || 'Error cargando variantes del producto')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function closeVariantEditor() {
+    setShowVariantEditor(false)
+    setVariantEditorTarget(null)
+  }
+
   async function openDetails(productId: number) {
     setShowDetails(true); setDetailsLoading(true); setDetails(null); setDetailsError(null)
     // Reset toggles al abrir detalles (todas ocultas al inicio excepto info principal)
-    setShowBatches(false); setShowImeis(false); setShowSerials(false)
+    setShowBatches(false); setShowImeis(false); setShowSerials(false); setShowVariants(false)
     try {
       const d = await getProductDetails(productId)
       setDetails(d)
@@ -960,9 +1513,57 @@ export default function Products() {
     }
   }
 
+  async function runImport() {
+    if (!canManageProducts) {
+      alert('No tienes permisos para importar productos')
+      return
+    }
+    if (!importFile) {
+      alert('Selecciona un archivo .xlsx o .csv')
+      return
+    }
+    try {
+      setImporting(true)
+      setImportResult(null)
+      const fd = new FormData()
+      fd.append('file', importFile)
+      const resp = await importProductsFile(fd)
+      setImportResult(resp)
+      alert(`Importación completa. Creados: ${resp.createdCount} • Errores: ${resp.errorCount}`)
+      setImportFile(null)
+    } catch (err: any) {
+      console.error('Import error:', err)
+      alert(err?.response?.data?.error || err?.message || 'Error importando productos')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  async function downloadImportTemplate() {
+    if (!canManageProducts) {
+      alert('No tienes permisos para importar productos')
+      return
+    }
+    try {
+      const blob = await downloadProductsImportTemplate()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'productos_import_template.xlsx'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (err: any) {
+      console.error('Template download error:', err)
+      alert(err?.response?.data?.error || err?.message || 'Error descargando formato')
+    }
+  }
+
   async function openCatalogStock(product: Product) {
     setCatalogStockProduct(product)
     setCatalogWarehouseStock([])
+    setCatalogVariantSummaries([])
     setCatalogStockError(null)
     setCatalogSerials([])
     setShowCatalogSerials(false)
@@ -973,6 +1574,7 @@ export default function Products() {
         getProductDetails(product.id)
       ])
       setCatalogWarehouseStock(Array.isArray(whStock) ? whStock : [])
+      setCatalogVariantSummaries(Array.isArray(detailData?.variants) ? detailData.variants : [])
       const serialRows = Array.isArray(detailData?.serialDetails) && detailData.serialDetails.length > 0
         ? detailData.serialDetails
             .filter((item: any) => item && item.serial)
@@ -1000,29 +1602,148 @@ export default function Products() {
     setFormState(prev => ({ ...prev, [key]: value }))
   }
 
-  function onImageChange(file: File | null) {
-    if (!file) {
-      onFormChange('imageFile', null)
-      onFormChange('imagePreview', null)
-      return
-    }
-    const reader = new FileReader()
-    reader.onload = () => {
-      onFormChange('imageFile', file)
-      onFormChange('imagePreview', String(reader.result))
-    }
-    reader.readAsDataURL(file)
+  function onProductImagesChange(nextImages: ProductImageDraft[]) {
+    setFormState(prev => ({
+      ...prev,
+      productImages: nextImages,
+      imageFile: nextImages[0]?.file || null,
+      imagePreview: nextImages[0]?.previewUrl || nextImages[0]?.imageUrl || null,
+    }))
+  }
+
+  function onTrackingMetaChange<K extends keyof TrackingMeta>(key: K, value: TrackingMeta[K]) {
+    setFormState(prev => ({
+      ...prev,
+      trackingMeta: {
+        ...prev.trackingMeta,
+        [key]: value,
+      }
+    }))
+  }
+
+  function onVariantChange(variantIndex: number, key: keyof SerializedVariantForm, value: any) {
+    setFormState(prev => {
+      const nextVariants = [...prev.variants]
+      const currentVariant = nextVariants[variantIndex]
+      if (!currentVariant) return prev
+      if (key === 'identifierMode') {
+        const identifierMode = normalizeVariantIdentifierMode(value)
+        const deviceCategory = identifierMode === 'SERIAL' ? 'DEVICE_SERIAL' : 'PHONE_IMEI'
+        nextVariants[variantIndex] = {
+          ...currentVariant,
+          identifierMode,
+          carrier: deviceCategory === 'PHONE_IMEI' ? currentVariant.carrier : '',
+          simType: deviceCategory === 'PHONE_IMEI' ? currentVariant.simType : '',
+          meta: {
+            ...currentVariant.meta,
+            deviceCategory,
+          },
+        }
+      } else {
+        nextVariants[variantIndex] = { ...currentVariant, [key]: value }
+      }
+      return { ...prev, variants: nextVariants }
+    })
+  }
+
+  function onVariantMetaChange(variantIndex: number, key: keyof SerializedVariantMeta, value: string) {
+    setFormState(prev => {
+      const nextVariants = [...prev.variants]
+      const currentVariant = nextVariants[variantIndex]
+      if (!currentVariant) return prev
+      nextVariants[variantIndex] = {
+        ...currentVariant,
+        meta: {
+          ...currentVariant.meta,
+          [key]: value,
+        }
+      }
+      return { ...prev, variants: nextVariants }
+    })
+  }
+
+  function onSerializedDeviceProfileChange(value: string) {
+    const nextProfile = normalizeSerializedDeviceProfile(value)
+    const nextIdentifierMode = getIdentifierModeForSerializedDeviceProfile(nextProfile)
+    setFormState(prev => ({
+      ...prev,
+      serializedDeviceProfile: nextProfile,
+      variants: prev.variants.map(variant => ({
+        ...variant,
+        identifierMode: nextIdentifierMode,
+        carrier: nextProfile === 'PHONE_IMEI' ? variant.carrier : '',
+        simType: nextProfile === 'PHONE_IMEI' ? variant.simType : '',
+        meta: {
+          ...variant.meta,
+          deviceCategory: nextProfile,
+        },
+      })),
+    }))
+  }
+
+  function addSerializedVariant() {
+    setFormState(prev => ({
+      ...prev,
+      variants: [...prev.variants, createEmptySerializedVariant(prev.serializedDeviceProfile, defaultVariantWarehouseId)],
+    }))
+  }
+
+  function removeSerializedVariant(variantIndex: number) {
+    setFormState(prev => ({
+      ...prev,
+      variants: prev.variants.filter((_, index) => index !== variantIndex)
+    }))
+  }
+
+  function buildSerializedVariantsPayload() {
+    return formState.variants.map((variant, index) => {
+      const deviceCategory = normalizeSerializedDeviceProfile(variant.meta?.deviceCategory || formState.serializedDeviceProfile)
+      const identifierMode = getIdentifierModeForSerializedDeviceProfile(deviceCategory)
+      return {
+        name: String(variant.name || '').trim(),
+        sku: String(variant.sku || '').trim().toUpperCase(),
+        color: String(variant.color || '').trim(),
+        ram: String(variant.ram || '').trim(),
+        storage: String(variant.storage || '').trim(),
+        carrier: deviceCategory === 'PHONE_IMEI' ? String(variant.carrier || '').trim() : '',
+        simType: deviceCategory === 'PHONE_IMEI' ? String(variant.simType || '').trim() : '',
+        identifierMode,
+        price: variant.price === '' ? 0 : Number(variant.price || 0),
+        cost: variant.cost === '' ? 0 : Number(variant.cost || 0),
+        sortOrder: variant.sortOrder === '' ? index : Number(variant.sortOrder || index),
+        meta: {
+          deviceCategory,
+          modelCode: String(variant.meta?.modelCode || '').trim(),
+          notes: String(variant.meta?.notes || '').trim(),
+        },
+        units: [],
+      }
+    })
   }
 
   async function saveCreate() {
     try {
       setLoading(true)
+      setImageUploadProgress(0)
+      const productType = String(formState.productType || 'GENERAL').trim().toUpperCase()
+      const serializedVariants = buildSerializedVariantsPayload()
+      const { productImages, newFiles } = buildProductImagesUploadPayload(formState.productImages)
       // Validaciones básicas de campos requeridos
       const errors: string[] = []
       if (!String(formState.name || '').trim()) errors.push('El nombre es obligatorio.')
       if (formState.price === '' || Number.isNaN(Number(formState.price))) errors.push('El precio es obligatorio y debe ser numérico.')
       if (!String(formState.unit || '').trim()) errors.push('La unidad es obligatoria.')
       if (formState.cost !== '' && Number.isNaN(Number(formState.cost))) errors.push('El costo debe ser numérico.')
+      if (productType === 'VARIANT_SERIALIZED') {
+        serializedVariants.forEach((variant, variantIndex) => {
+          if (variant.price !== undefined && Number.isNaN(Number(variant.price))) {
+            errors.push(`La variante ${variantIndex + 1} tiene un precio inválido.`)
+          }
+          if (variant.cost !== undefined && Number.isNaN(Number(variant.cost))) {
+            errors.push(`La variante ${variantIndex + 1} tiene un costo inválido.`)
+          }
+        })
+      }
       
       if (errors.length > 0) {
         alert(errors.join('\n'))
@@ -1062,13 +1783,18 @@ export default function Products() {
       appendIfPresent('minStock', formState.minStock)
       appendIfPresent('unit', formState.unit)
       appendIfPresent('description', formState.description)
-      if (formState.imageFile) fd.append('image', formState.imageFile)
   
       // Campos de tipo
-      fd.append('productType', String(formState.productType || '').trim().toUpperCase())
+      fd.append('productType', productType)
       appendIfPresent('altName', formState.altName)
       appendIfPresent('genericName', formState.genericName)
       appendIfPresent('shelfLocation', formState.shelfLocation)
+      if (String(formState.productType || '').trim().toUpperCase() === 'MEDICINAL') {
+        fd.append('trackingProfile', normalizeTrackingProfile(formState.trackingProfile))
+        fd.append('trackingMeta', JSON.stringify(formState.trackingMeta))
+      } else if (productType === 'VARIANT_SERIALIZED') {
+        fd.append('trackingMeta', JSON.stringify({ serializedDeviceProfile: formState.serializedDeviceProfile }))
+      }
   
       // Arrays: serializados JSON normalizados (trim + uppercase)
       const batches = formState.batches.map(b => ({ 
@@ -1080,10 +1806,8 @@ export default function Products() {
       const serials = [...formState.serials].map(x => String(x || '').trim().toUpperCase())
       // Validación de duplicados y conteo para IMEI/SERIAL en creación
       {
-        const pt = String(formState.productType || 'GENERAL').toUpperCase()
-        // const required = Number(formState.initialStock || 0)
-        if (pt === 'IMEI' || pt === 'SERIAL') {
-          const list = pt === 'IMEI' ? imeis : serials
+        if (productType === 'IMEI' || productType === 'SERIAL') {
+          const list = productType === 'IMEI' ? imeis : serials
           
           const duplicates = [...new Set(list.filter((v, i, arr) => arr.indexOf(v) !== i))]
           if (duplicates.length > 0) {
@@ -1092,12 +1816,25 @@ export default function Products() {
             return
           }
         }
+        if (productType === 'VARIANT_SERIALIZED') {
+          const duplicateVariantSkus = [...new Set(serializedVariants.map(variant => variant.sku).filter(Boolean).filter((value, index, arr) => arr.indexOf(value) !== index))]
+          if (duplicateVariantSkus.length > 0) {
+            alert(`SKU de variante duplicado: ${duplicateVariantSkus.join(', ')}`)
+            setLoading(false)
+            return
+          }
+        }
       }
       fd.append('batches', JSON.stringify(batches))
       fd.append('imeis', JSON.stringify(imeis))
       fd.append('serials', JSON.stringify(serials))
+      fd.append('variants', JSON.stringify(serializedVariants))
+      fd.append('productImages', JSON.stringify(productImages))
+      newFiles.forEach(file => fd.append('images', file))
   
-      const created = await createProduct(fd)
+      const created = await createProduct(fd, {
+        onUploadProgress: percent => setImageUploadProgress(percent),
+      })
       // Si se eligió un almacén distinto al predeterminado (ID 1), transferir el stock inicial
       /* try {
         const chosenWarehouseId = Number(formState.initialWarehouseId || 0)
@@ -1110,6 +1847,7 @@ export default function Products() {
       } */
       setProducts(prev => [created, ...prev])
       setShowCreate(false)
+      setImageUploadProgress(null)
       alert('Producto creado correctamente')
     } catch (err: any) {
       const msg = err?.response?.data?.error || err?.message || 'Error creando producto'
@@ -1117,6 +1855,7 @@ export default function Products() {
       alert(dup ? `${msg}. Duplicado: ${dup}` : msg)
       setError(msg)
     } finally {
+      setImageUploadProgress(null)
       setLoading(false)
     }
   }
@@ -1125,6 +1864,10 @@ export default function Products() {
     if (!editTarget?.id) return
     try {
       setLoading(true)
+      setImageUploadProgress(0)
+      const productType = String(formState.productType || 'GENERAL').trim().toUpperCase()
+      const serializedVariants = buildSerializedVariantsPayload()
+      const { productImages, newFiles } = buildProductImagesUploadPayload(formState.productImages)
       // Validación: para productos MEDICINAL, el stock inicial debe coincidir con la suma de lotes
       // Logic removed: Stock details are now entered via Purchases/Adjustments
       /* const isMedicinal = String(formState.productType || 'GENERAL').toUpperCase() === 'MEDICINAL'
@@ -1147,6 +1890,26 @@ export default function Products() {
       const appendIfPresent = (k: string, v: string) => { 
         if (v !== undefined && v !== null && !(typeof v === 'string' && v === '')) fd.append(k, String(v).trim().toUpperCase()) 
       }
+      const errors: string[] = []
+      if (!String(formState.name || '').trim()) errors.push('El nombre es obligatorio.')
+      if (formState.price === '' || Number.isNaN(Number(formState.price))) errors.push('El precio es obligatorio y debe ser numérico.')
+      if (!String(formState.unit || '').trim()) errors.push('La unidad es obligatoria.')
+      if (formState.cost !== '' && Number.isNaN(Number(formState.cost))) errors.push('El costo debe ser numérico.')
+      if (productType === 'VARIANT_SERIALIZED') {
+        serializedVariants.forEach((variant, variantIndex) => {
+          if (variant.price !== undefined && Number.isNaN(Number(variant.price))) {
+            errors.push(`La variante ${variantIndex + 1} tiene un precio inválido.`)
+          }
+          if (variant.cost !== undefined && Number.isNaN(Number(variant.cost))) {
+            errors.push(`La variante ${variantIndex + 1} tiene un costo inválido.`)
+          }
+        })
+      }
+      if (errors.length > 0) {
+        alert(errors.join('\n'))
+        setLoading(false)
+        return
+      }
       fd.append('name', String(formState.name || '').trim().toUpperCase())
       fd.append('sku', String(formState.sku || '').trim().toUpperCase())
       appendIfPresent('productCode', formState.productCode)
@@ -1161,12 +1924,17 @@ export default function Products() {
       appendIfPresent('minStock', formState.minStock)
       appendIfPresent('unit', formState.unit)
       appendIfPresent('description', formState.description)
-      if (formState.imageFile) fd.append('image', formState.imageFile)
   
-      fd.append('productType', String(formState.productType || '').trim().toUpperCase())
+      fd.append('productType', productType)
       appendIfPresent('altName', formState.altName)
       appendIfPresent('genericName', formState.genericName)
       appendIfPresent('shelfLocation', formState.shelfLocation)
+      if (String(formState.productType || '').trim().toUpperCase() === 'MEDICINAL') {
+        fd.append('trackingProfile', normalizeTrackingProfile(formState.trackingProfile))
+        fd.append('trackingMeta', JSON.stringify(formState.trackingMeta))
+      } else if (productType === 'VARIANT_SERIALIZED') {
+        fd.append('trackingMeta', JSON.stringify({ serializedDeviceProfile: formState.serializedDeviceProfile }))
+      }
   
       const batches = formState.batches.map(b => ({ 
         batch_no: String(b.batchNo || '').trim().toUpperCase(), 
@@ -1177,12 +1945,19 @@ export default function Products() {
       const serials = [...formState.serials].map(x => String(x || '').trim().toUpperCase())
       // Validación de duplicados para IMEI/SERIAL en edición
       {
-        const pt = String(formState.productType || 'GENERAL').toUpperCase()
-        if (pt === 'IMEI' || pt === 'SERIAL') {
-          const list = pt === 'IMEI' ? imeis : serials
+        if (productType === 'IMEI' || productType === 'SERIAL') {
+          const list = productType === 'IMEI' ? imeis : serials
           const duplicates = [...new Set(list.filter((v, i, arr) => arr.indexOf(v) !== i))]
           if (duplicates.length > 0) {
             alert(`Valores duplicados detectados: ${duplicates.join(', ')}`)
+            setLoading(false)
+            return
+          }
+        }
+        if (productType === 'VARIANT_SERIALIZED') {
+          const duplicateVariantSkus = [...new Set(serializedVariants.map(variant => variant.sku).filter(Boolean).filter((value, index, arr) => arr.indexOf(value) !== index))]
+          if (duplicateVariantSkus.length > 0) {
+            alert(`SKU de variante duplicado: ${duplicateVariantSkus.join(', ')}`)
             setLoading(false)
             return
           }
@@ -1191,11 +1966,17 @@ export default function Products() {
       fd.append('batches', JSON.stringify(batches))
       fd.append('imeis', JSON.stringify(imeis))
       fd.append('serials', JSON.stringify(serials))
-  
-      const updated = await updateProduct(editTarget.id, fd)
+      fd.append('variants', JSON.stringify(serializedVariants))
+      fd.append('productImages', JSON.stringify(productImages))
+      newFiles.forEach(file => fd.append('images', file))
+
+      const updated = await updateProduct(editTarget.id, fd, {
+        onUploadProgress: percent => setImageUploadProgress(percent),
+      })
       setProducts(prev => prev.map(p => (p.id === updated.id ? updated : p)))
       setEditTarget(null)
       setShowCreate(false)
+      setImageUploadProgress(null)
       alert('Producto actualizado correctamente')
     } catch (err: any) {
       const msg = err?.response?.data?.error || err?.message || 'Error guardando producto'
@@ -1203,7 +1984,222 @@ export default function Products() {
       alert(dup ? `${msg}. Duplicado: ${dup}` : msg)
       setError(msg)
     } finally {
+      setImageUploadProgress(null)
       setLoading(false)
+    }
+  }
+
+  async function saveVariantEditor() {
+    if (!variantEditorTarget?.id) return
+    try {
+      setLoading(true)
+      const serializedVariants = buildSerializedVariantsPayload()
+      const errors: string[] = []
+      serializedVariants.forEach((variant, variantIndex) => {
+        if (variant.price !== undefined && Number.isNaN(Number(variant.price))) {
+          errors.push(`La variante ${variantIndex + 1} tiene un precio inválido.`)
+        }
+        if (variant.cost !== undefined && Number.isNaN(Number(variant.cost))) {
+          errors.push(`La variante ${variantIndex + 1} tiene un costo inválido.`)
+        }
+      })
+      if (errors.length > 0) {
+        alert(errors.join('\n'))
+        setLoading(false)
+        return
+      }
+
+      const duplicateVariantSkus = [...new Set(serializedVariants.map(variant => variant.sku).filter(Boolean).filter((value, index, arr) => arr.indexOf(value) !== index))]
+      if (duplicateVariantSkus.length > 0) {
+        alert(`SKU de variante duplicado: ${duplicateVariantSkus.join(', ')}`)
+        setLoading(false)
+        return
+      }
+
+      const fd = new FormData()
+      const appendIfPresent = (k: string, v: string) => {
+        if (v !== undefined && v !== null && !(typeof v === 'string' && v === '')) fd.append(k, String(v).trim().toUpperCase())
+      }
+
+      fd.append('name', String(formState.name || '').trim().toUpperCase())
+      fd.append('sku', String(formState.sku || '').trim().toUpperCase())
+      appendIfPresent('productCode', formState.productCode)
+      fd.append('price', formState.price)
+      appendIfPresent('categoryId', formState.categoryId)
+      appendIfPresent('brandId', formState.brandId)
+      appendIfPresent('supplierId', formState.supplierId)
+      appendIfPresent('price2', formState.price2)
+      appendIfPresent('price3', formState.price3)
+      appendIfPresent('cost', formState.cost)
+      appendIfPresent('initialStock', formState.initialStock)
+      appendIfPresent('minStock', formState.minStock)
+      appendIfPresent('unit', formState.unit)
+      appendIfPresent('description', formState.description)
+      fd.append('productType', 'VARIANT_SERIALIZED')
+      appendIfPresent('altName', formState.altName)
+      appendIfPresent('genericName', formState.genericName)
+      appendIfPresent('shelfLocation', formState.shelfLocation)
+      fd.append('trackingMeta', JSON.stringify({ serializedDeviceProfile: formState.serializedDeviceProfile }))
+      fd.append('batches', JSON.stringify([]))
+      fd.append('imeis', JSON.stringify([]))
+      fd.append('serials', JSON.stringify([]))
+      fd.append('variants', JSON.stringify(serializedVariants))
+
+      const updated = await updateProduct(variantEditorTarget.id, fd)
+      setProducts(prev => prev.map(p => (p.id === updated.id ? updated : p)))
+      closeVariantEditor()
+      alert('Variantes actualizadas correctamente')
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.message || 'Error guardando variantes'
+      const dup = err?.response?.data?.duplicate
+      alert(dup ? `${msg}. Duplicado: ${dup}` : msg)
+      setError(msg)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function openCatalogPdfBuilder() {
+    setCatalogPdfDepartmentId(selectedDepartmentId)
+    setCatalogPdfCategoryId(selectedCategoryId)
+    setCatalogPdfSubcategoryId(selectedSubcategoryId)
+    setCatalogPdfBrandId(selectedBrandId)
+    setCatalogPdfProducts([])
+    setCatalogPdfLoading(true)
+    setCatalogPdfError(null)
+    setCatalogPdfSelectedIds([])
+    setCatalogPdfTitle(normalizeCatalogTitleText(config?.name ? `Catalogo de ${config.name}` : 'Catalogo de productos'))
+    setCatalogPdfSubtitle('Explora una selección visual diseñada para compartir, vender y destacar los beneficios clave de cada artículo.')
+    setShowCatalogPdfModal(true)
+  }
+
+  function closeCatalogPdfBuilder() {
+    setShowCatalogPdfModal(false)
+    setCatalogPdfLoading(false)
+    setCatalogPdfError(null)
+    setCatalogPdfGenerating(false)
+    setCatalogPdfProgress(0)
+    setCatalogPdfProgressLabel('Preparando catálogo...')
+  }
+
+  function resetCatalogPdfFilters() {
+    setCatalogPdfDepartmentId(null)
+    setCatalogPdfCategoryId(null)
+    setCatalogPdfSubcategoryId(null)
+    setCatalogPdfBrandId(null)
+  }
+
+  function handleCatalogPdfDepartmentChange(value: number | null) {
+    setCatalogPdfDepartmentId(value)
+    setCatalogPdfCategoryId(null)
+    setCatalogPdfSubcategoryId(null)
+  }
+
+  function handleCatalogPdfCategoryChange(value: number | null) {
+    setCatalogPdfCategoryId(value)
+    setCatalogPdfSubcategoryId(null)
+  }
+
+  useEffect(() => {
+    if (!showCatalogPdfModal) return
+
+    let cancelled = false
+
+    async function loadCatalogPdfProducts() {
+      try {
+        setCatalogPdfLoading(true)
+        setCatalogPdfError(null)
+        const response = await getProducts(buildCatalogPdfProductQuery({
+          departmentId: catalogPdfDepartmentId,
+          categoryId: catalogPdfCategoryId,
+          subcategoryId: catalogPdfSubcategoryId,
+          brandId: catalogPdfBrandId,
+        }))
+        if (cancelled) return
+        const items = Array.isArray(response)
+          ? response
+          : (Array.isArray(response?.data) ? response.data : [])
+        setCatalogPdfProducts(items)
+        setCatalogPdfSelectedIds(
+          filterCatalogProducts(items, { onlyWithImage: catalogPdfOnlyWithImage }).map(product => Number(product.id))
+        )
+      } catch (err: any) {
+        if (cancelled) return
+        setCatalogPdfProducts([])
+        setCatalogPdfSelectedIds([])
+        setCatalogPdfError(err?.response?.data?.error || err?.message || 'No se pudieron cargar los productos del catálogo PDF')
+      } finally {
+        if (!cancelled) setCatalogPdfLoading(false)
+      }
+    }
+
+    void loadCatalogPdfProducts()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    showCatalogPdfModal,
+    catalogPdfDepartmentId,
+    catalogPdfCategoryId,
+    catalogPdfSubcategoryId,
+    catalogPdfBrandId,
+    catalogPdfOnlyWithImage,
+  ])
+
+  function toggleCatalogPdfProduct(productId: number) {
+    setCatalogPdfSelectedIds(prev => {
+      const numericId = Number(productId)
+      return prev.includes(numericId)
+        ? prev.filter(id => id !== numericId)
+        : [...prev, numericId]
+    })
+  }
+
+  function selectAllCatalogPdfVisibleProducts() {
+    setCatalogPdfSelectedIds(catalogPdfVisibleProducts.map(product => Number(product.id)))
+  }
+
+  function clearCatalogPdfSelection() {
+    setCatalogPdfSelectedIds([])
+  }
+
+  async function generateCatalogPdfFile() {
+    const selectedProducts = filterCatalogProducts(catalogPdfProducts, {
+      onlyWithImage: catalogPdfOnlyWithImage,
+      selectedIds: catalogPdfSelectedIds,
+    })
+    if (selectedProducts.length === 0) {
+      setCatalogPdfError('Selecciona al menos un producto para generar el catálogo.')
+      return
+    }
+
+    try {
+      setCatalogPdfGenerating(true)
+      setCatalogPdfProgress(3)
+      setCatalogPdfProgressLabel('Preparando catálogo...')
+      setCatalogPdfError(null)
+      await generateProductCatalogPdf({
+        title: catalogPdfTitle,
+        subtitle: catalogPdfSubtitle,
+        currency,
+        logoUrl: config?.logoUrl,
+        storeName: config?.name || 'Tienda DTM',
+        products: selectedProducts.map(product => ({
+          ...product,
+          imageUrl: getCatalogProductPrimaryImageUrl(product),
+        })),
+        onProgress: (progress, stage) => {
+          setCatalogPdfProgress(progress)
+          setCatalogPdfProgressLabel(stage)
+        },
+      })
+    } catch (err: any) {
+      setCatalogPdfError(err?.message || 'No se pudo generar el catálogo PDF.')
+    } finally {
+      setCatalogPdfGenerating(false)
+      setCatalogPdfProgress(0)
+      setCatalogPdfProgressLabel('Preparando catálogo...')
     }
   }
 
@@ -1275,6 +2271,26 @@ export default function Products() {
               Catalogo en modo visualizacion
             </div>
           )}
+          {canManageProducts && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button className="small-btn" onClick={downloadImportTemplate} disabled={importing}>
+                Descargar formato
+              </button>
+              <input
+                type="file"
+                accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+                onChange={(e) => setImportFile(e.target.files?.[0] || null)}
+                disabled={importing}
+                style={{ maxWidth: 260 }}
+              />
+              <button className="small-btn" onClick={runImport} disabled={importing || !importFile}>
+                {importing ? 'Importando...' : 'Importar Excel'}
+              </button>
+            </div>
+          )}
+          <button className="small-btn" onClick={openCatalogPdfBuilder}>
+            Catalogo PDF
+          </button>
           {canManageProducts && <button className="primary-btn" onClick={startCreate}>Nuevo producto</button>}
           <div className="view-toggle">
             <button
@@ -1374,6 +2390,19 @@ export default function Products() {
         </div>
       )}
 
+      {importResult && (
+        <div style={{ marginTop: 12, border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: 'var(--bg)' }}>
+          <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+            Importación: {Number(importResult.createdCount || 0)} creados • {Number(importResult.errorCount || 0)} errores
+          </div>
+          {Array.isArray(importResult.errors) && importResult.errors.length > 0 && (
+            <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, marginTop: 8, maxHeight: 220, overflow: 'auto' }}>
+{JSON.stringify(importResult.errors.slice(0, 50), null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
+
       {loading && <div>Cargando...</div>}
       {error && (
         <div style={{
@@ -1437,8 +2466,8 @@ export default function Products() {
                       tabIndex={0}
                       title="Ver imagen grande"
                       aria-label={`Ver imagen grande de ${p.name}`}
-                      onClick={() => setImageViewer({ url: p.imageUrl || 'https://via.placeholder.com/800x600?text=IMG', name: p.name })}
-                      onKeyDown={e => { if (e.key === 'Enter') setImageViewer({ url: p.imageUrl || 'https://via.placeholder.com/800x600?text=IMG', name: p.name }) }}
+                      onClick={() => openImageViewer(p, p.imageUrl || 'https://via.placeholder.com/800x600?text=IMG')}
+                      onKeyDown={e => { if (e.key === 'Enter') openImageViewer(p, p.imageUrl || 'https://via.placeholder.com/800x600?text=IMG') }}
                     />
                     <button
                       type="button"
@@ -1583,6 +2612,17 @@ export default function Products() {
                     <button className="icon-btn" title="Ver detalles" aria-label="Ver detalles" onClick={() => openDetails(p.id)}>
                       <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 5c-7 0-11 7-11 7s4 7 11 7 11-7 11-7-4-7-11-7zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8z" fill="currentColor"/></svg>
                     </button>
+                    {canManageProducts && String(p.productType || '').toUpperCase() === 'VARIANT_SERIALIZED' && (
+                      <button
+                        type="button"
+                        title="Gestionar variantes"
+                        aria-label="Gestionar variantes"
+                        onClick={() => void openVariantEditor(p)}
+                        style={{ padding: '8px 10px', borderRadius: 10, border: '1px solid rgba(37,99,235,0.22)', background: '#eff6ff', color: '#1d4ed8', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}
+                      >
+                        Variantes
+                      </button>
+                    )}
                     {canManageProducts && (
                       <button className="icon-btn primary" title="Editar" aria-label="Editar" onClick={() => startEdit(p)}>
                         <svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 17.25V21h3.75L17.81 9.94a1 1 0 0 0 0-1.41l-3.34-3.34a1 1 0 0 0-1.41 0L3 16.59z" fill="currentColor"/></svg>
@@ -1643,8 +2683,8 @@ export default function Products() {
                           tabIndex={0}
                           title="Ver imagen grande"
                           aria-label={`Ver imagen grande de ${p.name}`}
-                          onClick={() => setImageViewer({ url: p.imageUrl || 'https://via.placeholder.com/800x600?text=IMG', name: p.name })}
-                          onKeyDown={e => { if (e.key === 'Enter') setImageViewer({ url: p.imageUrl || 'https://via.placeholder.com/800x600?text=IMG', name: p.name }) }}
+                          onClick={() => openImageViewer(p, p.imageUrl || 'https://via.placeholder.com/800x600?text=IMG')}
+                          onKeyDown={e => { if (e.key === 'Enter') openImageViewer(p, p.imageUrl || 'https://via.placeholder.com/800x600?text=IMG') }}
                         />
                       </td>
                       <td style={{ padding: 8 }}>{p.name}</td>
@@ -1733,6 +2773,15 @@ export default function Products() {
                           <button className="icon-btn" title="Ver detalles" aria-label="Ver detalles" onClick={() => openDetails(p.id)}>
                             <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 5c-7 0-11 7-11 7s4 7 11 7 11-7 11-7-4-7-11-7zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8z" fill="currentColor"/></svg>
                           </button>
+                          {canManageProducts && String(p.productType || '').toUpperCase() === 'VARIANT_SERIALIZED' && (
+                            <button
+                              type="button"
+                              onClick={() => void openVariantEditor(p)}
+                              style={{ padding: '4px 10px', borderRadius: 8, border: '1px solid rgba(37,99,235,0.22)', background: '#eff6ff', color: '#1d4ed8', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}
+                            >
+                              Variantes
+                            </button>
+                          )}
                           {canManageProducts && (
                             <button className="icon-btn primary" title="Editar" aria-label="Editar" onClick={() => startEdit(p)}>
                               <svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 17.25V21h3.75L17.81 9.94a1 1 0 0 0 0-1.41l-3.34-3.34a1 1 0 0 0-1.41 0L3 16.59z" fill="currentColor"/></svg>
@@ -1765,66 +2814,82 @@ export default function Products() {
             <h3 style={{ margin: 0, marginBottom: 20, textAlign: 'center' }}>Seleccionar tipo de producto</h3>
             
             <div style={{ display: 'grid', gap: 12 }}>
-              <button 
-                onClick={() => startCreateWithType('GENERAL')}
-                style={{ 
-                  padding: '12px 16px', 
-                  background: '#1e293b', 
-                  border: '1px solid var(--border)',
-                  borderRadius: 8, 
-                  color: 'white',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
-                }}
-                onMouseOver={(e) => e.currentTarget.style.background = 'var(--surface-hover)'}
-                onMouseOut={(e) => e.currentTarget.style.background = '#1e293b'}
-              >
-                <div style={{ fontWeight: 'bold', marginBottom: 4 }}>GENERAL</div>
-                <div style={{ fontSize: '0.9em', opacity: 0.8 }}>Productos estándar sin características especiales</div>
-              </button>
-              
-              <button 
-                onClick={() => startCreateWithType('IMEI')}
-                style={{ 
-                  padding: '12px 16px', 
-                  background: '#1e293b', 
-                  border: '1px solid var(--border)',
-                  borderRadius: 8, 
-                  color: 'white',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
-                }}
-                onMouseOver={(e) => e.currentTarget.style.background = 'var(--surface-hover)'}
-                onMouseOut={(e) => e.currentTarget.style.background = '#1e293b'}
-              >
-                <div style={{ fontWeight: 'bold', marginBottom: 4 }}>IMEI</div>
-                <div style={{ fontSize: '0.9em', opacity: 0.8 }}>Dispositivos con códigos IMEI únicos</div>
-              </button>
-              
-              <button 
-                onClick={() => startCreateWithType('SERIAL')}
-                style={{ 
-                  padding: '12px 16px', 
-                  background: '#1e293b', 
-                  border: '1px solid var(--border)',
-                  borderRadius: 8, 
-                  color: 'white',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
-                }}
-                onMouseOver={(e) => e.currentTarget.style.background = 'var(--surface-hover)'}
-                onMouseOut={(e) => e.currentTarget.style.background = '#1e293b'}
-              >
-                <div style={{ fontWeight: 'bold', marginBottom: 4 }}>SERIAL</div>
-                <div style={{ fontSize: '0.9em', opacity: 0.8 }}>Productos con números de serie únicos</div>
-              </button>
-              
+              {availableProductTypeOptions.map(option => (
+                <button
+                  key={option.value}
+                  onClick={() => startCreateWithType(option.value)}
+                  style={{
+                    padding: '12px 16px',
+                    background: '#1e293b',
+                    border: '1px solid var(--border)',
+                    borderRadius: 8,
+                    color: 'white',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseOver={(e) => e.currentTarget.style.background = 'var(--surface-hover)'}
+                  onMouseOut={(e) => e.currentTarget.style.background = '#1e293b'}
+                >
+                  <div style={{ fontWeight: 'bold', marginBottom: 4 }}>{option.label}</div>
+                  <div style={{ fontSize: '0.9em', opacity: 0.8 }}>{option.description}</div>
+                </button>
+              ))}
             </div>
             
             <div style={{ display: 'flex', justifyContent: 'center', marginTop: 20 }}>
               <button 
                 onClick={() => setShowProductTypeSelector(false)}
                 style={{ padding: '8px 16px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)' }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSerializedVariantProfileSelector && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="responsive-modal" style={{ width: 460, background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 18, padding: 20 }}>
+            <h3 style={{ margin: 0, marginBottom: 8, textAlign: 'center' }}>Tipo base de variante serializada</h3>
+            <div style={{ fontSize: 13, color: 'var(--muted)', textAlign: 'center', marginBottom: 18 }}>
+              Primero define si este producto maestro trabajará con <strong>IMEI</strong> o con <strong>numero de serie</strong>. Luego se abrirá el formulario general y las variantes heredarán ese tipo.
+            </div>
+
+            <div style={{ display: 'grid', gap: 12 }}>
+              {SERIALIZED_DEVICE_PROFILE_OPTIONS.map(option => (
+                <button
+                  key={option.value}
+                  onClick={() => startCreateSerializedVariantWithProfile(option.value)}
+                  style={{
+                    padding: '14px 16px',
+                    background: '#1e293b',
+                    border: '1px solid var(--border)',
+                    borderRadius: 12,
+                    color: 'white',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    textAlign: 'left',
+                  }}
+                  onMouseOver={(e) => e.currentTarget.style.background = 'var(--surface-hover)'}
+                  onMouseOut={(e) => e.currentTarget.style.background = '#1e293b'}
+                >
+                  <div style={{ fontWeight: 800, marginBottom: 4 }}>{option.label}</div>
+                  <div style={{ fontSize: 13, opacity: 0.85 }}>{option.description}</div>
+                </button>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 10, marginTop: 20 }}>
+              <button
+                onClick={() => { setShowSerializedVariantProfileSelector(false); setShowProductTypeSelector(true) }}
+                style={{ padding: '8px 16px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)' }}
+              >
+                Regresar
+              </button>
+              <button
+                onClick={() => { setShowSerializedVariantProfileSelector(false); setEditTarget(null) }}
+                style={{ padding: '8px 16px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)' }}
               >
                 Cancelar
               </button>
@@ -1847,10 +2912,15 @@ export default function Products() {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{ fontSize: 12, padding: '7px 12px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg)', fontWeight: 700 }}>
-                  {formState.productType}
+                  {formatProductTypeLabel(formState.productType)}
                 </span>
+                {formState.productType === 'VARIANT_SERIALIZED' && (
+                  <span style={{ fontSize: 12, padding: '7px 12px', borderRadius: 999, border: '1px solid rgba(37,99,235,0.22)', background: '#eff6ff', color: '#1d4ed8', fontWeight: 800 }}>
+                    Tipo base: {serializedVariantIdentifierLabel}
+                  </span>
+                )}
                 <button
-                  onClick={() => { setShowCreate(false); setEditTarget(null); }}
+                  onClick={() => { setShowCreate(false); setEditTarget(null); setShowSerializedVariantProfileSelector(false) }}
                   style={{ width: 38, height: 38, borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
                   aria-label="Cerrar formulario"
                   title="Cerrar"
@@ -1862,31 +2932,11 @@ export default function Products() {
 
             <div className="responsive-two-col">
               <div style={{ background: 'linear-gradient(180deg, var(--bg), var(--surface))', border: '1px solid var(--border)', borderRadius: 22, padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div style={{ width: '100%', height: 240, borderRadius: 18, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {formState.imagePreview ? (
-                    <img src={formState.imagePreview} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  ) : (
-                    <div style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center', padding: 16 }}>
-                      Sin imagen seleccionada
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>Imagen del producto</div>
-                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <input type="file" accept="image/*" onChange={e => onImageChange(e.target.files?.[0] || null)} />
-                    <CameraCaptureButton
-                      onCapture={onImageChange}
-                      modalTitle="Capturar imagen del producto"
-                      buttonTitle="Tomar foto del producto"
-                      fileNamePrefix="producto"
-                    />
-                  </div>
-                  {formState.imageFile && <div className="file-name">{formState.imageFile.name}</div>}
-                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
-                    Puedes subir una imagen o capturarla desde el telefono o una webcam USB.
-                  </div>
-                </div>
+                <ProductImageManager
+                  value={formState.productImages}
+                  onChange={onProductImagesChange}
+                  uploadProgress={imageUploadProgress}
+                />
                 <div style={{ padding: 12, borderRadius: 16, background: 'var(--modal)', border: '1px solid var(--border)' }}>
                   <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Resumen rapido</div>
                   <div style={{ fontWeight: 700, marginBottom: 6 }}>{formState.name || 'Nombre pendiente'}</div>
@@ -2068,23 +3118,93 @@ export default function Products() {
 
                 {formState.productType === 'MEDICINAL' && (
                   <div style={{ border: '1px solid var(--border)', borderRadius: 20, padding: 16, background: 'var(--modal)' }}>
-                    <div style={{ fontWeight: 700, marginBottom: 12 }}>Datos medicinales</div>
+                    <div style={{ fontWeight: 700, marginBottom: 12 }}>Datos de lote y vencimiento</div>
                     <div className="responsive-form-grid">
                       <div>
-                        <label>Nombre alternativo</label>
-                        <input value={formState.altName} onChange={e => onFormChange('altName', e.target.value)} />
+                        <label>Perfil</label>
+                        <select value={formState.trackingProfile} onChange={e => onFormChange('trackingProfile', normalizeTrackingProfile(e.target.value))}>
+                          <option value="GENERAL">General</option>
+                          <option value="ALIMENTO">Alimento</option>
+                          <option value="MEDICAMENTO">Medicamento</option>
+                          <option value="COSMETICO">Cosmetico</option>
+                          <option value="QUIMICO">Quimico</option>
+                        </select>
                       </div>
                       <div>
-                        <label>Nombre genérico</label>
-                        <input value={formState.genericName} onChange={e => onFormChange('genericName', e.target.value)} />
+                        <label>Nombre alternativo o comercial</label>
+                        <input value={formState.altName} onChange={e => onFormChange('altName', e.target.value)} />
                       </div>
                       <div style={{ gridColumn: '1 / -1' }}>
                         <label>Ubicación en estante</label>
                         <input value={formState.shelfLocation} onChange={e => onFormChange('shelfLocation', e.target.value)} />
                       </div>
+                      {formState.trackingProfile === 'MEDICAMENTO' && (
+                        <>
+                          <div>
+                            <label>Nombre genérico</label>
+                            <input value={formState.genericName} onChange={e => onFormChange('genericName', e.target.value)} />
+                          </div>
+                          <div>
+                            <label>Principio activo</label>
+                            <input value={formState.trackingMeta.activeIngredient} onChange={e => onTrackingMetaChange('activeIngredient', e.target.value)} />
+                          </div>
+                          <div>
+                            <label>Concentración</label>
+                            <input value={formState.trackingMeta.concentration} onChange={e => onTrackingMetaChange('concentration', e.target.value)} />
+                          </div>
+                          <div>
+                            <label>Forma farmacéutica</label>
+                            <input value={formState.trackingMeta.dosageForm} onChange={e => onTrackingMetaChange('dosageForm', e.target.value)} />
+                          </div>
+                          <div>
+                            <label>Registro sanitario</label>
+                            <input value={formState.trackingMeta.sanitaryRegistry} onChange={e => onTrackingMetaChange('sanitaryRegistry', e.target.value)} />
+                          </div>
+                          <div>
+                            <label>Condiciones de almacenamiento</label>
+                            <input value={formState.trackingMeta.storageNotes} onChange={e => onTrackingMetaChange('storageNotes', e.target.value)} />
+                          </div>
+                        </>
+                      )}
+                      {formState.trackingProfile === 'ALIMENTO' && (
+                        <>
+                          <div>
+                            <label>Presentación o contenido</label>
+                            <input value={formState.trackingMeta.presentation} onChange={e => onTrackingMetaChange('presentation', e.target.value)} />
+                          </div>
+                          <div>
+                            <label>Tipo de empaque</label>
+                            <input value={formState.trackingMeta.packageType} onChange={e => onTrackingMetaChange('packageType', e.target.value)} />
+                          </div>
+                          <div>
+                            <label>Origen o línea</label>
+                            <input value={formState.trackingMeta.originInfo} onChange={e => onTrackingMetaChange('originInfo', e.target.value)} />
+                          </div>
+                          <div>
+                            <label>Condiciones de almacenamiento</label>
+                            <input value={formState.trackingMeta.storageNotes} onChange={e => onTrackingMetaChange('storageNotes', e.target.value)} />
+                          </div>
+                        </>
+                      )}
+                      {formState.trackingProfile !== 'MEDICAMENTO' && formState.trackingProfile !== 'ALIMENTO' && (
+                        <>
+                          <div>
+                            <label>Presentación</label>
+                            <input value={formState.trackingMeta.presentation} onChange={e => onTrackingMetaChange('presentation', e.target.value)} />
+                          </div>
+                          <div>
+                            <label>Notas de almacenamiento</label>
+                            <input value={formState.trackingMeta.storageNotes} onChange={e => onTrackingMetaChange('storageNotes', e.target.value)} />
+                          </div>
+                        </>
+                      )}
+                      <div style={{ gridColumn: '1 / -1' }}>
+                        <label>Notas regulatorias u observaciones</label>
+                        <input value={formState.trackingMeta.regulatoryNotes} onChange={e => onTrackingMetaChange('regulatoryNotes', e.target.value)} />
+                      </div>
                     </div>
                     <div style={{ marginTop: 12, padding: 12, background: '#eff6ff', borderRadius: 14, fontSize: 13, color: '#1e40af' }}>
-                      Los lotes y fechas de vencimiento se ingresan desde <strong>Compras</strong> o <strong>Ajustes de Stock</strong>.
+                      El stock, los lotes y las fechas de vencimiento se siguen ingresando desde <strong>Compras</strong> o <strong>Ajustes de Stock</strong>. Este bloque solo define los datos base segun el rubro.
                     </div>
                   </div>
                 )}
@@ -2106,15 +3226,198 @@ export default function Products() {
                     </div>
                   </div>
                 )}
+
+                {formState.productType === 'VARIANT_SERIALIZED' && (
+                  <div style={{ border: '1px solid var(--border)', borderRadius: 20, padding: 16, background: 'var(--modal)', display: 'grid', gap: 12 }}>
+                    <div style={{ fontWeight: 700 }}>IMEI-SERIAL VARIANTE</div>
+                    <div style={{ padding: 12, background: '#eff6ff', borderRadius: 14, fontSize: 13, color: '#1e40af' }}>
+                      {editTarget
+                        ? <>Este formulario solo actualiza los <strong>datos generales</strong> del producto maestro. Las variantes se gestionan desde el botón <strong>Variantes</strong> en la tarjeta o en el listado.</>
+                        : <>Primero se guarda el <strong>producto maestro</strong> con sus datos generales. Después, desde la tarjeta creada, usa el botón <strong>Variantes</strong> para abrir el diálogo y agregar las combinaciones comerciales.</>}
+                    </div>
+                    <div className="responsive-form-grid">
+                      <div>
+                        <label>Tipo base del producto serializado</label>
+                        <input
+                          value={SERIALIZED_DEVICE_PROFILE_OPTIONS.find(option => option.value === formState.serializedDeviceProfile)?.label || serializedVariantIdentifierLabel}
+                          readOnly
+                          style={{ background: 'var(--surface)', cursor: 'not-allowed', opacity: 0.9 }}
+                        />
+                      </div>
+                      <div>
+                        <label>Gestión de stock</label>
+                        <input value="Compras y ajustes de inventario" readOnly style={{ background: 'var(--surface)', cursor: 'not-allowed', opacity: 0.9 }} />
+                      </div>
+                    </div>
+                    {editTarget && (
+                      <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                        <button type="button" className="small-btn" onClick={() => void openVariantEditor(editTarget)}>
+                          Abrir dialogo de variantes
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
-              <button onClick={() => { setShowCreate(false); setEditTarget(null); }} disabled={loading} style={{ padding: '10px 16px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}>
+              <button onClick={() => { setShowCreate(false); setEditTarget(null); setShowSerializedVariantProfileSelector(false) }} disabled={loading} style={{ padding: '10px 16px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}>
                 Cancelar
               </button>
               <button className="primary" onClick={() => (editTarget ? saveEdit() : saveCreate())} disabled={loading} style={{ padding: '10px 18px', borderRadius: 12 }}>
                 {editTarget ? 'Guardar cambios' : 'Guardar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showVariantEditor && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div className="responsive-modal" style={{ width: 920, maxWidth: '94vw', background: 'var(--modal)', border: '1px solid var(--border)', borderRadius: 24, padding: 20, maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 24px 60px rgba(15, 23, 42, 0.22)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, gap: 12 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 24 }}>Variantes del producto</h3>
+                <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>
+                  {variantEditorTarget?.name || formState.name} • Tipo base {serializedVariantIdentifierLabel}
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 12, padding: '7px 12px', borderRadius: 999, border: '1px solid rgba(37,99,235,0.22)', background: '#eff6ff', color: '#1d4ed8', fontWeight: 800 }}>
+                  {SERIALIZED_DEVICE_PROFILE_OPTIONS.find(option => option.value === formState.serializedDeviceProfile)?.label || serializedVariantIdentifierLabel}
+                </span>
+                <button
+                  onClick={closeVariantEditor}
+                  style={{ width: 38, height: 38, borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
+                  aria-label="Cerrar dialogo de variantes"
+                  title="Cerrar"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+
+            <div style={{ border: '1px solid var(--border)', borderRadius: 20, padding: 16, background: 'var(--modal)', display: 'grid', gap: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontWeight: 700 }}>Gestión de variantes</div>
+                  <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                    Agrega las combinaciones comerciales del producto maestro. Las unidades con {serializedVariantIdentifierLabel === 'IMEI' ? 'IMEI' : 'numero de serie'} se seguirán registrando desde Compras o Ajustes.
+                  </div>
+                </div>
+                <button type="button" className="small-btn" onClick={addSerializedVariant}>
+                  Agregar variante
+                </button>
+              </div>
+
+              <div style={{ padding: 12, background: '#eff6ff', borderRadius: 14, fontSize: 13, color: '#1e40af' }}>
+                {formState.serializedDeviceProfile === 'PHONE_IMEI'
+                  ? <>Este producto trabaja con <strong>IMEI</strong>. Se habilitan <strong>compañia</strong> y <strong>tipo de SIM</strong> en cada variante.</>
+                  : <>Este producto trabaja con <strong>SERIE</strong>. Se ocultan <strong>compañia</strong> y <strong>SIM</strong> para no mezclar atributos de telefonía.</>}
+              </div>
+
+              {formState.variants.length === 0 && (
+                <div style={{ padding: 14, borderRadius: 14, border: '1px dashed var(--border)', color: 'var(--muted)', fontSize: 13 }}>
+                  Aún no hay variantes. Usa el botón <strong>Agregar variante</strong> para registrar la primera.
+                </div>
+              )}
+
+              {formState.variants.map((variant, variantIndex) => (
+                <div key={`variant-dialog-${variantIndex}`} style={{ border: '1px solid var(--border)', borderRadius: 18, padding: 14, background: 'var(--bg)', display: 'grid', gap: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={{ fontWeight: 700 }}>
+                        Variante {variantIndex + 1}: {buildSerializedVariantLabel(variant)}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                        Define la combinacion comercial y los atributos permitidos para {formatSerializedDeviceProfileLabel(formState.serializedDeviceProfile).toLowerCase()}.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeSerializedVariant(variantIndex)}
+                      style={{ padding: '8px 12px', borderRadius: 10, border: '1px solid rgba(239,68,68,0.28)', background: 'rgba(239,68,68,0.08)', color: '#b91c1c' }}
+                    >
+                      Quitar variante
+                    </button>
+                  </div>
+
+                  <div className="responsive-form-grid">
+                    <div>
+                      <label>Nombre visible</label>
+                      <input value={variant.name} onChange={e => onVariantChange(variantIndex, 'name', e.target.value)} placeholder="Ej. Negro / 8GB / 256GB" />
+                    </div>
+                    <div>
+                      <label>SKU de variante</label>
+                      <input value={variant.sku} onChange={e => onVariantChange(variantIndex, 'sku', e.target.value)} placeholder="SKU opcional" />
+                    </div>
+                    <div>
+                      <label>Color</label>
+                      <input value={variant.color} onChange={e => onVariantChange(variantIndex, 'color', e.target.value)} />
+                    </div>
+                    <div>
+                      <label>RAM</label>
+                      <input value={variant.ram} onChange={e => onVariantChange(variantIndex, 'ram', e.target.value)} placeholder="Ej. 8 GB" />
+                    </div>
+                    <div>
+                      <label>Almacenamiento</label>
+                      <input value={variant.storage} onChange={e => onVariantChange(variantIndex, 'storage', e.target.value)} placeholder="Ej. 256 GB" />
+                    </div>
+                    {formState.serializedDeviceProfile === 'PHONE_IMEI' && (
+                      <>
+                        <div>
+                          <label>Compañía</label>
+                          <input value={variant.carrier} onChange={e => onVariantChange(variantIndex, 'carrier', e.target.value)} placeholder="Ej. Claro, Tigo, Liberado" />
+                        </div>
+                        <div>
+                          <label>Tipo SIM</label>
+                          <select value={variant.simType} onChange={e => onVariantChange(variantIndex, 'simType', e.target.value)}>
+                            <option value="">No aplica</option>
+                            <option value="UNA SIM">Una SIM</option>
+                            <option value="DOBLE SIM">Doble SIM</option>
+                          </select>
+                        </div>
+                      </>
+                    )}
+                    <div>
+                      <label>Identificador principal</label>
+                      <input value={serializedVariantIdentifierLabel} readOnly style={{ background: 'var(--surface)', cursor: 'not-allowed' }} />
+                    </div>
+                    <div>
+                      <label>Precio de variante</label>
+                      <input type="number" min="0" step="0.01" value={variant.price} onChange={e => onVariantChange(variantIndex, 'price', e.target.value)} />
+                    </div>
+                    <div>
+                      <label>Costo de variante</label>
+                      <input type="number" min="0" step="0.01" value={variant.cost} onChange={e => onVariantChange(variantIndex, 'cost', e.target.value)} />
+                    </div>
+                    <div>
+                      <label>Orden</label>
+                      <input type="number" min="0" step="1" value={variant.sortOrder} onChange={e => onVariantChange(variantIndex, 'sortOrder', e.target.value)} />
+                    </div>
+                    <div>
+                      <label>Código de modelo</label>
+                      <input value={variant.meta.modelCode} onChange={e => onVariantMetaChange(variantIndex, 'modelCode', e.target.value)} placeholder="Ej. A17-4G-256" />
+                    </div>
+                    <div style={{ gridColumn: '1 / -1' }}>
+                      <label>Notas de variante</label>
+                      <input value={variant.meta.notes} onChange={e => onVariantMetaChange(variantIndex, 'notes', e.target.value)} placeholder="Observaciones comerciales o técnicas" />
+                    </div>
+                  </div>
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, fontSize: 13, color: '#1e40af', background: '#eff6ff', borderRadius: 14, padding: 12 }}>
+                    Los {serializedVariantIdentifierLabel === 'IMEI' ? 'IMEI' : 'numeros de serie'} de esta variante se registran desde <strong>Compras</strong> o <strong>Ajustes de Stock</strong> cuando ingresa inventario real.
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+              <button onClick={closeVariantEditor} disabled={loading} style={{ padding: '10px 16px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}>
+                Cerrar
+              </button>
+              <button className="primary" onClick={() => void saveVariantEditor()} disabled={loading} style={{ padding: '10px 18px', borderRadius: 12 }}>
+                Guardar variantes
               </button>
             </div>
           </div>
@@ -2211,12 +3514,20 @@ export default function Products() {
                 <div style={{ display: 'grid', gap: 10 }}>
                   <div className="responsive-two-col" style={{ alignItems: 'stretch' }}>
                     <div style={{ background: 'linear-gradient(180deg, var(--bg), var(--surface))', border: '1px solid var(--border)', borderRadius: 20, padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      <div style={{ width: '100%', height: 190, borderRadius: 16, overflow: 'hidden', background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        title="Ver galeria ampliada"
+                        aria-label={`Ver galeria ampliada de ${details.name}`}
+                        onClick={() => openImageViewer(details, details.imageUrl || 'https://via.placeholder.com/800x800?text=IMG')}
+                        onKeyDown={e => { if (e.key === 'Enter') openImageViewer(details, details.imageUrl || 'https://via.placeholder.com/800x800?text=IMG') }}
+                        style={{ width: '100%', height: 190, borderRadius: 16, overflow: 'hidden', background: 'var(--bg)', border: '1px solid var(--border)', cursor: 'zoom-in' }}
+                      >
                         <img src={details.imageUrl || 'https://via.placeholder.com/800x800?text=IMG'} alt={details.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                         <span style={{ fontSize: 10, padding: '5px 8px', border: '1px solid var(--border)', borderRadius: 999, background: 'var(--modal)' }}>
-                          {String(details.productType || 'GENERAL').toUpperCase()}
+                          {formatProductTypeLabel(details.productType)}
                         </span>
                         <span style={{ fontSize: 10, padding: '5px 8px', border: '1px solid var(--border)', borderRadius: 999, background: 'var(--modal)' }}>
                           {resolveUnitName(unitNameByCode, details.unit)}
@@ -2373,6 +3684,12 @@ export default function Products() {
                         <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Ubicacion</div>
                         <div style={{ fontWeight: 700 }}>{details.shelfLocation || '—'}</div>
                       </div>
+                      {String(details.productType || 'GENERAL').toUpperCase() === 'MEDICINAL' && (
+                        <div style={{ padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                          <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Perfil lote/vencimiento</div>
+                          <div style={{ fontWeight: 700 }}>{formatTrackingProfileLabel(details.trackingProfile)}</div>
+                        </div>
+                      )}
                       {details.altName && (
                         <div style={{ padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
                           <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Nombre alternativo</div>
@@ -2386,6 +3703,74 @@ export default function Products() {
                         </div>
                       )}
                     </div>
+
+                    {String(details.productType || 'GENERAL').toUpperCase() === 'MEDICINAL' && (
+                      <div style={{ gridColumn: '1 / -1', border: '1px solid var(--border)', borderRadius: 20, padding: 16, background: 'var(--modal)' }}>
+                        <div style={{ fontWeight: 700, marginBottom: 12 }}>Datos base por rubro</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
+                          {details.trackingProfile === 'MEDICAMENTO' && details.genericName && (
+                            <div style={{ padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Nombre generico</div>
+                              <div style={{ fontWeight: 700 }}>{details.genericName}</div>
+                            </div>
+                          )}
+                          {details.trackingMeta?.activeIngredient && (
+                            <div style={{ padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Principio activo</div>
+                              <div style={{ fontWeight: 700 }}>{details.trackingMeta.activeIngredient}</div>
+                            </div>
+                          )}
+                          {details.trackingMeta?.concentration && (
+                            <div style={{ padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Concentración</div>
+                              <div style={{ fontWeight: 700 }}>{details.trackingMeta.concentration}</div>
+                            </div>
+                          )}
+                          {details.trackingMeta?.dosageForm && (
+                            <div style={{ padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Forma farmacéutica</div>
+                              <div style={{ fontWeight: 700 }}>{details.trackingMeta.dosageForm}</div>
+                            </div>
+                          )}
+                          {details.trackingMeta?.sanitaryRegistry && (
+                            <div style={{ padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Registro sanitario</div>
+                              <div style={{ fontWeight: 700 }}>{details.trackingMeta.sanitaryRegistry}</div>
+                            </div>
+                          )}
+                          {details.trackingMeta?.presentation && (
+                            <div style={{ padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Presentación</div>
+                              <div style={{ fontWeight: 700 }}>{details.trackingMeta.presentation}</div>
+                            </div>
+                          )}
+                          {details.trackingMeta?.packageType && (
+                            <div style={{ padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Empaque</div>
+                              <div style={{ fontWeight: 700 }}>{details.trackingMeta.packageType}</div>
+                            </div>
+                          )}
+                          {details.trackingMeta?.originInfo && (
+                            <div style={{ padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Origen o línea</div>
+                              <div style={{ fontWeight: 700 }}>{details.trackingMeta.originInfo}</div>
+                            </div>
+                          )}
+                          {details.trackingMeta?.storageNotes && (
+                            <div style={{ padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Almacenamiento</div>
+                              <div style={{ fontWeight: 700 }}>{details.trackingMeta.storageNotes}</div>
+                            </div>
+                          )}
+                          {details.trackingMeta?.regulatoryNotes && (
+                            <div style={{ gridColumn: '1 / -1', padding: 12, borderRadius: 14, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Notas regulatorias</div>
+                              <div style={{ fontWeight: 700 }}>{details.trackingMeta.regulatoryNotes}</div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
 
                     {details.description && (
                       <div style={{ gridColumn: '1 / -1', border: '1px solid var(--border)', borderRadius: 20, padding: 16, background: 'var(--modal)' }}>
@@ -2481,6 +3866,109 @@ export default function Products() {
                       </div>
                     )}
 
+                    {String(details.productType || 'GENERAL').toUpperCase() === 'VARIANT_SERIALIZED' && (
+                      <div style={{ gridColumn: '1 / -1', border: '1px solid var(--border)', borderRadius: 20, padding: 16, background: 'var(--modal)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                          <div>
+                            <strong>IMEI-SERIAL VARIANTE</strong>
+                            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                              {detailVariants.length} variante{detailVariants.length === 1 ? '' : 's'} registradas
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => setShowVariants(v => !v)}
+                            style={{ padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 10, background: showVariants ? 'var(--surface-hover)' : 'var(--bg)', color: showVariants ? '#fff' : 'var(--text)', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                          >
+                            <svg viewBox="0 0 24 24" width="12" height="12" style={{ transform: showVariants ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                              <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                            {showVariants ? 'Ocultar' : 'Ver'} ({detailVariants.reduce((sum: number, variant: any) => sum + Number(variant?.stock || 0), 0)} unidades)
+                          </button>
+                        </div>
+                        {showVariants && (
+                          <div style={{ display: 'grid', gap: 12, marginTop: 14 }}>
+                            {detailVariants.length === 0 && (
+                              <div style={{ fontSize: 12, color: '#94a3b8' }}>No hay variantes registradas.</div>
+                            )}
+                            {detailVariants.map((variant: any, variantIndex: number) => (
+                              <div key={`detail-variant-${variant.id || variantIndex}`} style={{ border: '1px solid var(--border)', borderRadius: 16, padding: 14, background: 'var(--bg)', display: 'grid', gap: 10 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                                  <div>
+                                    <div style={{ fontWeight: 800 }}>{buildSerializedVariantLabel(variant)}</div>
+                                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+                                      {variant.sku && (
+                                        <span style={{ fontSize: 11, padding: '5px 8px', border: '1px solid var(--border)', borderRadius: 999, background: 'var(--modal)' }}>
+                                          SKU: {variant.sku}
+                                        </span>
+                                      )}
+                                      <span style={{ fontSize: 11, padding: '5px 8px', border: '1px solid var(--border)', borderRadius: 999, background: 'var(--modal)' }}>
+                                        {formatSerializedDeviceProfileLabel(variant.meta?.deviceCategory || (variant.identifierMode === 'SERIAL' ? 'DEVICE_SERIAL' : 'PHONE_IMEI'))}
+                                      </span>
+                                      <span style={{ fontSize: 11, padding: '5px 8px', border: '1px solid var(--border)', borderRadius: 999, background: 'var(--modal)' }}>
+                                        {variant.identifierMode === 'SERIAL' ? 'Serie' : 'IMEI'}
+                                      </span>
+                                      <span style={{ fontSize: 11, padding: '5px 8px', border: '1px solid var(--border)', borderRadius: 999, background: 'var(--modal)' }}>
+                                        Stock: {variant.stock || 0}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <div style={{ display: 'grid', gap: 6, minWidth: 180 }}>
+                                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>Precio: <strong style={{ color: 'var(--text)' }}>{formatMoney(variant.price ?? 0, currency)}</strong></div>
+                                    {canViewSensitiveProductData && (
+                                      <div style={{ fontSize: 12, color: 'var(--muted)' }}>Costo: <strong style={{ color: 'var(--text)' }}>{formatMoney(variant.cost ?? 0, currency)}</strong></div>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+                                  {variant.color && <div style={{ padding: 10, borderRadius: 12, background: 'var(--modal)', border: '1px solid var(--border)' }}><div style={{ fontSize: 11, color: 'var(--muted)' }}>Color</div><div style={{ fontWeight: 700 }}>{variant.color}</div></div>}
+                                  {variant.ram && <div style={{ padding: 10, borderRadius: 12, background: 'var(--modal)', border: '1px solid var(--border)' }}><div style={{ fontSize: 11, color: 'var(--muted)' }}>RAM</div><div style={{ fontWeight: 700 }}>{variant.ram}</div></div>}
+                                  {variant.storage && <div style={{ padding: 10, borderRadius: 12, background: 'var(--modal)', border: '1px solid var(--border)' }}><div style={{ fontSize: 11, color: 'var(--muted)' }}>Almacenamiento</div><div style={{ fontWeight: 700 }}>{variant.storage}</div></div>}
+                                  {variant.carrier && <div style={{ padding: 10, borderRadius: 12, background: 'var(--modal)', border: '1px solid var(--border)' }}><div style={{ fontSize: 11, color: 'var(--muted)' }}>Compañía</div><div style={{ fontWeight: 700 }}>{variant.carrier}</div></div>}
+                                  {variant.simType && <div style={{ padding: 10, borderRadius: 12, background: 'var(--modal)', border: '1px solid var(--border)' }}><div style={{ fontSize: 11, color: 'var(--muted)' }}>SIM</div><div style={{ fontWeight: 700 }}>{variant.simType}</div></div>}
+                                  {variant.meta?.modelCode && <div style={{ padding: 10, borderRadius: 12, background: 'var(--modal)', border: '1px solid var(--border)' }}><div style={{ fontSize: 11, color: 'var(--muted)' }}>Modelo</div><div style={{ fontWeight: 700 }}>{variant.meta.modelCode}</div></div>}
+                                </div>
+
+                                {variant.meta?.notes && (
+                                  <div style={{ padding: 12, borderRadius: 14, background: 'var(--modal)', border: '1px solid var(--border)' }}>
+                                    <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Notas de variante</div>
+                                    <div style={{ fontWeight: 700 }}>{variant.meta.notes}</div>
+                                  </div>
+                                )}
+
+                                <div style={{ display: 'grid', gap: 8 }}>
+                                  <div style={{ fontWeight: 700 }}>Unidades registradas</div>
+                                  {Array.isArray(variant.units) && variant.units.length > 0 ? (
+                                    variant.units.map((unit: any, unitIndex: number) => (
+                                      <div key={`detail-variant-${variant.id || variantIndex}-unit-${unit.id || unitIndex}`} style={{ display: 'grid', gap: 8, padding: 12, borderRadius: 14, background: 'var(--modal)', border: '1px solid var(--border)' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                                          <div style={{ fontWeight: 700, wordBreak: 'break-word' }}>
+                                            {variant.identifierMode === 'SERIAL' ? (unit.serialNo || 'Sin serie') : (unit.imei || 'Sin IMEI')}
+                                          </div>
+                                          <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                                            Almacén: <span className="warehouse-highlight" style={getWarehouseHighlightStyle(unit.warehouseName || 'Sin almacén')}>{unit.warehouseName || 'Sin almacén'}</span>
+                                          </div>
+                                        </div>
+                                        {(unit.meta?.supplierName || unit.meta?.purchaseReference || unit.meta?.notes) && (
+                                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
+                                            {unit.meta?.supplierName && <div style={{ fontSize: 12, color: 'var(--muted)' }}>Proveedor: <strong style={{ color: 'var(--text)' }}>{unit.meta.supplierName}</strong></div>}
+                                            {unit.meta?.purchaseReference && <div style={{ fontSize: 12, color: 'var(--muted)' }}>Referencia: <strong style={{ color: 'var(--text)' }}>{unit.meta.purchaseReference}</strong></div>}
+                                            {unit.meta?.notes && <div style={{ fontSize: 12, color: 'var(--muted)' }}>Notas: <strong style={{ color: 'var(--text)' }}>{unit.meta.notes}</strong></div>}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <div style={{ fontSize: 12, color: '#94a3b8' }}>Sin unidades registradas.</div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
                       <button onClick={() => { setShowDetails(false); setDetails(null); setDetailsError(null); }} style={{ padding: '10px 16px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}>Cerrar</button>
                     </div>
@@ -2498,6 +3986,7 @@ export default function Products() {
             setCatalogStockProduct(null)
             setCatalogStockError(null)
             setCatalogWarehouseStock([])
+            setCatalogVariantSummaries([])
             setCatalogSerials([])
             setShowCatalogSerials(false)
           }}
@@ -2519,6 +4008,7 @@ export default function Products() {
                   setCatalogStockProduct(null)
                   setCatalogStockError(null)
                   setCatalogWarehouseStock([])
+                  setCatalogVariantSummaries([])
                   setCatalogSerials([])
                   setShowCatalogSerials(false)
                 }}
@@ -2589,6 +4079,79 @@ export default function Products() {
                         </div>
                       )
                     })}
+                  </div>
+                )}
+
+                {canShowCatalogVariantSummary && (
+                  <div
+                    style={{
+                      marginTop: 14,
+                      border: '1px solid rgba(37, 99, 235, 0.18)',
+                      borderRadius: 16,
+                      background: 'var(--bg)',
+                      padding: 14,
+                      display: 'grid',
+                      gap: 10
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <div>
+                        <div style={{ fontWeight: 800, color: 'var(--text)' }}>Resumen de variantes</div>
+                        <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                          {catalogVariantSummaries.length} variante{catalogVariantSummaries.length === 1 ? '' : 's'} registradas
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 12, color: '#2563eb', fontWeight: 700 }}>
+                        {catalogVariantSummaries.reduce((sum, variant) => sum + Number(variant?.stock || 0), 0)} unidades
+                      </div>
+                    </div>
+
+                    {catalogVariantSummaries.length === 0 ? (
+                      <div style={{ fontSize: 12, color: 'var(--muted)' }}>No hay variantes registradas para este producto.</div>
+                    ) : (
+                      <div style={{ display: 'grid', gap: 8 }}>
+                        {catalogVariantSummaries.map((variant, index) => (
+                          <div
+                            key={`catalog-variant-summary-${variant.id || index}`}
+                            style={{
+                              padding: '12px 14px',
+                              borderRadius: 14,
+                              border: '1px solid var(--border)',
+                              background: 'var(--modal)',
+                              display: 'grid',
+                              gap: 8
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                              <div>
+                                <div style={{ fontWeight: 800, color: 'var(--text)' }}>{buildSerializedVariantLabel(variant)}</div>
+                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+                                  {variant.sku && (
+                                    <span style={{ fontSize: 11, padding: '4px 8px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg)' }}>
+                                      SKU: {variant.sku}
+                                    </span>
+                                  )}
+                                  <span style={{ fontSize: 11, padding: '4px 8px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--bg)' }}>
+                                    {variant.identifierMode === 'SERIAL' ? 'Serie' : 'IMEI'}
+                                  </span>
+                                </div>
+                              </div>
+                              <div style={{ fontWeight: 800, color: Number(variant?.stock || 0) > 0 ? '#059669' : '#dc2626' }}>
+                                Stock: {Number(variant?.stock || 0)}
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                              {variant.color && <span style={{ fontSize: 12, color: 'var(--muted)' }}>Color: <strong style={{ color: 'var(--text)' }}>{variant.color}</strong></span>}
+                              {variant.ram && <span style={{ fontSize: 12, color: 'var(--muted)' }}>RAM: <strong style={{ color: 'var(--text)' }}>{variant.ram}</strong></span>}
+                              {variant.storage && <span style={{ fontSize: 12, color: 'var(--muted)' }}>Almacenamiento: <strong style={{ color: 'var(--text)' }}>{variant.storage}</strong></span>}
+                              {variant.carrier && <span style={{ fontSize: 12, color: 'var(--muted)' }}>Compañía: <strong style={{ color: 'var(--text)' }}>{variant.carrier}</strong></span>}
+                              {variant.simType && <span style={{ fontSize: 12, color: 'var(--muted)' }}>SIM: <strong style={{ color: 'var(--text)' }}>{variant.simType}</strong></span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -2798,6 +4361,41 @@ export default function Products() {
           </div>
         </div>
       )}
+      <CatalogPdfModal
+        open={showCatalogPdfModal}
+        loading={catalogPdfLoading}
+        generating={catalogPdfGenerating}
+        progress={catalogPdfProgress}
+        progressLabel={catalogPdfProgressLabel}
+        error={catalogPdfError}
+        departments={departments}
+        categories={catalogPdfParentCategories}
+        subcategories={catalogPdfSubcategories}
+        brands={brands}
+        selectedDepartmentId={catalogPdfDepartmentId}
+        selectedCategoryId={catalogPdfCategoryId}
+        selectedSubcategoryId={catalogPdfSubcategoryId}
+        selectedBrandId={catalogPdfBrandId}
+        title={catalogPdfTitle}
+        subtitle={catalogPdfSubtitle}
+        onlyWithImage={catalogPdfOnlyWithImage}
+        products={catalogPdfVisibleProducts}
+        selectedIds={catalogPdfSelectedIds}
+        currency={currency}
+        onClose={closeCatalogPdfBuilder}
+        onChangeTitle={setCatalogPdfTitle}
+        onChangeSubtitle={setCatalogPdfSubtitle}
+        onToggleOnlyWithImage={setCatalogPdfOnlyWithImage}
+        onChangeDepartmentId={handleCatalogPdfDepartmentChange}
+        onChangeCategoryId={handleCatalogPdfCategoryChange}
+        onChangeSubcategoryId={setCatalogPdfSubcategoryId}
+        onChangeBrandId={setCatalogPdfBrandId}
+        onResetFilters={resetCatalogPdfFilters}
+        onToggleProduct={toggleCatalogPdfProduct}
+        onSelectAll={selectAllCatalogPdfVisibleProducts}
+        onClearSelection={clearCatalogPdfSelection}
+        onGenerate={() => void generateCatalogPdfFile()}
+      />
       {imageViewer && (
         <div
           role="dialog"
@@ -2811,13 +4409,136 @@ export default function Products() {
         >
           <div
             onClick={e => e.stopPropagation()}
-            style={{ position: 'relative', maxWidth: '90vw', maxHeight: '90vh' }}
+            style={{ position: 'relative', width: 'min(1024px, 92vw)', maxHeight: '90vh', borderRadius: 20, background: 'rgba(15, 23, 42, 0.95)', border: '1px solid rgba(255,255,255,0.12)', padding: 18, display: 'grid', gap: 14 }}
           >
-            <img
-              src={imageViewer.url || ''}
-              alt={imageViewer.name || 'Imagen de producto'}
-              style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 12, objectFit: 'contain', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}
-            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', color: '#fff' }}>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>{imageViewer.name || 'Galeria de producto'}</div>
+              <div style={{ fontSize: 12, opacity: 0.8 }}>
+                {imageViewer.activeIndex + 1} de {imageViewer.images.length}
+              </div>
+            </div>
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 320, width: '100%' }}>
+              {imageViewer.images.length > 1 && (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  title="Imagen anterior"
+                  aria-label="Imagen anterior"
+                  onClick={() => moveImageViewer(-1)}
+                  style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.45)', color: '#fff', zIndex: 1 }}
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18"><path d="M15 6l-6 6 6 6" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                </button>
+              )}
+              <div style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 56px' }}>
+                <img
+                  src={imageViewer.images[imageViewer.activeIndex] || ''}
+                  alt={imageViewer.name || 'Imagen de producto'}
+                  style={{
+                    display: 'block',
+                    width: 'auto',
+                    maxWidth: '100%',
+                    maxHeight: '62vh',
+                    borderRadius: 14,
+                    objectFit: 'contain',
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+                    margin: '0 auto',
+                  }}
+                />
+              </div>
+              {imageViewer.images.length > 1 && (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  title="Imagen siguiente"
+                  aria-label="Imagen siguiente"
+                  onClick={() => moveImageViewer(1)}
+                  style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.45)', color: '#fff', zIndex: 1 }}
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18"><path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                </button>
+              )}
+            </div>
+            <div
+              style={{
+                display: 'grid',
+                gap: 10,
+                padding: '14px 16px',
+                borderRadius: 16,
+                background: 'linear-gradient(180deg, rgba(15,23,42,0.78), rgba(30,41,59,0.92))',
+                border: '1px solid rgba(255,255,255,0.12)',
+                color: '#f8fafc',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                <div style={{ minWidth: 0, flex: '1 1 340px', display: 'grid', gap: 6 }}>
+                  <div style={{ fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(191,219,254,0.92)', fontWeight: 700 }}>
+                    Descripcion
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 14,
+                      lineHeight: 1.55,
+                      color: 'rgba(248,250,252,0.96)',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      maxHeight: 132,
+                      overflowY: 'auto',
+                      paddingRight: 4,
+                    }}
+                  >
+                    {imageViewer.description || 'Sin descripcion registrada para este producto.'}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    flex: '0 0 220px',
+                    alignSelf: 'stretch',
+                    display: 'grid',
+                    alignContent: 'center',
+                    justifyItems: 'center',
+                    gap: 6,
+                    padding: '12px 14px',
+                    borderRadius: 14,
+                    background: 'rgba(15, 118, 110, 0.18)',
+                    border: '1px solid rgba(45, 212, 191, 0.28)',
+                  }}
+                >
+                  <div style={{ fontSize: 28, fontWeight: 800, lineHeight: 1.1, color: '#ffffff', textAlign: 'center' }}>
+                    {imageViewer.price !== null ? formatMoney(imageViewer.price, currency) : 'No definido'}
+                  </div>
+                </div>
+              </div>
+            </div>
+            {imageViewer.images.length > 1 && (
+              <div style={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
+                <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 4, justifyContent: 'center', margin: '0 auto', maxWidth: '100%' }}>
+                  {imageViewer.images.map((imageUrl, index) => (
+                    <button
+                      key={`${imageUrl}-${index}`}
+                      type="button"
+                      onClick={() => setImageViewer(prev => prev ? { ...prev, activeIndex: index } : prev)}
+                      title={`Ver imagen ${index + 1}`}
+                      aria-label={`Ver imagen ${index + 1}`}
+                      style={{
+                        border: index === imageViewer.activeIndex ? '2px solid #38bdf8' : '1px solid rgba(255,255,255,0.16)',
+                        borderRadius: 12,
+                        padding: 0,
+                        minWidth: 84,
+                        width: 84,
+                        height: 84,
+                        overflow: 'hidden',
+                        background: 'rgba(255,255,255,0.04)',
+                        cursor: 'pointer',
+                        flex: '0 0 auto',
+                      }}
+                    >
+                      <img src={imageUrl} alt={`Miniatura ${index + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <button
               className="icon-btn"
               title="Cerrar imagen"

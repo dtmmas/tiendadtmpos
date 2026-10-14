@@ -30,7 +30,28 @@ async function ensureInventoryAdjustmentTypes(pool) {
   `)
 }
 
-function buildAdjustmentNotes({ baseNotes, qty, batches, imeis, serials }) {
+function normalizeVariantIdentifierMode(value) {
+  return String(value || '').trim().toUpperCase() === 'SERIAL' ? 'SERIAL' : 'IMEI'
+}
+
+function normalizeInventorySerializedVariants(rawVariants) {
+  if (!Array.isArray(rawVariants)) return []
+  return rawVariants.map((variant) => ({
+    variantId: Number(variant?.variantId || variant?.id || 0),
+    name: String(variant?.name || '').trim(),
+    sku: String(variant?.sku || '').trim().toUpperCase() || null,
+    identifierMode: normalizeVariantIdentifierMode(variant?.identifierMode),
+    units: Array.isArray(variant?.units)
+      ? variant.units.map((unit) => ({
+          id: Number(unit?.id || 0) || null,
+          imei: String(unit?.imei || '').trim().toUpperCase() || null,
+          serialNo: String(unit?.serialNo || unit?.serial || '').trim().toUpperCase() || null,
+        })).filter(unit => unit.imei || unit.serialNo)
+      : [],
+  })).filter(variant => variant.variantId > 0)
+}
+
+function buildAdjustmentNotes({ baseNotes, qty, batches, imeis, serials, variants }) {
   const parts = []
   const normalizedBaseNotes = String(baseNotes || '').trim()
 
@@ -62,6 +83,15 @@ function buildAdjustmentNotes({ baseNotes, qty, batches, imeis, serials }) {
 
     if (batchSummary) {
       parts.push(`Lotes: ${batchSummary}`)
+    }
+  }
+
+  if (Array.isArray(variants) && variants.length > 0) {
+    const variantSummary = variants
+      .map(variant => `${variant.name || variant.sku || `Variante ${variant.variantId}`}: ${Array.isArray(variant.units) ? variant.units.length : 0}`)
+      .join(', ')
+    if (variantSummary) {
+      parts.push(`Variantes: ${variantSummary}`)
     }
   }
 
@@ -273,7 +303,7 @@ import { registerMovement } from '../services/inventory.js'
 // Crear movimiento manual (Ajuste)
 router.post('/adjust', authMiddleware, permissionMiddleware('inventory:write'), async (req, res) => {
   try {
-    const { productId, warehouseId, type, quantity, notes, batches, imeis, serials } = req.body
+    const { productId, warehouseId, type, quantity, notes, batches, imeis, serials, variants } = req.body
     const debugTraceId = String(req.body?.debugTraceId || `srv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
 
     // #region debug-point B:adjust-entry
@@ -323,6 +353,7 @@ router.post('/adjust', authMiddleware, permissionMiddleware('inventory:write'), 
         [productId]
       )
       const normalizedProductType = String(productRow?.product_type || req.body?.productType || '').toUpperCase()
+      const normalizedVariants = normalizeInventorySerializedVariants(variants)
 
       // Determinar tipo real para el servicio (ADJUSTMENT_IN o ADJUSTMENT_OUT)
       // Si el usuario seleccionó INITIAL, siempre es positivo (entrada)
@@ -346,13 +377,28 @@ router.post('/adjust', authMiddleware, permissionMiddleware('inventory:write'), 
           throw new Error(`Debes ingresar exactamente ${absQty} serie(s) para el ajuste`)
         }
       }
+      if (normalizedProductType === 'VARIANT_SERIALIZED') {
+        const variantUnitCount = normalizedVariants.reduce((sum, variant) => sum + variant.units.length, 0)
+        if (variantUnitCount !== absQty) {
+          throw new Error(`Debes ingresar exactamente ${absQty} unidad(es) serializadas para el ajuste`)
+        }
+        const imeis = normalizedVariants.flatMap(variant => variant.units.map(unit => unit.imei).filter(Boolean))
+        const serialNumbers = normalizedVariants.flatMap(variant => variant.units.map(unit => unit.serialNo).filter(Boolean))
+        if (new Set(imeis).size !== imeis.length) {
+          throw new Error('Hay IMEIs duplicados dentro del ajuste')
+        }
+        if (new Set(serialNumbers).size !== serialNumbers.length) {
+          throw new Error('Hay series duplicadas dentro del ajuste')
+        }
+      }
 
       const movementNotes = buildAdjustmentNotes({
         baseNotes: notes,
         qty,
         batches,
         imeis,
-        serials
+        serials,
+        variants: normalizedVariants
       })
 
       // #region debug-point C:before-register-movement
@@ -506,6 +552,57 @@ router.post('/adjust', authMiddleware, permissionMiddleware('inventory:write'), 
             )
           }
         }
+
+        if (normalizedProductType === 'VARIANT_SERIALIZED') {
+          for (const variant of normalizedVariants) {
+            for (const unit of variant.units) {
+              if (variant.identifierMode === 'IMEI' && !unit.imei) {
+                throw new Error(`Debes ingresar IMEI en la variante ${variant.name || variant.variantId}`)
+              }
+              if (variant.identifierMode === 'SERIAL' && !unit.serialNo) {
+                throw new Error(`Debes ingresar serie en la variante ${variant.name || variant.variantId}`)
+              }
+
+              const identifierValue = variant.identifierMode === 'SERIAL' ? unit.serialNo : unit.imei
+              const identifierColumn = variant.identifierMode === 'SERIAL' ? 'serial_no' : 'imei'
+              const [existing] = await conn.query(
+                `SELECT id, product_id, variant_id, status
+                 FROM product_variant_units
+                 WHERE ${identifierColumn} = ?
+                 LIMIT 1`,
+                [identifierValue]
+              )
+
+              if (existing.length > 0) {
+                const current = existing[0]
+                const currentStatus = String(current.status || '').toUpperCase()
+
+                if (Number(current.product_id) !== Number(productId)) {
+                  throw new Error(`${variant.identifierMode === 'SERIAL' ? 'La serie' : 'El IMEI'} ${identifierValue} ya existe en otro producto`)
+                }
+
+                if (currentStatus === 'AVAILABLE') {
+                  throw new Error(`${variant.identifierMode === 'SERIAL' ? 'La serie' : 'El IMEI'} ${identifierValue} ya existe y está disponible`)
+                }
+
+                if (!REACTIVATABLE_DETAIL_STATUSES.has(currentStatus)) {
+                  throw new Error(`${variant.identifierMode === 'SERIAL' ? 'La serie' : 'El IMEI'} ${identifierValue} ya existe con estado ${currentStatus} y no puede reingresarse por ajuste`)
+                }
+
+                await conn.query(
+                  'UPDATE product_variant_units SET status = "AVAILABLE", warehouse_id = ?, variant_id = ? WHERE id = ?',
+                  [warehouseId, variant.variantId, current.id]
+                )
+                continue
+              }
+
+              await conn.query(
+                'INSERT INTO product_variant_units (product_id, variant_id, imei, serial_no, warehouse_id, status) VALUES (?, ?, ?, ?, ?, "AVAILABLE")',
+                [productId, variant.variantId, unit.imei, unit.serialNo, warehouseId]
+              )
+            }
+          }
+        }
       }
 
       if (qty < 0) {
@@ -531,6 +628,39 @@ router.post('/adjust', authMiddleware, permissionMiddleware('inventory:write'), 
             )
             if (!result.affectedRows) {
               throw new Error(`La serie ${serial} no está disponible en el almacén seleccionado`)
+            }
+          }
+        }
+
+        if (normalizedProductType === 'VARIANT_SERIALIZED') {
+          for (const variant of normalizedVariants) {
+            for (const unit of variant.units) {
+              const identifierValue = variant.identifierMode === 'SERIAL' ? unit.serialNo : unit.imei
+              if (!identifierValue) {
+                throw new Error(`Falta ${variant.identifierMode === 'SERIAL' ? 'serie' : 'IMEI'} en una unidad serializada`)
+              }
+
+              let result
+              if (unit.id) {
+                ;[result] = await conn.query(
+                  `UPDATE product_variant_units
+                   SET status = "DAMAGED"
+                   WHERE id = ? AND product_id = ? AND variant_id = ? AND warehouse_id = ? AND status = "AVAILABLE"`,
+                  [unit.id, productId, variant.variantId, warehouseId]
+                )
+              } else {
+                const identifierColumn = variant.identifierMode === 'SERIAL' ? 'serial_no' : 'imei'
+                ;[result] = await conn.query(
+                  `UPDATE product_variant_units
+                   SET status = "DAMAGED"
+                   WHERE product_id = ? AND variant_id = ? AND ${identifierColumn} = ? AND warehouse_id = ? AND status = "AVAILABLE"`,
+                  [productId, variant.variantId, identifierValue, warehouseId]
+                )
+              }
+
+              if (!result?.affectedRows) {
+                throw new Error(`${variant.identifierMode === 'SERIAL' ? 'La serie' : 'El IMEI'} ${identifierValue} no está disponible en el almacén seleccionado para esa variante`)
+              }
             }
           }
         }

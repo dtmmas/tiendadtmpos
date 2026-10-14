@@ -2,6 +2,7 @@ import express from 'express'
 import bcrypt from 'bcryptjs'
 import { getPool } from '../db.js'
 import { authMiddleware, permissionMiddleware } from '../auth.js'
+import { ensureRootAccessSchema, isSpecialRoleCode } from '../services/root_access.js'
 
 const router = express.Router()
 
@@ -31,12 +32,14 @@ async function ensureUsersSchema(pool) {
 router.get('/', permissionMiddleware('users:read'), async (req, res) => {
   try {
     const pool = await getPool()
+    await ensureRootAccessSchema(pool)
     await ensureUsersSchema(pool)
     const [users] = await pool.query(`
       SELECT u.id, u.name, u.email, u.active, u.role_id, u.warehouse_id, u.can_sell, r.name as role_name, w.name as warehouse_name
       FROM users u 
       LEFT JOIN roles r ON u.role_id = r.id
       LEFT JOIN warehouses w ON u.warehouse_id = w.id
+      WHERE UPPER(COALESCE(r.code, '')) NOT IN ('ROOT', 'SUPERUSUARIO')
     `)
     res.json(users)
   } catch (err) {
@@ -51,7 +54,13 @@ router.post('/', permissionMiddleware('users:write'), async (req, res) => {
 
   try {
     const pool = await getPool()
+    await ensureRootAccessSchema(pool)
     await ensureUsersSchema(pool)
+    const [roleRows] = await pool.query('SELECT code FROM roles WHERE id = ? LIMIT 1', [role_id])
+    const requestedRoleCode = String(roleRows?.[0]?.code || '').trim().toUpperCase()
+    if (isSpecialRoleCode(requestedRoleCode)) {
+      return res.status(403).json({ error: 'Los usuarios root y superusuario solo se administran desde el modulo root' })
+    }
     const hash = await bcrypt.hash(password, 10)
     const wId = warehouse_id ? Number(warehouse_id) : null
     const canSell = can_sell === undefined ? 1 : (can_sell ? 1 : 0)
@@ -73,13 +82,33 @@ router.put('/:id', permissionMiddleware('users:write'), async (req, res) => {
   
   try {
     const pool = await getPool()
+    await ensureRootAccessSchema(pool)
     await ensureUsersSchema(pool)
+    const [userRows] = await pool.query(
+      `SELECT r.code AS role_code
+       FROM users u
+       LEFT JOIN roles r ON r.id = u.role_id
+       WHERE u.id = ?
+       LIMIT 1`,
+      [id]
+    )
+    const currentRoleCode = String(userRows?.[0]?.role_code || '').trim().toUpperCase()
+    if (isSpecialRoleCode(currentRoleCode)) {
+      return res.status(403).json({ error: 'Los usuarios root y superusuario solo se administran desde el modulo root' })
+    }
     const updates = []
     const values = []
     
     if (name) { updates.push('name = ?'); values.push(name) }
     if (email) { updates.push('email = ?'); values.push(email) }
-    if (role_id) { updates.push('role_id = ?'); values.push(role_id) }
+    if (role_id) {
+      const [roleRows] = await pool.query('SELECT code FROM roles WHERE id = ? LIMIT 1', [role_id])
+      const requestedRoleCode = String(roleRows?.[0]?.code || '').trim().toUpperCase()
+      if (isSpecialRoleCode(requestedRoleCode)) {
+        return res.status(403).json({ error: 'Los usuarios root y superusuario solo se administran desde el modulo root' })
+      }
+      updates.push('role_id = ?'); values.push(role_id)
+    }
     if (warehouse_id !== undefined) { updates.push('warehouse_id = ?'); values.push(warehouse_id ? Number(warehouse_id) : null) }
     if (can_sell !== undefined) { updates.push('can_sell = ?'); values.push(can_sell ? 1 : 0) }
     if (active !== undefined) { updates.push('active = ?'); values.push(active ? 1 : 0) }
@@ -104,6 +133,19 @@ router.delete('/:id', permissionMiddleware('users:write'), async (req, res) => {
   const { id } = req.params
   try {
     const pool = await getPool()
+    await ensureRootAccessSchema(pool)
+    const [userRows] = await pool.query(
+      `SELECT r.code AS role_code
+       FROM users u
+       LEFT JOIN roles r ON r.id = u.role_id
+       WHERE u.id = ?
+       LIMIT 1`,
+      [id]
+    )
+    const currentRoleCode = String(userRows?.[0]?.role_code || '').trim().toUpperCase()
+    if (isSpecialRoleCode(currentRoleCode)) {
+      return res.status(403).json({ error: 'Los usuarios root y superusuario solo se administran desde el modulo root' })
+    }
     await pool.query('DELETE FROM users WHERE id = ?', [id])
     res.json({ success: true })
   } catch (err) {

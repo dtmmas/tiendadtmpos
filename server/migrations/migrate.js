@@ -152,6 +152,14 @@ async function migrate() {
   await ensureColumn('products', 'alt_name', 'VARCHAR(255) NULL')
   await ensureColumn('products', 'generic_name', 'VARCHAR(255) NULL')
   await ensureColumn('products', 'shelf_location', 'VARCHAR(255) NULL')
+  await ensureColumn('products', 'tracking_profile', 'VARCHAR(20) NULL')
+  await ensureColumn('products', 'tracking_meta', 'TEXT NULL')
+  await ensureColumn('system_config', 'enabled_product_types', 'TEXT NULL')
+  await conn.query(`
+    UPDATE system_config
+    SET enabled_product_types = '["GENERAL","MEDICINAL","IMEI","SERIAL","VARIANT_SERIALIZED"]'
+    WHERE id = 1 AND (enabled_product_types IS NULL OR TRIM(enabled_product_types) = '')
+  `)
 
   // Ensure FKs
   await ensureForeignKey('products', 'brand_id', 'brands', 'fk_products_brand')
@@ -367,6 +375,14 @@ async function migrate() {
     product_id INT NOT NULL,
     name VARCHAR(160) NOT NULL,
     sku VARCHAR(80) UNIQUE,
+    color VARCHAR(60) NULL,
+    ram VARCHAR(60) NULL,
+    storage VARCHAR(60) NULL,
+    carrier VARCHAR(60) NULL,
+    sim_type VARCHAR(60) NULL,
+    identifier_mode VARCHAR(20) NOT NULL DEFAULT 'IMEI',
+    variant_meta TEXT NULL,
+    sort_order INT NOT NULL DEFAULT 0,
     stock INT NOT NULL DEFAULT 0,
     price DECIMAL(12,2) NOT NULL DEFAULT 0,
     cost DECIMAL(12,2) NOT NULL DEFAULT 0,
@@ -374,6 +390,36 @@ async function migrate() {
     CONSTRAINT fk_variants_product FOREIGN KEY (product_id) REFERENCES products(id)
   )`)
   await ensureIndex('product_variants', 'idx_variants_product', 'product_id')
+
+  await ensureColumn('product_variants', 'color', 'VARCHAR(60) NULL')
+  await ensureColumn('product_variants', 'ram', 'VARCHAR(60) NULL')
+  await ensureColumn('product_variants', 'storage', 'VARCHAR(60) NULL')
+  await ensureColumn('product_variants', 'carrier', 'VARCHAR(60) NULL')
+  await ensureColumn('product_variants', 'sim_type', 'VARCHAR(60) NULL')
+  await ensureColumn('product_variants', 'identifier_mode', `VARCHAR(20) NOT NULL DEFAULT 'IMEI'`)
+  await ensureColumn('product_variants', 'variant_meta', 'TEXT NULL')
+  await ensureColumn('product_variants', 'sort_order', 'INT NOT NULL DEFAULT 0')
+
+  await conn.query(`CREATE TABLE IF NOT EXISTS product_variant_units (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    product_id INT NOT NULL,
+    variant_id INT NOT NULL,
+    imei VARCHAR(50) NULL,
+    serial_no VARCHAR(100) NULL,
+    warehouse_id INT NOT NULL DEFAULT 1,
+    status VARCHAR(16) NOT NULL DEFAULT 'AVAILABLE',
+    unit_meta TEXT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_variant_units_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+    CONSTRAINT fk_variant_units_variant FOREIGN KEY (variant_id) REFERENCES product_variants(id) ON DELETE CASCADE,
+    UNIQUE KEY uniq_variant_unit_imei (imei),
+    UNIQUE KEY uniq_variant_unit_serial (serial_no)
+  )`)
+  await ensureIndex('product_variant_units', 'idx_variant_units_product', 'product_id')
+  await ensureIndex('product_variant_units', 'idx_variant_units_variant', 'variant_id')
+  await ensureColumn('product_variant_units', 'warehouse_id', 'INT NOT NULL DEFAULT 1')
+  await ensureColumn('product_variant_units', 'status', `VARCHAR(16) NOT NULL DEFAULT 'AVAILABLE'`)
+  await ensureColumn('product_variant_units', 'unit_meta', 'TEXT NULL')
 
   // Ensure products.product_type is VARCHAR
   const [ptRows] = await conn.query(`SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'products' AND COLUMN_NAME = 'product_type'`, [database])
@@ -394,6 +440,11 @@ async function migrate() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`)
   await ensureColumn('sales', 'payment_method', 'VARCHAR(50) DEFAULT "CASH"')
+  await ensureColumn('sales', 'received_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0')
+  await ensureColumn('sales', 'change_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0')
+  await ensureColumn('sales', 'reference_number', 'VARCHAR(120) NULL')
+  await ensureColumn('sales', 'status', `VARCHAR(20) NOT NULL DEFAULT 'COMPLETED'`)
+  await ensureColumn('sales', 'cancellation_reason', 'TEXT NULL')
   console.log('Ensured sales table and payment_method')
 
   await conn.query(`
@@ -444,6 +495,86 @@ async function migrate() {
 
   // DROP: eliminar tabla almacen si existe
   await conn.query('DROP TABLE IF EXISTS almacen')
+
+  await conn.query(`CREATE TABLE IF NOT EXISTS store_settings (
+    id INT PRIMARY KEY,
+    currency VARCHAR(8) NOT NULL DEFAULT 'GTQ',
+    online_warehouse_id INT NOT NULL DEFAULT 1,
+    cutoff_time TIME NOT NULL DEFAULT '11:00:00',
+    accept_after_cutoff VARCHAR(20) NOT NULL DEFAULT 'SCHEDULE',
+    pickup_enabled TINYINT(1) NOT NULL DEFAULT 1,
+    delivery_enabled TINYINT(1) NOT NULL DEFAULT 1,
+    pickup_notes TEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  )`)
+  await conn.query(
+    `INSERT IGNORE INTO store_settings (id, currency, online_warehouse_id, cutoff_time, accept_after_cutoff, pickup_enabled, delivery_enabled)
+     VALUES (1, 'GTQ', 1, '11:00:00', 'SCHEDULE', 1, 1)`
+  )
+
+  await conn.query(`CREATE TABLE IF NOT EXISTS shipping_zones (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    department VARCHAR(120) NOT NULL,
+    municipality VARCHAR(120) NOT NULL,
+    fee DECIMAL(12,2) NOT NULL DEFAULT 0,
+    active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_shipping_zone (department, municipality)
+  )`)
+  await ensureIndex('shipping_zones', 'idx_shipping_zones_active', 'active')
+
+  await conn.query(`CREATE TABLE IF NOT EXISTS online_orders (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    order_code VARCHAR(40) NOT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'PENDING_PAYMENT',
+    currency VARCHAR(8) NOT NULL DEFAULT 'GTQ',
+    fulfillment_type VARCHAR(20) NOT NULL DEFAULT 'DELIVERY',
+    department VARCHAR(120) NULL,
+    municipality VARCHAR(120) NULL,
+    address TEXT NULL,
+    shipping_fee DECIMAL(12,2) NOT NULL DEFAULT 0,
+    subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+    total DECIMAL(12,2) NOT NULL DEFAULT 0,
+    customer_name VARCHAR(160) NOT NULL,
+    customer_phone VARCHAR(40) NULL,
+    customer_email VARCHAR(160) NULL,
+    scheduled_for DATE NULL,
+    paid_at DATETIME NULL,
+    sale_id INT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_online_order_code (order_code)
+  )`)
+  await ensureIndex('online_orders', 'idx_online_orders_status', 'status')
+  await ensureIndex('online_orders', 'idx_online_orders_created', 'created_at')
+
+  await conn.query(`CREATE TABLE IF NOT EXISTS online_order_items (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    order_id INT NOT NULL,
+    product_id INT NOT NULL,
+    quantity INT NOT NULL DEFAULT 1,
+    unit_price_snapshot DECIMAL(12,2) NOT NULL DEFAULT 0,
+    total DECIMAL(12,2) NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_online_items_order FOREIGN KEY (order_id) REFERENCES online_orders(id) ON DELETE CASCADE
+  )`)
+  await ensureIndex('online_order_items', 'idx_online_items_order', 'order_id')
+
+  await conn.query(`CREATE TABLE IF NOT EXISTS online_payments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    order_id INT NOT NULL,
+    provider VARCHAR(20) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    payment_link TEXT NULL,
+    reference VARCHAR(160) NULL,
+    amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_online_payments_order FOREIGN KEY (order_id) REFERENCES online_orders(id) ON DELETE CASCADE
+  )`)
+  await ensureIndex('online_payments', 'idx_online_payments_order', 'order_id')
 
   await conn.end()
   console.log('Migration finished.')

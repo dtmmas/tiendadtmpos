@@ -23,8 +23,11 @@ import rolesRouter from './routes/roles.js'
 import usersRouter from './routes/users.js'
 import transfersRouter from './routes/transfers.js'
 import cashRegistersRouter from './routes/cash_registers.js'
+import storeRouter from './routes/store.js'
+import rootCoreRouter from './routes/root_core.js'
 import { envPath, uploadsDir } from './paths.js'
 import { auditTrackedInventoryConsistency, logTrackedInventoryAudit } from './services/tracked_inventory_audit.js'
+import { ensureRootAccessSchema } from './services/root_access.js'
 
 dotenv.config({ path: envPath })
 const app = express()
@@ -74,11 +77,14 @@ app.use('/api/customers', customersRouter)
 app.use('/api/credits', creditsRouter)
 app.use('/api/transfers', transfersRouter)
 app.use('/api/cash-registers', cashRegistersRouter)
+app.use('/api/store', storeRouter)
+app.use('/api/root-core', rootCoreRouter)
 
 // Start server only if DB connects
 ;(async () => {
   try {
     const pool = await getPool()
+    await ensureRootAccessSchema(pool)
     console.log('MySQL connected')
     auditTrackedInventoryConsistency(pool)
       .then(logTrackedInventoryAudit)

@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
+import { useState } from 'react'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Products from './pages/Products'
@@ -36,14 +37,26 @@ import CashHistory from './pages/CashHistory'
 import { formatCompanyName } from './utils/text'
 import AlertHost from './components/AlertHost'
 import { useAuthStore } from './store/auth'
+import StoreFront from './pages/StoreFront'
+import StoreCart from './pages/StoreCart'
+import StoreCheckout from './pages/StoreCheckout'
+import StoreOrderStatus from './pages/StoreOrderStatus'
+import StoreAdmin from './pages/StoreAdmin'
+import StoreResidentialPlans from './pages/StoreResidentialPlans'
+import { showAppAlert } from './components/AlertHost'
+import RootCore from './pages/RootCore'
+import RootAccessGuard from './components/RootAccessGuard'
 
 function RootLanding() {
   const user = useAuthStore(s => s.user)
   const hasPermission = useAuthStore(s => s.hasPermission)
+  const hasExplicitPermission = useAuthStore(s => s.hasExplicitPermission)
   const canSell = useAuthStore(s => s.canSell)
   const isAdmin = String(user?.role || '').toUpperCase() === 'ADMIN'
+  const isRootOperator = ['ROOT', 'SUPERUSUARIO'].includes(String(user?.role || '').toUpperCase()) && hasExplicitPermission('root:access')
 
   if (isAdmin) return <Navigate to="/dashboard" replace />
+  if (isRootOperator) return <Navigate to="/root-core" replace />
   if (hasPermission('products:read')) return <Navigate to="/products" replace />
   if (canSell()) return <Navigate to="/pos" replace />
   if (hasPermission('cash:view') || hasPermission('cash:open') || hasPermission('cash:movements') || hasPermission('cash:close')) {
@@ -52,12 +65,33 @@ function RootLanding() {
   return <Navigate to="/products" replace />
 }
 
+function StoreAdminDisabledRoute() {
+  useEffect(() => {
+    showAppAlert('La tienda en línea no está habilitada en este negocio.')
+  }, [])
+
+  return (
+    <div style={{ display: 'grid', gap: 16, maxWidth: 720 }}>
+      <div style={{ border: '1px solid rgba(245, 158, 11, 0.28)', background: 'rgba(245, 158, 11, 0.08)', color: '#92400e', borderRadius: 16, padding: 18 }}>
+        <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>Tienda en línea deshabilitada</div>
+        <div style={{ fontSize: 14, lineHeight: 1.5 }}>
+          Este negocio no tiene habilitado el módulo de tienda en línea en este momento. Puedes activarlo desde <strong>Configuración del sistema</strong>.
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const fetchConfig = useConfigStore(s => s.fetchConfig)
   const config = useConfigStore(s => s.config)
   const canSell = useAuthStore(s => s.canSell)
+  const [storeEnabled, setStoreEnabled] = useState(config?.storeEnabled === true)
 
   useEffect(() => { fetchConfig() }, [fetchConfig])
+  useEffect(() => {
+    setStoreEnabled(config?.storeEnabled === true)
+  }, [config?.storeEnabled])
   useEffect(() => {
     document.title = formatCompanyName(config?.name)
   }, [config?.name])
@@ -65,6 +99,12 @@ export default function App() {
   return (
     <>
       <Routes>
+        <Route path="/tienda" element={<StoreFront />} />
+        <Route path="/tienda/catalogo" element={<StoreFront mode="catalog" />} />
+        <Route path="/internet-residencial" element={<StoreResidentialPlans />} />
+        <Route path="/tienda/carrito" element={<StoreCart />} />
+        <Route path="/tienda/checkout" element={<StoreCheckout />} />
+        <Route path="/tienda/pedido/:orderCode" element={<StoreOrderStatus />} />
         <Route path="/login" element={<Login />} />
         <Route
           path="/pos"
@@ -107,6 +147,8 @@ export default function App() {
           <Route path="cash-history" element={<PermissionGuard permission={["cash:view", "cash:close", "sales:read"]}><CashHistory /></PermissionGuard>} />
           <Route path="units" element={<PermissionGuard permission="units:read"><Units /></PermissionGuard>} />
           <Route path="config" element={<PermissionGuard permission="config:read"><Config /></PermissionGuard>} />
+          <Route path="root-core" element={<RootAccessGuard><RootCore /></RootAccessGuard>} />
+          <Route path="store-admin" element={<RoleGuard roles={['ADMIN']}>{storeEnabled ? <StoreAdmin /> : <StoreAdminDisabledRoute />}</RoleGuard>} />
           <Route path="logs" element={<PermissionGuard permission="logs:read"><Logs /></PermissionGuard>} />
           
           {/* New Role Management Routes */}

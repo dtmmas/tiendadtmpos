@@ -300,6 +300,14 @@ async function normalizeSchema(conn) {
   await ensureColumn(conn, 'products', 'alt_name', 'VARCHAR(160) NULL')
   await ensureColumn(conn, 'products', 'generic_name', 'VARCHAR(160) NULL')
   await ensureColumn(conn, 'products', 'shelf_location', 'VARCHAR(100) NULL')
+  await ensureColumn(conn, 'products', 'tracking_profile', 'VARCHAR(20) NULL')
+  await ensureColumn(conn, 'products', 'tracking_meta', 'TEXT NULL')
+  await ensureColumn(conn, 'system_config', 'enabled_product_types', 'TEXT NULL')
+  await conn.query(`
+    UPDATE system_config
+    SET enabled_product_types = '["GENERAL","MEDICINAL","IMEI","SERIAL","VARIANT_SERIALIZED"]'
+    WHERE id = 1 AND (enabled_product_types IS NULL OR TRIM(enabled_product_types) = '')
+  `)
   await conn.query(`
     UPDATE products
     SET product_code = NULL
@@ -553,6 +561,55 @@ async function normalizeSchema(conn) {
   await ensureColumn(conn, 'product_imeis', 'warehouse_id', 'INT NOT NULL DEFAULT 1')
   await ensureColumn(conn, 'product_serials', 'status', `VARCHAR(16) NOT NULL DEFAULT 'AVAILABLE'`)
   await ensureColumn(conn, 'product_serials', 'warehouse_id', 'INT NOT NULL DEFAULT 1')
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS product_variants (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      product_id INT NOT NULL,
+      name VARCHAR(160) NOT NULL,
+      sku VARCHAR(80) UNIQUE,
+      color VARCHAR(60) NULL,
+      ram VARCHAR(60) NULL,
+      storage VARCHAR(60) NULL,
+      carrier VARCHAR(60) NULL,
+      sim_type VARCHAR(60) NULL,
+      identifier_mode VARCHAR(20) NOT NULL DEFAULT 'IMEI',
+      variant_meta TEXT NULL,
+      sort_order INT NOT NULL DEFAULT 0,
+      stock INT NOT NULL DEFAULT 0,
+      price DECIMAL(12,2) NOT NULL DEFAULT 0,
+      cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_variants_product FOREIGN KEY (product_id) REFERENCES products(id)
+    )
+  `)
+  await ensureColumn(conn, 'product_variants', 'color', 'VARCHAR(60) NULL')
+  await ensureColumn(conn, 'product_variants', 'ram', 'VARCHAR(60) NULL')
+  await ensureColumn(conn, 'product_variants', 'storage', 'VARCHAR(60) NULL')
+  await ensureColumn(conn, 'product_variants', 'carrier', 'VARCHAR(60) NULL')
+  await ensureColumn(conn, 'product_variants', 'sim_type', 'VARCHAR(60) NULL')
+  await ensureColumn(conn, 'product_variants', 'identifier_mode', `VARCHAR(20) NOT NULL DEFAULT 'IMEI'`)
+  await ensureColumn(conn, 'product_variants', 'variant_meta', 'TEXT NULL')
+  await ensureColumn(conn, 'product_variants', 'sort_order', 'INT NOT NULL DEFAULT 0')
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS product_variant_units (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      product_id INT NOT NULL,
+      variant_id INT NOT NULL,
+      imei VARCHAR(50) NULL,
+      serial_no VARCHAR(100) NULL,
+      warehouse_id INT NOT NULL DEFAULT 1,
+      status VARCHAR(16) NOT NULL DEFAULT 'AVAILABLE',
+      unit_meta TEXT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_variant_units_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+      CONSTRAINT fk_variant_units_variant FOREIGN KEY (variant_id) REFERENCES product_variants(id) ON DELETE CASCADE,
+      UNIQUE KEY uniq_variant_unit_imei (imei),
+      UNIQUE KEY uniq_variant_unit_serial (serial_no)
+    )
+  `)
+  await ensureColumn(conn, 'product_variant_units', 'warehouse_id', 'INT NOT NULL DEFAULT 1')
+  await ensureColumn(conn, 'product_variant_units', 'status', `VARCHAR(16) NOT NULL DEFAULT 'AVAILABLE'`)
+  await ensureColumn(conn, 'product_variant_units', 'unit_meta', 'TEXT NULL')
 
   await conn.query(`
     CREATE TABLE IF NOT EXISTS product_warehouse_stock (
@@ -630,10 +687,15 @@ async function normalizeSchema(conn) {
   await ensureForeignKey(conn, 'product_batches', 'warehouse_id', 'warehouses', 'fk_batches_warehouse')
   await ensureForeignKey(conn, 'product_imeis', 'warehouse_id', 'warehouses', 'fk_imeis_warehouse')
   await ensureForeignKey(conn, 'product_serials', 'warehouse_id', 'warehouses', 'fk_serials_warehouse')
+  await ensureForeignKey(conn, 'product_variant_units', 'warehouse_id', 'warehouses', 'fk_variant_units_warehouse')
 
   await ensureIndex(conn, 'product_batches', 'idx_batches_warehouse', 'warehouse_id')
   await ensureIndex(conn, 'product_imeis', 'idx_imeis_warehouse', 'warehouse_id')
   await ensureIndex(conn, 'product_serials', 'idx_serials_warehouse', 'warehouse_id')
+  await ensureIndex(conn, 'product_variants', 'idx_variants_product', 'product_id')
+  await ensureIndex(conn, 'product_variant_units', 'idx_variant_units_product', 'product_id')
+  await ensureIndex(conn, 'product_variant_units', 'idx_variant_units_variant', 'variant_id')
+  await ensureIndex(conn, 'product_variant_units', 'idx_variant_units_warehouse', 'warehouse_id')
   await ensureIndex(conn, 'inventory_movements', 'idx_inventory_warehouse', 'warehouse_id')
 }
 

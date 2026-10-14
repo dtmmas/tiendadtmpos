@@ -53,6 +53,26 @@ function normalizePurchasePaymentMethod(value) {
   return ['CASH', 'CARD', 'DEPOSIT'].includes(method) ? method : 'CASH'
 }
 
+function normalizeVariantIdentifierMode(value) {
+  return String(value || '').trim().toUpperCase() === 'SERIAL' ? 'SERIAL' : 'IMEI'
+}
+
+function normalizePurchaseSerializedVariants(rawVariants) {
+  if (!Array.isArray(rawVariants)) return []
+  return rawVariants.map((variant) => ({
+    variantId: Number(variant?.variantId || variant?.id || 0),
+    name: String(variant?.name || '').trim(),
+    sku: String(variant?.sku || '').trim().toUpperCase() || null,
+    identifierMode: normalizeVariantIdentifierMode(variant?.identifierMode),
+    units: Array.isArray(variant?.units)
+      ? variant.units.map((unit) => ({
+          imei: String(unit?.imei || '').trim().toUpperCase() || null,
+          serialNo: String(unit?.serialNo || unit?.serial || '').trim().toUpperCase() || null,
+        })).filter(unit => unit.imei || unit.serialNo)
+      : [],
+  })).filter(variant => variant.variantId > 0)
+}
+
 function buildPurchasePaymentSummary(total, paidAmount, paymentType) {
   const normalizedTotal = roundCurrency(total)
   const normalizedPaid = Math.min(normalizedTotal, Math.max(0, roundCurrency(paidAmount)))
@@ -774,7 +794,13 @@ router.post('/', authMiddleware, upload.fields([
 
       for (const item of items) {
         // item: { productId, quantity, unitCost }
-        const itemTotal = Number(item.unitCost) * Number(item.quantity)
+        const serializedVariants = String(item.productType || '').toUpperCase() === 'VARIANT_SERIALIZED'
+          ? normalizePurchaseSerializedVariants(item.variants)
+          : []
+        const effectiveQuantity = serializedVariants.length > 0
+          ? serializedVariants.reduce((sum, variant) => sum + variant.units.length, 0)
+          : Number(item.quantity)
+        const itemTotal = Number(item.unitCost) * Number(effectiveQuantity)
         const movementKey = `${item.productId}:${targetWarehouseId}`
         let movementType = movementTypeByProduct.get(movementKey)
         if (!movementType) {
@@ -785,7 +811,7 @@ router.post('/', authMiddleware, upload.fields([
         
         await conn.query(
           'INSERT INTO purchase_items (purchase_id, product_id, quantity, unit_cost, total, total_cost, serials) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [purchaseId, item.productId, item.quantity, item.unitCost, itemTotal, itemTotal, item.serials || null]
+          [purchaseId, item.productId, effectiveQuantity, item.unitCost, itemTotal, itemTotal, item.serials || null]
         )
 
         // Handle Product Types
@@ -848,6 +874,45 @@ router.post('/', authMiddleware, upload.fields([
                     [item.productId, serial, targetWarehouseId]
                 )
              }
+        } else if (item.productType === 'VARIANT_SERIALIZED') {
+            if (serializedVariants.length === 0) {
+                throw new Error(`Debes ingresar al menos una variante serializada para el producto ${item.productId}`)
+            }
+
+            for (const variant of serializedVariants) {
+                const [variantRows] = await conn.query(
+                    'SELECT id, product_id FROM product_variants WHERE id = ? AND product_id = ? LIMIT 1',
+                    [variant.variantId, item.productId]
+                )
+                if (!Array.isArray(variantRows) || variantRows.length === 0) {
+                    throw new Error(`La variante ${variant.variantId} no pertenece al producto ${item.productId}`)
+                }
+
+                for (const unit of variant.units) {
+                    if (variant.identifierMode === 'IMEI') {
+                        if (!unit.imei) {
+                            throw new Error(`Falta IMEI en una unidad de la variante ${variant.name || variant.variantId}`)
+                        }
+                        const [existing] = await conn.query('SELECT id FROM product_variant_units WHERE imei = ? LIMIT 1', [unit.imei])
+                        if (Array.isArray(existing) && existing.length > 0) {
+                            throw new Error(`El IMEI ${unit.imei} ya existe en otra unidad serializada`)
+                        }
+                    } else {
+                        if (!unit.serialNo) {
+                            throw new Error(`Falta serie en una unidad de la variante ${variant.name || variant.variantId}`)
+                        }
+                        const [existing] = await conn.query('SELECT id FROM product_variant_units WHERE serial_no = ? LIMIT 1', [unit.serialNo])
+                        if (Array.isArray(existing) && existing.length > 0) {
+                            throw new Error(`La serie ${unit.serialNo} ya existe en otra unidad serializada`)
+                        }
+                    }
+
+                    await conn.query(
+                        'INSERT INTO product_variant_units (product_id, variant_id, imei, serial_no, warehouse_id, status) VALUES (?, ?, ?, ?, ?, "AVAILABLE")',
+                        [item.productId, variant.variantId, unit.imei, unit.serialNo, targetWarehouseId]
+                    )
+                }
+            }
         }
 
         // Actualizar stock usando servicio centralizado
@@ -855,13 +920,13 @@ router.post('/', authMiddleware, upload.fields([
             productId: item.productId,
             warehouseId: targetWarehouseId, // Use the target warehouse
             type: movementType,
-            quantity: item.quantity,
+            quantity: effectiveQuantity,
             referenceId: purchaseId,
             userId: userId,
             notes: `${movementLabel} #${docNo || purchaseId}`
         }, conn)
 
-        await recalculateProductCosts(conn, item.productId, item.quantity, item.unitCost)
+        await recalculateProductCosts(conn, item.productId, effectiveQuantity, item.unitCost)
       }
 
       if (normalizedInitialPayment > 0) {
@@ -884,7 +949,7 @@ router.post('/', authMiddleware, upload.fields([
     } catch (err) {
       await conn.rollback()
       console.error('Purchase creation transaction error:', err)
-      res.status(500).json({ error: 'Error al procesar la compra' })
+      res.status(500).json({ error: err?.message || 'Error al procesar la compra' })
     } finally {
       conn.release()
     }

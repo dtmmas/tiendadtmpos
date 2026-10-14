@@ -4,6 +4,10 @@ export const api = axios.create({
   baseURL: '/api',
 })
 
+type UploadRequestOptions = {
+  onUploadProgress?: (percent: number | null) => void
+}
+
 export function setAuthToken(token?: string) {
   if (token) api.defaults.headers.common['Authorization'] = `Bearer ${token}`
   else delete api.defaults.headers.common['Authorization']
@@ -34,10 +38,10 @@ function isAuthUrl(url?: string) {
 
 function shouldSkipKeyForUppercase(key: string, url?: string) {
   const k = key.toLowerCase()
-  // En rutas de auth, no modificar email ni password
-  if (isAuthUrl(url) && (k === 'password' || k === 'email')) return true
+  if (k === 'password') return true
+  if (k === 'email' || k.endsWith('email')) return true
   // Enviar intactos los campos JSON en FormData para productos
-  if (k === 'batches' || k === 'imeis' || k === 'serials') return true
+  if (k === 'batches' || k === 'imeis' || k === 'serials' || k === 'trackingmeta' || k === 'variants') return true
   return false
 }
 
@@ -139,13 +143,44 @@ export async function getProductCostHistory(id: number) {
   }
 }
 
-export async function createProduct(form: FormData) {
-  const { data } = await api.post('/products', form)
+function buildUploadConfig(options?: UploadRequestOptions) {
+  if (!options?.onUploadProgress) return undefined
+  return {
+    onUploadProgress: (event: any) => {
+      const total = Number(event?.total || 0)
+      const loaded = Number(event?.loaded || 0)
+      if (!total) {
+        options.onUploadProgress?.(null)
+        return
+      }
+      options.onUploadProgress?.(Math.max(0, Math.min(100, Math.round((loaded / total) * 100))))
+    },
+  }
+}
+
+export async function createProduct(form: FormData, options?: UploadRequestOptions) {
+  const { data } = await api.post('/products', form, buildUploadConfig(options))
   return data
 }
 
-export async function updateProduct(id: number, form: FormData) {
-  const { data } = await api.put(`/products/${id}`, form)
+export async function importProductsFile(form: FormData) {
+  const { data } = await api.post('/products/import', form)
+  return data as {
+    ok: boolean
+    createdCount: number
+    errorCount: number
+    created: Array<{ rowNumber: number; id: number; name: string }>
+    errors: Array<{ rowNumber: number; error: string; duplicate?: string }>
+  }
+}
+
+export async function downloadProductsImportTemplate() {
+  const { data } = await api.get('/products/import-template', { responseType: 'blob' })
+  return data as Blob
+}
+
+export async function updateProduct(id: number, form: FormData, options?: UploadRequestOptions) {
+  const { data } = await api.put(`/products/${id}`, form, buildUploadConfig(options))
   return data
 }
 
@@ -182,15 +217,15 @@ export async function deleteDepartment(id: number) {
 // Brand helpers
 export async function getBrands() {
   const { data } = await api.get('/brands')
-  return data
+  return data as Array<{ id: number; name: string; logoUrl?: string | null }>
 }
 
-export async function createBrand(payload: { name: string }) {
+export async function createBrand(payload: { name: string } | FormData) {
   const { data } = await api.post('/brands', payload)
   return data
 }
 
-export async function updateBrand(id: number, payload: { name: string }) {
+export async function updateBrand(id: number, payload: { name: string } | FormData) {
   const { data } = await api.put(`/brands/${id}`, payload)
   return data
 }

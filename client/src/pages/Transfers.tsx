@@ -110,6 +110,21 @@ interface TransferDetail extends Transfer {
   items: TransferDetailItem[]
 }
 
+function formatProductTypeLabel(productType?: string) {
+  switch (String(productType || 'GENERAL').trim().toUpperCase()) {
+    case 'MEDICINAL':
+      return 'Con fecha de vencimiento y lotes'
+    case 'IMEI':
+      return 'IMEI'
+    case 'SERIAL':
+      return 'Serie'
+    case 'VARIANT_SERIALIZED':
+      return 'IMEI-SERIAL VARIANTE'
+    default:
+      return 'General'
+  }
+}
+
 export default function Transfers() {
   const [view, setView] = useState<'list' | 'create'>('list')
   const [transfers, setTransfers] = useState<Transfer[]>([])
@@ -1042,6 +1057,9 @@ export default function Transfers() {
                         {[p.productCode ? `COD: ${p.productCode}` : '', p.sku ? `SKU: ${p.sku}` : '']
                           .filter(Boolean)
                           .join(' | ') || 'Sin código'}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                        Tipo: {formatProductTypeLabel(p.productType)}
                       </div>
                       {p.description && (
                         <div style={{ fontSize: 12, color: 'var(--muted)' }}>{p.description}</div>

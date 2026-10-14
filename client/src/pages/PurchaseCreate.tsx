@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { api, getSuppliers, getProducts } from '../api'
+import { api, getSuppliers, getProducts, getProductDetails } from '../api'
 import { useConfigStore } from '../store/config'
 import { useNavigate } from 'react-router-dom'
 import { formatMoney } from '../utils/currency'
@@ -18,6 +18,22 @@ interface Product {
   lastCost?: number
   stock: number
   productType?: string
+  trackingProfile?: string
+  trackingMeta?: Partial<TrackingMeta>
+  shelfLocation?: string
+  variants?: SerializedVariantPurchase[]
+}
+
+interface TrackingMeta {
+  storageNotes?: string
+  presentation?: string
+  activeIngredient?: string
+  concentration?: string
+  dosageForm?: string
+  sanitaryRegistry?: string
+  packageType?: string
+  originInfo?: string
+  regulatoryNotes?: string
 }
 
 interface PurchaseItem {
@@ -27,6 +43,11 @@ interface PurchaseItem {
   quantity: number
   unitCost: number
   productType?: string
+  trackingProfile?: string
+  trackingMeta?: Partial<TrackingMeta>
+  genericName?: string
+  shelfLocation?: string
+  altName?: string
   // Medicinal
   batches?: { batchNo: string; expiryDate: string; quantity: number }[]
   // Legacy single batch fields (optional, kept for compatibility if needed temporarily)
@@ -35,11 +56,128 @@ interface PurchaseItem {
   // IMEI/Serial
   serials?: string // for backend compatibility (payload)
   imeiEntries?: string[] // for UI handling
+  variants?: SerializedVariantPurchase[]
+  selectedVariantId?: number
+}
+
+interface SerializedVariantPurchaseUnit {
+  imei: string
+  serialNo: string
+}
+
+interface SerializedVariantPurchase {
+  variantId: number
+  name: string
+  sku?: string
+  color?: string
+  ram?: string
+  storage?: string
+  carrier?: string
+  simType?: string
+  identifierMode: 'IMEI' | 'SERIAL'
+  units: SerializedVariantPurchaseUnit[]
 }
 
 interface Warehouse {
     id: number
     name: string
+}
+
+function formatProductTypeLabel(productType?: string) {
+  switch (String(productType || 'GENERAL').trim().toUpperCase()) {
+    case 'MEDICINAL':
+      return 'Con fecha de vencimiento y lotes'
+    case 'IMEI':
+      return 'IMEI'
+    case 'SERIAL':
+      return 'Serie'
+    case 'VARIANT_SERIALIZED':
+      return 'IMEI-SERIAL VARIANTE'
+    default:
+      return 'General'
+  }
+}
+
+function normalizeVariantIdentifierMode(value?: string): 'IMEI' | 'SERIAL' {
+  return String(value || '').trim().toUpperCase() === 'SERIAL' ? 'SERIAL' : 'IMEI'
+}
+
+function buildVariantLabel(variant: Partial<SerializedVariantPurchase> | any) {
+  const explicitName = String(variant?.name || '').trim()
+  if (explicitName) return explicitName
+  const parts = [variant?.color, variant?.ram, variant?.storage, variant?.carrier, variant?.simType]
+    .map(value => String(value || '').trim())
+    .filter(Boolean)
+  return parts.length > 0 ? parts.join(' / ') : 'Variante'
+}
+
+function buildVariantDisplayLabel(variant: Partial<SerializedVariantPurchase> | any) {
+  const baseLabel = buildVariantLabel(variant)
+  const sku = String(variant?.sku || '').trim()
+  if (baseLabel !== 'Variante') {
+    return sku ? `${baseLabel} (${sku})` : baseLabel
+  }
+  if (sku) return `SKU ${sku}`
+  const variantId = Number(variant?.variantId || variant?.id || 0)
+  return variantId > 0 ? `Variante #${variantId}` : 'Variante sin identificar'
+}
+
+function parsePurchaseVariants(raw: any): SerializedVariantPurchase[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map((variant: any) => ({
+    variantId: Number(variant?.id || 0),
+    name: String(variant?.name || ''),
+    sku: variant?.sku ? String(variant.sku) : undefined,
+    color: variant?.color ? String(variant.color) : undefined,
+    ram: variant?.ram ? String(variant.ram) : undefined,
+    storage: variant?.storage ? String(variant.storage) : undefined,
+    carrier: variant?.carrier ? String(variant.carrier) : undefined,
+    simType: variant?.simType ? String(variant.simType) : undefined,
+    identifierMode: normalizeVariantIdentifierMode(variant?.identifierMode),
+    units: [],
+  })).filter(variant => variant.variantId > 0)
+}
+
+function normalizeTrackingProfile(profile?: string) {
+  switch (String(profile || '').trim().toUpperCase()) {
+    case 'ALIMENTO':
+    case 'MEDICAMENTO':
+    case 'COSMETICO':
+    case 'QUIMICO':
+      return String(profile).trim().toUpperCase()
+    default:
+      return 'GENERAL'
+  }
+}
+
+function formatTrackingProfileLabel(profile?: string) {
+  switch (normalizeTrackingProfile(profile)) {
+    case 'ALIMENTO':
+      return 'Alimento'
+    case 'MEDICAMENTO':
+      return 'Medicamento'
+    case 'COSMETICO':
+      return 'Cosmetico'
+    case 'QUIMICO':
+      return 'Quimico'
+    default:
+      return 'General'
+  }
+}
+
+function buildTrackingSummary(product: Partial<PurchaseItem> | Partial<Product>) {
+  const meta = product.trackingMeta || {}
+  const summary: string[] = []
+  const profile = normalizeTrackingProfile(product.trackingProfile)
+  if (profile !== 'GENERAL') summary.push(`Perfil: ${formatTrackingProfileLabel(profile)}`)
+  if (product.genericName) summary.push(`Generico: ${product.genericName}`)
+  if (meta.activeIngredient) summary.push(`Activo: ${meta.activeIngredient}`)
+  if (meta.concentration) summary.push(`Concentracion: ${meta.concentration}`)
+  if (meta.presentation) summary.push(`Presentacion: ${meta.presentation}`)
+  if (meta.packageType) summary.push(`Empaque: ${meta.packageType}`)
+  if (meta.storageNotes) summary.push(`Almacenaje: ${meta.storageNotes}`)
+  if (product.shelfLocation) summary.push(`Ubicacion: ${product.shelfLocation}`)
+  return summary
 }
 
 export default function PurchaseCreate() {
@@ -199,15 +337,38 @@ export default function PurchaseCreate() {
         return
     }
 
+    let purchaseVariants: SerializedVariantPurchase[] | undefined
+    if (String(product.productType || '').toUpperCase() === 'VARIANT_SERIALIZED') {
+      try {
+        const details = await getProductDetails(product.id)
+        purchaseVariants = parsePurchaseVariants(details?.variants)
+        if (purchaseVariants.length === 0) {
+          alert('Este producto no tiene variantes configuradas. Primero define sus variantes serializadas en Productos.')
+          return
+        }
+      } catch (err) {
+        console.error('Error loading serialized variants for purchase:', err)
+        alert('No se pudieron cargar las variantes serializadas del producto')
+        return
+      }
+    }
+
     setItems([...items, {
       productId: product.id,
       name: product.name,
       code: getProductCode(product),
-      quantity: 1,
+      quantity: purchaseVariants ? 0 : 1,
       unitCost: product.lastCost ?? product.avgCost ?? product.cost ?? 0,
       productType: product.productType,
+      trackingProfile: product.trackingProfile,
+      trackingMeta: product.trackingMeta,
+      genericName: product.genericName,
+      shelfLocation: product.shelfLocation,
+      altName: product.altName,
       batches: product.productType === 'MEDICINAL' ? [{ batchNo: '', expiryDate: '', quantity: 1 }] : undefined,
       imeiEntries: (product.productType === 'IMEI' || product.productType === 'SERIAL') ? [''] : undefined,
+      variants: purchaseVariants,
+      selectedVariantId: purchaseVariants?.[0]?.variantId,
     }])
     setIsProductModalOpen(false)
     setProductSearch('')
@@ -217,6 +378,10 @@ export default function PurchaseCreate() {
   function updateItem(index: number, field: keyof PurchaseItem, value: any) {
     const newItems = [...items]
     const item = { ...newItems[index], [field]: value }
+
+    if (field === 'quantity' && item.productType === 'VARIANT_SERIALIZED') {
+        return
+    }
     
     // Logic for Medicinal Batches: Add single default batch row if empty, but do NOT auto-expand quantity
     if (field === 'quantity' && item.productType === 'MEDICINAL') {
@@ -243,6 +408,61 @@ export default function PurchaseCreate() {
 
     newItems[index] = item
     setItems(newItems)
+  }
+
+  function updateVariantUnit(itemIndex: number, variantIndex: number, unitIndex: number, key: 'imei' | 'serialNo', value: string) {
+    setItems(prev => prev.map((item, idx) => {
+      if (idx !== itemIndex || !item.variants) return item
+      const nextVariants = [...item.variants]
+      const currentVariant = nextVariants[variantIndex]
+      const currentUnit = currentVariant?.units?.[unitIndex]
+      if (!currentVariant || !currentUnit) return item
+      const nextUnits = [...currentVariant.units]
+      nextUnits[unitIndex] = { ...currentUnit, [key]: value }
+      nextVariants[variantIndex] = { ...currentVariant, units: nextUnits }
+      const quantity = nextVariants.reduce((sum, variant) => sum + variant.units.length, 0)
+      return { ...item, variants: nextVariants, quantity }
+    }))
+  }
+
+  function addVariantUnit(itemIndex: number, variantIndex: number) {
+    setItems(prev => prev.map((item, idx) => {
+      if (idx !== itemIndex || !item.variants) return item
+      const nextVariants = [...item.variants]
+      const currentVariant = nextVariants[variantIndex]
+      if (!currentVariant) return item
+      nextVariants[variantIndex] = {
+        ...currentVariant,
+        units: [...currentVariant.units, { imei: '', serialNo: '' }]
+      }
+      const quantity = nextVariants.reduce((sum, variant) => sum + variant.units.length, 0)
+      return { ...item, variants: nextVariants, quantity }
+    }))
+  }
+
+  function addVariantUnitById(itemIndex: number, variantId: number) {
+    const item = items[itemIndex]
+    const variantIndex = item?.variants?.findIndex(variant => variant.variantId === variantId) ?? -1
+    if (variantIndex < 0) {
+      alert('Selecciona una variante valida para registrar la unidad')
+      return
+    }
+    addVariantUnit(itemIndex, variantIndex)
+  }
+
+  function removeVariantUnit(itemIndex: number, variantIndex: number, unitIndex: number) {
+    setItems(prev => prev.map((item, idx) => {
+      if (idx !== itemIndex || !item.variants) return item
+      const nextVariants = [...item.variants]
+      const currentVariant = nextVariants[variantIndex]
+      if (!currentVariant) return item
+      nextVariants[variantIndex] = {
+        ...currentVariant,
+        units: currentVariant.units.filter((_, index) => index !== unitIndex)
+      }
+      const quantity = nextVariants.reduce((sum, variant) => sum + variant.units.length, 0)
+      return { ...item, variants: nextVariants, quantity }
+    }))
   }
 
   function updateBatch(itemIndex: number, batchIndex: number, field: string, value: any) {
@@ -341,6 +561,42 @@ export default function PurchaseCreate() {
                  return alert(`Ingrese todos los ${item.productType}s para el producto ${item.name}`)
              }
         }
+
+        if (item.productType === 'VARIANT_SERIALIZED') {
+            const variants = item.variants || []
+            const totalUnits = variants.reduce((sum, variant) => sum + variant.units.length, 0)
+            if (variants.length === 0) {
+                return alert(`El producto ${item.name} no tiene variantes configuradas para la compra`)
+            }
+            if (totalUnits <= 0) {
+                return alert(`Debes ingresar al menos una unidad serializada para el producto ${item.name}`)
+            }
+            for (const variant of variants) {
+                for (const unit of variant.units) {
+                    if (variant.identifierMode === 'IMEI' && !String(unit.imei || '').trim()) {
+                        return alert(`Completa todos los IMEI de la variante ${buildVariantLabel(variant)} en ${item.name}`)
+                    }
+                    if (variant.identifierMode === 'SERIAL' && !String(unit.serialNo || '').trim()) {
+                        return alert(`Completa todas las series de la variante ${buildVariantLabel(variant)} en ${item.name}`)
+                    }
+                }
+            }
+            const variantSkus = variants.map(variant => String(variant.sku || '').trim().toUpperCase()).filter(Boolean)
+            const duplicateVariantSkus = [...new Set(variantSkus.filter((value, index, arr) => arr.indexOf(value) !== index))]
+            if (duplicateVariantSkus.length > 0) {
+                return alert(`Hay SKU de variante duplicados en ${item.name}: ${duplicateVariantSkus.join(', ')}`)
+            }
+            const imeis = variants.flatMap(variant => variant.units.map(unit => String(unit.imei || '').trim().toUpperCase()).filter(Boolean))
+            const serials = variants.flatMap(variant => variant.units.map(unit => String(unit.serialNo || '').trim().toUpperCase()).filter(Boolean))
+            const duplicateImeis = [...new Set(imeis.filter((value, index, arr) => arr.indexOf(value) !== index))]
+            const duplicateSerials = [...new Set(serials.filter((value, index, arr) => arr.indexOf(value) !== index))]
+            if (duplicateImeis.length > 0) {
+                return alert(`Hay IMEIs duplicados en ${item.name}: ${duplicateImeis.join(', ')}`)
+            }
+            if (duplicateSerials.length > 0) {
+                return alert(`Hay series duplicadas en ${item.name}: ${duplicateSerials.join(', ')}`)
+            }
+        }
     }
 
     setLoading(true)
@@ -348,8 +604,24 @@ export default function PurchaseCreate() {
       // Prepare items payload (avoid mutating state)
       const payloadItems = items.map(item => {
         const newItem = { ...item }
+        delete newItem.selectedVariantId
         if ((item.productType === 'IMEI' || item.productType === 'SERIAL') && item.imeiEntries) {
             newItem.serials = item.imeiEntries.join('\n')
+        }
+        if (item.productType === 'VARIANT_SERIALIZED' && item.variants) {
+            newItem.quantity = item.variants.reduce((sum, variant) => sum + variant.units.length, 0)
+            newItem.variants = item.variants.map(variant => ({
+              ...variant,
+              sku: variant.sku ? String(variant.sku).trim().toUpperCase() : undefined,
+              units: variant.units.map(unit => ({
+                imei: String(unit.imei || '').trim().toUpperCase(),
+                serialNo: String(unit.serialNo || '').trim().toUpperCase(),
+              }))
+            }))
+            newItem.serials = item.variants
+              .flatMap(variant => variant.units.map(unit => variant.identifierMode === 'IMEI' ? unit.imei : unit.serialNo))
+              .filter(Boolean)
+              .join('\n')
         }
         return newItem
       })
@@ -609,13 +881,30 @@ export default function PurchaseCreate() {
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 'bold' }}>{item.name}</div>
                     <div style={{ fontSize: '0.8em', opacity: 0.7, wordBreak: 'break-word' }}>{item.code}</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                      <span style={{ fontSize: 11, padding: '4px 8px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--surface)' }}>
+                        {formatProductTypeLabel(item.productType)}
+                      </span>
+                      {String(item.productType || '').toUpperCase() === 'MEDICINAL' && (
+                        <span style={{ fontSize: 11, padding: '4px 8px', borderRadius: 999, border: '1px solid rgba(37,99,235,0.18)', background: 'rgba(37,99,235,0.08)', color: '#1d4ed8' }}>
+                          {formatTrackingProfileLabel(item.trackingProfile)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <button onClick={() => removeItem(i)} style={{ border: '1px solid rgba(239,68,68,0.25)', background: 'rgba(239,68,68,0.08)', cursor: 'pointer', color: '#ef4444', padding: '8px 10px', borderRadius: 10, minWidth: 42, minHeight: 42 }}>✕</button>
                 </div>
+                {String(item.productType || '').toUpperCase() === 'MEDICINAL' && buildTrackingSummary(item).length > 0 && (
+                  <div style={{ padding: '10px 12px', borderRadius: 10, background: 'rgba(37,99,235,0.06)', border: '1px solid rgba(37,99,235,0.12)', display: 'grid', gap: 4 }}>
+                    {buildTrackingSummary(item).map(line => (
+                      <div key={line} style={{ fontSize: 12, color: '#1e3a8a' }}>{line}</div>
+                    ))}
+                  </div>
+                )}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
                   <div>
                     <label style={{ display: 'block', marginBottom: 6 }}>Cantidad</label>
-                    <input type="number" min="1" value={item.quantity} onChange={e => updateItem(i, 'quantity', Number(e.target.value))} style={{ ...baseFieldStyle, textAlign: 'center', padding: '10px 8px' }} />
+                    <input type="number" min="1" value={item.quantity} disabled={item.productType === 'VARIANT_SERIALIZED'} onChange={e => updateItem(i, 'quantity', Number(e.target.value))} style={{ ...(item.productType === 'VARIANT_SERIALIZED' ? mutedFieldStyle : baseFieldStyle), textAlign: 'center', padding: '10px 8px' }} />
                   </div>
                   <div>
                     <label style={{ display: 'block', marginBottom: 6 }}>Costo Unit.</label>
@@ -653,6 +942,69 @@ export default function PurchaseCreate() {
                     ))}
                   </div>
                 )}
+                {item.productType === 'VARIANT_SERIALIZED' && (
+                  <div style={{ marginTop: 5, display: 'grid', gap: 10 }}>
+                    <div style={{ padding: '10px 12px', borderRadius: 10, background: 'rgba(37,99,235,0.06)', border: '1px solid rgba(37,99,235,0.12)', fontSize: 12, color: '#1e3a8a' }}>
+                      La cantidad total se calcula automaticamente segun las unidades cargadas en cada variante. Primero elige la variante y luego registra el IMEI o la serie.
+                    </div>
+                    {!!item.variants?.length && (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8, alignItems: 'end' }}>
+                        <div>
+                          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Variante a recibir</div>
+                          <select
+                            value={item.selectedVariantId || item.variants[0]?.variantId || ''}
+                            onChange={e => updateItem(i, 'selectedVariantId', Number(e.target.value))}
+                            style={baseFieldStyle}
+                          >
+                            {item.variants.map(variant => (
+                              <option key={`${item.productId}-variant-selector-mobile-${variant.variantId}`} value={variant.variantId}>
+                                {buildVariantDisplayLabel(variant)}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => addVariantUnitById(i, Number(item.selectedVariantId || item.variants?.[0]?.variantId || 0))}
+                          style={{ border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', borderRadius: 10, padding: '10px 12px', minHeight: 44 }}
+                        >
+                          + Unidad
+                        </button>
+                      </div>
+                    )}
+                    {item.variants?.map((variant, variantIndex) => (
+                      <div key={`${item.productId}-variant-mobile-${variant.variantId}`} style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: 'var(--surface)', display: 'grid', gap: 8 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <div style={{ fontWeight: 700 }}>{buildVariantDisplayLabel(variant)}</div>
+                          <button type="button" onClick={() => addVariantUnit(i, variantIndex)} style={{ border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', borderRadius: 10, padding: '8px 10px' }}>
+                            + Unidad
+                          </button>
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                          {variant.identifierMode === 'IMEI' ? 'Modo IMEI' : 'Modo Serie'} {variant.sku ? `• SKU: ${variant.sku}` : ''}
+                        </div>
+                        {variant.units.length === 0 && (
+                          <div style={{ fontSize: 12, color: 'var(--muted)' }}>Sin unidades registradas.</div>
+                        )}
+                        {variant.units.map((unit, unitIndex) => (
+                          <div key={`${item.productId}-variant-mobile-${variant.variantId}-unit-${unitIndex}`} style={{ display: 'grid', gap: 6 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                              <div style={{ fontSize: 12, color: 'var(--muted)' }}>Unidad {unitIndex + 1}</div>
+                              <button type="button" onClick={() => removeVariantUnit(i, variantIndex, unitIndex)} style={{ color: '#ef4444', border: '1px solid rgba(239,68,68,0.25)', background: 'rgba(239,68,68,0.08)', borderRadius: 10, padding: '6px 10px' }}>
+                                Quitar
+                              </button>
+                            </div>
+                            {variant.identifierMode === 'IMEI' ? (
+                              <input placeholder={`IMEI #${unitIndex + 1}`} value={unit.imei} onChange={e => updateVariantUnit(i, variantIndex, unitIndex, 'imei', e.target.value)} style={{ ...baseFieldStyle, fontSize: '0.9em' }} />
+                            ) : (
+                              <input placeholder={`Serie #${unitIndex + 1}`} value={unit.serialNo} onChange={e => updateVariantUnit(i, variantIndex, unitIndex, 'serialNo', e.target.value)} style={{ ...baseFieldStyle, fontSize: '0.9em' }} />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
             {items.length === 0 && (
@@ -679,6 +1031,23 @@ export default function PurchaseCreate() {
                   <td style={{ padding: 10 }}>
                     <div style={{ fontWeight: 'bold' }}>{item.name}</div>
                     <div style={{ fontSize: '0.8em', opacity: 0.7 }}>{item.code}</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, marginBottom: 6 }}>
+                      <span style={{ fontSize: 11, padding: '4px 8px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--surface)' }}>
+                        {formatProductTypeLabel(item.productType)}
+                      </span>
+                      {String(item.productType || '').toUpperCase() === 'MEDICINAL' && (
+                        <span style={{ fontSize: 11, padding: '4px 8px', borderRadius: 999, border: '1px solid rgba(37,99,235,0.18)', background: 'rgba(37,99,235,0.08)', color: '#1d4ed8' }}>
+                          {formatTrackingProfileLabel(item.trackingProfile)}
+                        </span>
+                      )}
+                    </div>
+                    {String(item.productType || '').toUpperCase() === 'MEDICINAL' && buildTrackingSummary(item).length > 0 && (
+                        <div style={{ marginBottom: 8, padding: '8px 10px', borderRadius: 10, background: 'rgba(37,99,235,0.06)', border: '1px solid rgba(37,99,235,0.12)', display: 'grid', gap: 3 }}>
+                            {buildTrackingSummary(item).map(line => (
+                                <div key={line} style={{ fontSize: 11, color: '#1e3a8a' }}>{line}</div>
+                            ))}
+                        </div>
+                    )}
                     {/* Extra Fields based on Type */}
                     {item.productType === 'MEDICINAL' && (
                         <div style={{ marginTop: 5 }}>
@@ -751,6 +1120,87 @@ export default function PurchaseCreate() {
                             ))}
                         </div>
                     )}
+                    {item.productType === 'VARIANT_SERIALIZED' && (
+                        <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                            <div style={{ padding: '8px 10px', borderRadius: 10, background: 'rgba(37,99,235,0.06)', border: '1px solid rgba(37,99,235,0.12)', fontSize: 12, color: '#1e3a8a' }}>
+                                La cantidad se calcula automaticamente desde las unidades ingresadas en las variantes. Puedes elegir directamente a que variante se agregara cada unidad.
+                            </div>
+                            {!!item.variants?.length && (
+                                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) auto', gap: 8, alignItems: 'end' }}>
+                                    <div>
+                                        <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Variante a recibir</div>
+                                        <select
+                                            value={item.selectedVariantId || item.variants[0]?.variantId || ''}
+                                            onChange={e => updateItem(i, 'selectedVariantId', Number(e.target.value))}
+                                            style={{ ...baseFieldStyle, padding: 8, minHeight: undefined }}
+                                        >
+                                            {item.variants.map(variant => (
+                                                <option key={`${item.productId}-variant-selector-desktop-${variant.variantId}`} value={variant.variantId}>
+                                                    {buildVariantDisplayLabel(variant)}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => addVariantUnitById(i, Number(item.selectedVariantId || item.variants?.[0]?.variantId || 0))}
+                                        style={{ border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', borderRadius: 8, padding: '8px 12px', cursor: 'pointer' }}
+                                    >
+                                        + Unidad
+                                    </button>
+                                </div>
+                            )}
+                            {item.variants?.map((variant, variantIndex) => (
+                                <div key={`${item.productId}-variant-desktop-${variant.variantId}`} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, background: 'var(--surface)', display: 'grid', gap: 8 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                        <div>
+                                            <div style={{ fontWeight: 700 }}>{buildVariantDisplayLabel(variant)}</div>
+                                            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                                                {variant.identifierMode === 'IMEI' ? 'Modo IMEI' : 'Modo Serie'} {variant.sku ? `• SKU: ${variant.sku}` : ''}
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => addVariantUnit(i, variantIndex)}
+                                            style={{ border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', borderRadius: 8, padding: '6px 10px', cursor: 'pointer' }}
+                                        >
+                                            + Unidad
+                                        </button>
+                                    </div>
+                                    {variant.units.length === 0 && (
+                                        <div style={{ fontSize: 12, color: 'var(--muted)' }}>Sin unidades registradas.</div>
+                                    )}
+                                    {variant.units.map((unit, unitIndex) => (
+                                        <div key={`${item.productId}-variant-desktop-${variant.variantId}-unit-${unitIndex}`} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                            <div style={{ minWidth: 64, fontSize: 12, color: 'var(--muted)' }}>Unidad {unitIndex + 1}</div>
+                                            {variant.identifierMode === 'IMEI' ? (
+                                                <input
+                                                    placeholder={`IMEI #${unitIndex + 1}`}
+                                                    value={unit.imei}
+                                                    onChange={e => updateVariantUnit(i, variantIndex, unitIndex, 'imei', e.target.value)}
+                                                    style={{ flex: 1, padding: 4, fontSize: '0.9em', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+                                                />
+                                            ) : (
+                                                <input
+                                                    placeholder={`Serie #${unitIndex + 1}`}
+                                                    value={unit.serialNo}
+                                                    onChange={e => updateVariantUnit(i, variantIndex, unitIndex, 'serialNo', e.target.value)}
+                                                    style={{ flex: 1, padding: 4, fontSize: '0.9em', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+                                                />
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={() => removeVariantUnit(i, variantIndex, unitIndex)}
+                                                style={{ color: '#ef4444', border: '1px solid rgba(239,68,68,0.25)', background: 'rgba(239,68,68,0.08)', cursor: 'pointer', padding: '6px 10px', borderRadius: 8 }}
+                                            >
+                                                ✕
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            ))}
+                        </div>
+                    )}
                   </td>
                   <td style={{ padding: 10, verticalAlign: 'top' }}>
                     <input 
@@ -758,7 +1208,8 @@ export default function PurchaseCreate() {
                       min="1"
                       value={item.quantity}
                       onChange={e => updateItem(i, 'quantity', Number(e.target.value))}
-                      style={{ width: '100%', textAlign: 'center', padding: 4, borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+                      disabled={item.productType === 'VARIANT_SERIALIZED'}
+                      style={{ width: '100%', textAlign: 'center', padding: 4, borderRadius: 4, border: '1px solid var(--border)', background: item.productType === 'VARIANT_SERIALIZED' ? 'var(--surface)' : 'var(--bg)', color: 'var(--text)' }}
                     />
                   </td>
                   <td style={{ padding: 10 }}>
@@ -855,8 +1306,20 @@ export default function PurchaseCreate() {
                     <div>
                       <div style={{ fontWeight: 'bold' }}>{p.name}</div>
                       <div style={{ fontSize: '0.8em', opacity: 0.7 }}>
-                        {getProductIdentifierSummary(p)} - Stock: {p.stock}
+                        {getProductIdentifierSummary(p)} - Tipo: {formatProductTypeLabel(p.productType)} - Stock: {p.stock}
                       </div>
+                      {String(p.productType || '').toUpperCase() === 'MEDICINAL' && buildTrackingSummary(p).length > 0 && (
+                        <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          <span style={{ fontSize: 11, padding: '4px 8px', borderRadius: 999, border: '1px solid rgba(37,99,235,0.18)', background: 'rgba(37,99,235,0.08)', color: '#1d4ed8' }}>
+                            {formatTrackingProfileLabel(p.trackingProfile)}
+                          </span>
+                          {buildTrackingSummary(p).slice(0, 3).map(line => (
+                            <span key={line} style={{ fontSize: 11, padding: '4px 8px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}>
+                              {line}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div style={{ color: 'var(--accent)', fontWeight: 700 }}>+ Agregar</div>
                   </button>

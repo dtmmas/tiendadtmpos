@@ -8,10 +8,11 @@ import { formatCompanyName } from '../utils/text'
 export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { user, logout, hasPermission, canSell } = useAuthStore()
+  const { user, logout, hasPermission, hasExplicitPermission, canSell } = useAuthStore()
   const config = useConfigStore(s => s.config)
-  const { mode, setMode, color, setColor } = useThemeStore()
+  const { mode, theme, setMode, color, setColor } = useThemeStore()
   const companyName = formatCompanyName(config?.name)
+  const [storeEnabled, setStoreEnabled] = useState(config?.storeEnabled === true)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [themePaletteOpen, setThemePaletteOpen] = useState(false)
   const [mobileMenuSections, setMobileMenuSections] = useState<Record<string, boolean>>({
@@ -21,11 +22,23 @@ export default function Layout() {
     inventario: false,
     almacenes: false,
     reportes: false,
+    ecommerce: false,
+    rootcore: false,
     sistema: false
   })
   const themePaletteRef = useRef<HTMLDivElement | null>(null)
   const closeMobileMenu = () => setMobileMenuOpen(false)
   const currentThemeOption = THEME_COLOR_OPTIONS.find((option) => option.value === color) ?? THEME_COLOR_OPTIONS[0]
+  const isAdmin = String(user?.role || '').toUpperCase() === 'ADMIN'
+  const isRootOperator = ['ROOT', 'SUPERUSUARIO'].includes(String(user?.role || '').toUpperCase()) && hasExplicitPermission('root:access')
+  const normalizedUserName = String(user?.name || '').trim().toUpperCase()
+  const normalizedUserRole = String(user?.role || '').trim().toUpperCase()
+  const showRoleText = !isAdmin && Boolean(normalizedUserRole) && !normalizedUserName.includes(normalizedUserRole)
+
+  useEffect(() => {
+    setStoreEnabled(config?.storeEnabled === true)
+  }, [config?.storeEnabled])
+
 
   useEffect(() => {
     setMobileMenuOpen(false)
@@ -74,10 +87,10 @@ export default function Layout() {
     }
   }, [themePaletteOpen])
 
-  const isAdmin = String(user?.role || '').toUpperCase() === 'ADMIN'
   const canManageProducts = String(user?.role || '').toUpperCase() === 'ADMIN' || hasPermission('products:write')
   const productsMenuLabel = canManageProducts ? 'Productos' : 'Catalogo de productos'
-  const defaultHomePath = isAdmin ? '/dashboard' : '/products'
+  const defaultHomePath = isAdmin ? '/dashboard' : (isRootOperator ? '/root-core' : '/products')
+  const showSystemMenu = hasPermission('config:read') || hasPermission('logs:read') || hasPermission('users:read') || hasPermission('roles:read')
 
   const openPOSWindow = (event?: React.MouseEvent<HTMLButtonElement>) => {
     event?.preventDefault()
@@ -183,6 +196,14 @@ export default function Layout() {
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="3"></circle>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        )
+      case 'globe':
+        return (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M2 12h20"></path>
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
           </svg>
         )
       case 'user':
@@ -386,7 +407,7 @@ export default function Layout() {
           )}
 
           {/* Warehouses Group */}
-          {(hasPermission('shelves:read') || hasPermission('warehouses:read') || true) && ( // Assuming permissions, defaulting to true if specific perm missing in store
+          {(hasPermission('shelves:read') || hasPermission('warehouses:read')) && (
           <div className="nav-group">
             <button className="nav-trigger" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -423,6 +444,38 @@ export default function Layout() {
             </div>
           )}
 
+          {isAdmin && storeEnabled && (
+            <div className="nav-group">
+              <button className="nav-trigger" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <path d="M2 12h20"></path>
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                </svg>
+                <span>TIENDA EN LÍNEA</span>
+              </button>
+              <div className="nav-panel">
+                <Link to="/store-admin">Configuración web</Link>
+                <Link to="/tienda">Ver tienda pública</Link>
+              </div>
+            </div>
+          )}
+
+          {isRootOperator && (
+            <div className="nav-group">
+              <button className="nav-trigger" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7l7-4z"></path>
+                </svg>
+                <span>ROOT CORE</span>
+              </button>
+              <div className="nav-panel">
+                <Link to="/root-core">Control root</Link>
+              </div>
+            </div>
+          )}
+
+          {showSystemMenu && (
           <div className="nav-group">
             <button className="nav-trigger" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -438,43 +491,39 @@ export default function Layout() {
               {hasPermission('roles:read') && <Link to="/roles">Roles</Link>}
             </div>
           </div>
+          )}
         </nav>
         <div className="header-actions">
-          <div className="theme-controls">
-            <div className="view-toggle" aria-label="Selector de modo de tema">
-              <button className={`toggle-btn ${mode === 'light' ? 'active' : ''}`} onClick={() => setMode('light')}>Claro</button>
-              <button className={`toggle-btn ${mode === 'dark' ? 'active' : ''}`} onClick={() => setMode('dark')}>Oscuro</button>
-              <button className={`toggle-btn ${mode === 'system' ? 'active' : ''}`} onClick={() => setMode('system')}>Sistema</button>
-            </div>
-            <div className="theme-palette-dropdown theme-palette-scope" ref={themePaletteRef}>
-              <button
-                type="button"
-                className={`theme-palette-trigger${themePaletteOpen ? ' open' : ''}`}
-                onClick={() => setThemePaletteOpen((prev) => !prev)}
-                aria-expanded={themePaletteOpen}
-                aria-label="Abrir paleta de colores"
-              >
-                <span className="theme-palette-trigger-main">
-                  <span className="theme-color-dot" style={{ background: currentThemeOption.preview }} />
-                  <span className="theme-palette-trigger-label">Color</span>
-                  <span className="theme-palette-trigger-value">{currentThemeOption.label}</span>
-                </span>
-                <span className={`theme-palette-chevron${themePaletteOpen ? ' open' : ''}`}>
+          <div className="user">
+            <div className="user-info">
+              {!isAdmin && (
+                <span className="user-info-icon" aria-hidden="true">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="6 9 12 15 18 9"></polyline>
+                    <path d="M20 21a8 8 0 1 0-16 0"></path>
+                    <circle cx="12" cy="7" r="4"></circle>
                   </svg>
                 </span>
-              </button>
-              {themePaletteOpen && (
-                <div className="theme-palette-menu">
-                  {renderThemePalette()}
-                </div>
               )}
+              <span>{user?.name}</span>
+              <span className="user-role-badge" title={user?.role || 'Rol'}>
+                <span className="user-role-icon" aria-hidden="true">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7l7-4z"></path>
+                  </svg>
+                </span>
+                {showRoleText && <span>{user?.role}</span>}
+              </span>
             </div>
-          </div>
-          <div className="user">
-            <span>{user?.name} ({user?.role})</span>
-            <button onClick={logout}>Salir</button>
+            <button onClick={logout}>
+              <span aria-hidden="true">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                  <polyline points="16 17 21 12 16 7"></polyline>
+                  <line x1="21" y1="12" x2="9" y2="12"></line>
+                </svg>
+              </span>
+              <span>Salir</span>
+            </button>
           </div>
           <button
             type="button"
@@ -553,7 +602,7 @@ export default function Layout() {
                   ))
                 )}
 
-                {(hasPermission('shelves:read') || hasPermission('warehouses:read') || true) && (
+                {(hasPermission('shelves:read') || hasPermission('warehouses:read')) && (
                   renderMobileMenuSection('almacenes', 'Almacenes', 'warehouse', (
                     <>
                       {renderMobileMenuLinkCard('/warehouses', 'Almacenes', 'Tiendas y bodegas', 'warehouse')}
@@ -577,7 +626,24 @@ export default function Layout() {
                   ))
                 )}
 
-                {renderMobileMenuSection('sistema', 'Sistema', 'settings', (
+                {isAdmin && storeEnabled && (
+                  renderMobileMenuSection('ecommerce', 'Tienda en línea', 'globe', (
+                    <>
+                      {renderMobileMenuLinkCard('/store-admin', 'Configuración web', 'Funciones y switches del ecommerce', 'globe')}
+                      {renderMobileMenuLinkCard('/tienda', 'Ver tienda pública', 'Abrir catálogo web actual', 'globe')}
+                    </>
+                  ))
+                )}
+
+                {isRootOperator && (
+                  renderMobileMenuSection('rootcore', 'Root Core', 'settings', (
+                    <>
+                      {renderMobileMenuLinkCard('/root-core', 'Control root', 'Funciones core exclusivas', 'settings')}
+                    </>
+                  ))
+                )}
+
+                {showSystemMenu && renderMobileMenuSection('sistema', 'Sistema', 'settings', (
                   <>
                     {hasPermission('config:read') && renderMobileMenuLinkCard('/config', 'Config', 'Ajustes del sistema', 'settings')}
                     {hasPermission('logs:read') && renderMobileMenuLinkCard('/logs', 'Logs', 'Registro de eventos', 'settings')}
@@ -587,46 +653,30 @@ export default function Layout() {
                 ))}
               </div>
 
-              <div className="mobile-theme-panel theme-palette-scope">
-                <div className="mobile-theme-panel-header">
-                  <div className="mobile-theme-panel-title">Tema visual</div>
-                  <div className="mobile-theme-panel-subtitle">Combina modo y color del sistema</div>
-                </div>
-                <div className="view-toggle mobile-view-toggle" aria-label="Selector de modo de tema">
-                  <button className={`toggle-btn ${mode === 'light' ? 'active' : ''}`} onClick={() => setMode('light')}>Claro</button>
-                  <button className={`toggle-btn ${mode === 'dark' ? 'active' : ''}`} onClick={() => setMode('dark')}>Oscuro</button>
-                  <button className={`toggle-btn ${mode === 'system' ? 'active' : ''}`} onClick={() => setMode('system')}>Sistema</button>
-                </div>
-                <button
-                  type="button"
-                  className={`theme-palette-mobile-trigger${themePaletteOpen ? ' open' : ''}`}
-                  onClick={() => setThemePaletteOpen((prev) => !prev)}
-                  aria-expanded={themePaletteOpen}
-                >
-                  <span className="theme-palette-trigger-main">
-                    <span className="theme-color-dot" style={{ background: currentThemeOption.preview }} />
-                    <span className="theme-palette-trigger-label">Paleta</span>
-                    <span className="theme-palette-trigger-value">{currentThemeOption.label}</span>
-                  </span>
-                  <span className={`theme-palette-chevron${themePaletteOpen ? ' open' : ''}`}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="6 9 12 15 18 9"></polyline>
-                    </svg>
-                  </span>
-                </button>
-                {themePaletteOpen && renderThemePalette(true)}
-              </div>
-
               <div className="mobile-menu-session">
                 <div className="mobile-menu-session-info">
-                  <span className="mobile-menu-card-icon">{renderMobileMenuIcon('user')}</span>
+                  {!isAdmin && <span className="mobile-menu-card-icon">{renderMobileMenuIcon('user')}</span>}
                   <div>
                     <div className="mobile-menu-session-name">{user?.name}</div>
-                    <div className="mobile-menu-session-role">{user?.role}</div>
+                    <div className="mobile-menu-session-role" title={user?.role || 'Rol'}>
+                      <span className="user-role-icon" aria-hidden="true">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7l7-4z"></path>
+                        </svg>
+                      </span>
+                      {showRoleText && <span>{user?.role}</span>}
+                    </div>
                   </div>
                 </div>
                 <button type="button" className="mobile-menu-session-logout" onClick={() => { logout(); closeMobileMenu() }}>
-                  Salir
+                  <span aria-hidden="true">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                      <polyline points="16 17 21 12 16 7"></polyline>
+                      <line x1="21" y1="12" x2="9" y2="12"></line>
+                    </svg>
+                  </span>
+                  <span>Salir</span>
                 </button>
               </div>
             </div>
@@ -636,6 +686,79 @@ export default function Layout() {
       <main className="main">
         <Outlet />
       </main>
+      <div className="floating-theme theme-palette-scope" ref={themePaletteRef}>
+        {themePaletteOpen && (
+          <div className="floating-theme-panel">
+            <div className="floating-theme-panel-header">
+              <div className="floating-theme-panel-title">Tema visual</div>
+              <div className="floating-theme-panel-subtitle">Modo claro u oscuro y color del sistema</div>
+            </div>
+            <div className="view-toggle floating-theme-toggle" aria-label="Selector de modo de tema">
+              <button
+                className={`toggle-btn icon-toggle-btn ${theme === 'light' ? 'active' : ''}`}
+                onClick={() => setMode('light')}
+                aria-label="Usar tema claro"
+                title="Tema claro"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="4"></circle>
+                  <path d="M12 2v2"></path>
+                  <path d="M12 20v2"></path>
+                  <path d="m4.93 4.93 1.41 1.41"></path>
+                  <path d="m17.66 17.66 1.41 1.41"></path>
+                  <path d="M2 12h2"></path>
+                  <path d="M20 12h2"></path>
+                  <path d="m6.34 17.66-1.41 1.41"></path>
+                  <path d="m19.07 4.93-1.41 1.41"></path>
+                </svg>
+              </button>
+              <button
+                className={`toggle-btn icon-toggle-btn ${theme === 'dark' ? 'active' : ''}`}
+                onClick={() => setMode('dark')}
+                aria-label="Usar tema oscuro"
+                title="Tema oscuro"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 3a6 6 0 1 0 9 9 9 9 0 1 1-9-9z"></path>
+                </svg>
+              </button>
+            </div>
+            {renderThemePalette()}
+          </div>
+        )}
+        <button
+          type="button"
+          className={`floating-theme-trigger${themePaletteOpen ? ' open' : ''}`}
+          onClick={() => setThemePaletteOpen((prev) => !prev)}
+          aria-expanded={themePaletteOpen}
+          aria-label="Cambiar tema del sistema"
+          title="Cambiar tema del sistema"
+        >
+          <span className="floating-theme-trigger-icon">
+            {theme === 'dark' ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 3a6 6 0 1 0 9 9 9 9 0 1 1-9-9z"></path>
+              </svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="4"></circle>
+                <path d="M12 2v2"></path>
+                <path d="M12 20v2"></path>
+                <path d="m4.93 4.93 1.41 1.41"></path>
+                <path d="m17.66 17.66 1.41 1.41"></path>
+                <path d="M2 12h2"></path>
+                <path d="M20 12h2"></path>
+                <path d="m6.34 17.66-1.41 1.41"></path>
+                <path d="m19.07 4.93-1.41 1.41"></path>
+              </svg>
+            )}
+          </span>
+          <span className="floating-theme-trigger-text">
+            <span className="floating-theme-trigger-label">Tema</span>
+            <span className="floating-theme-trigger-value">{theme === 'dark' ? 'Oscuro' : 'Claro'}</span>
+          </span>
+        </button>
+      </div>
     </div>
   )
 }

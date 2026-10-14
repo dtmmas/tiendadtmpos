@@ -27,9 +27,10 @@ CREATE TABLE IF NOT EXISTS system_config (
   id INT PRIMARY KEY,
   name VARCHAR(120) NOT NULL,
   currency VARCHAR(8) NOT NULL,
-  logo_url VARCHAR(255)
+  logo_url VARCHAR(255),
+  enabled_product_types TEXT NULL
 );
-INSERT IGNORE INTO system_config (id, name, currency, logo_url) VALUES (1,'DTMPos','Q.',NULL);
+INSERT IGNORE INTO system_config (id, name, currency, logo_url, enabled_product_types) VALUES (1,'DTMPos','Q.',NULL,'["GENERAL","MEDICINAL","IMEI","SERIAL","VARIANT_SERIALIZED"]');
 
 -- Proveedores y Clientes
 CREATE TABLE IF NOT EXISTS suppliers (
@@ -186,11 +187,26 @@ SET @col_exists := (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_
 SET @stmt := IF(@col_exists = 0, 'ALTER TABLE products ADD COLUMN shelf_location VARCHAR(100) NULL', 'SELECT 1');
 PREPARE s15 FROM @stmt; EXECUTE s15; DEALLOCATE PREPARE s15;
 
+-- Asegurar columna tracking_profile para productos con lotes/vencimiento
+SET @col_exists := (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'tracking_profile');
+SET @stmt := IF(@col_exists = 0, 'ALTER TABLE products ADD COLUMN tracking_profile VARCHAR(20) NULL', 'SELECT 1');
+PREPARE s16 FROM @stmt; EXECUTE s16; DEALLOCATE PREPARE s16;
+
+-- Asegurar columna tracking_meta para datos variables por rubro
+SET @col_exists := (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'tracking_meta');
+SET @stmt := IF(@col_exists = 0, 'ALTER TABLE products ADD COLUMN tracking_meta TEXT NULL', 'SELECT 1');
+PREPARE s17 FROM @stmt; EXECUTE s17; DEALLOCATE PREPARE s17;
+
+-- Asegurar columna enabled_product_types en configuracion general
+SET @col_exists := (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'system_config' AND COLUMN_NAME = 'enabled_product_types');
+SET @stmt := IF(@col_exists = 0, 'ALTER TABLE system_config ADD COLUMN enabled_product_types TEXT NULL', 'SELECT 1');
+PREPARE s18 FROM @stmt; EXECUTE s18; DEALLOCATE PREPARE s18;
+
 -- (Eliminado: columnas store_stock y warehouse_stock en products)
 
 -- Tablas para productos especializados
 
--- Lotes para productos medicinales
+-- Lotes para productos con vencimiento y lotes
 CREATE TABLE IF NOT EXISTS product_batches (
   id INT AUTO_INCREMENT PRIMARY KEY,
   product_id INT NOT NULL,
@@ -225,11 +241,36 @@ CREATE TABLE IF NOT EXISTS product_variants (
   product_id INT NOT NULL,
   name VARCHAR(160) NOT NULL,
   sku VARCHAR(80) UNIQUE,
+  color VARCHAR(60) NULL,
+  ram VARCHAR(60) NULL,
+  storage VARCHAR(60) NULL,
+  carrier VARCHAR(60) NULL,
+  sim_type VARCHAR(60) NULL,
+  identifier_mode VARCHAR(20) NOT NULL DEFAULT 'IMEI',
+  variant_meta TEXT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
   stock INT NOT NULL DEFAULT 0,
   price DECIMAL(12,2) NOT NULL DEFAULT 0,
   cost DECIMAL(12,2) NOT NULL DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS product_variant_units (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  product_id INT NOT NULL,
+  variant_id INT NOT NULL,
+  imei VARCHAR(50) NULL,
+  serial_no VARCHAR(100) NULL,
+  warehouse_id INT NOT NULL DEFAULT 1,
+  status VARCHAR(16) NOT NULL DEFAULT 'AVAILABLE',
+  unit_meta TEXT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_variant_unit_imei (imei),
+  UNIQUE KEY uniq_variant_unit_serial (serial_no),
+  FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+  FOREIGN KEY (variant_id) REFERENCES product_variants(id) ON DELETE CASCADE,
+  FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
 );
 
 -- (Eliminado: tabla 'almacen')

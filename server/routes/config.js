@@ -23,11 +23,66 @@ const restoreUpload = multer({
   }
 })
 const execFileAsync = promisify(execFile)
+const DEFAULT_ENABLED_PRODUCT_TYPES = ['GENERAL', 'MEDICINAL', 'IMEI', 'SERIAL', 'VARIANT_SERIALIZED']
+
+function normalizeEnabledProductTypes(input) {
+  let values = input
+  if (typeof values === 'string') {
+    try {
+      values = JSON.parse(values)
+    } catch {
+      values = values.split(',').map(item => item.trim()).filter(Boolean)
+    }
+  }
+
+  const allowed = new Set(DEFAULT_ENABLED_PRODUCT_TYPES)
+  const normalized = Array.isArray(values)
+    ? values
+      .map(value => String(value || '').trim().toUpperCase())
+      .filter(value => allowed.has(value))
+    : []
+
+  const unique = [...new Set(normalized)]
+  return unique.length > 0 ? unique : ['GENERAL']
+}
+
+function parseStoredEnabledProductTypes(raw) {
+  if (!raw) return [...DEFAULT_ENABLED_PRODUCT_TYPES]
+  try {
+    return normalizeEnabledProductTypes(JSON.parse(raw))
+  } catch {
+    return normalizeEnabledProductTypes(raw)
+  }
+}
+
+async function getStoreEnabled(pool) {
+  try {
+    const [rows] = await pool.query('SELECT enabled FROM store_settings WHERE id = 1 LIMIT 1')
+    return Boolean(Number(rows?.[0]?.enabled ?? 1))
+  } catch {
+    return true
+  }
+}
+
+async function ensureConfigColumns(pool) {
+  const [rows] = await pool.query(
+    `SELECT COLUMN_NAME
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'system_config'
+       AND COLUMN_NAME IN ('enabled_product_types')`
+  )
+  const existing = new Set((rows || []).map(row => String(row.COLUMN_NAME || '').toLowerCase()))
+  if (!existing.has('enabled_product_types')) {
+    await pool.query('ALTER TABLE system_config ADD COLUMN enabled_product_types TEXT NULL AFTER logo_url')
+    await pool.query('UPDATE system_config SET enabled_product_types = ? WHERE id = 1 AND (enabled_product_types IS NULL OR enabled_product_types = \'\')', [JSON.stringify(DEFAULT_ENABLED_PRODUCT_TYPES)])
+  }
+}
 
 function ensureSeed() {
   if (!fs.existsSync(cfgPath)) {
     fs.mkdirSync(path.dirname(cfgPath), { recursive: true })
-    const seed = { name: 'DTMPos', currency: 'USD', logoUrl: 'https://placehold.co/64x64?text=LOGO' }
+    const seed = { name: 'DTMPos', currency: 'USD', logoUrl: 'https://placehold.co/64x64?text=LOGO', enabledProductTypes: DEFAULT_ENABLED_PRODUCT_TYPES }
     fs.writeFileSync(cfgPath, JSON.stringify(seed, null, 2))
   }
 }
@@ -361,13 +416,25 @@ router.get('/', async (req, res) => {
   try {
     const pool = await getPool()
     if (pool) {
-      const [rows] = await pool.query('SELECT id, name, currency, logo_url FROM system_config WHERE id = 1 LIMIT 1')
+      await ensureConfigColumns(pool)
+      const [rows] = await pool.query('SELECT id, name, currency, logo_url, enabled_product_types FROM system_config WHERE id = 1 LIMIT 1')
       const row = rows?.[0]
-      if (!row) return res.json({ name: 'DTMPos', currency: 'USD', logoUrl: '' })
-      return res.json({ name: row.name, currency: row.currency, logoUrl: row.logo_url || '' })
+      const storeEnabled = await getStoreEnabled(pool)
+      if (!row) return res.json({ name: 'DTMPos', currency: 'USD', logoUrl: '', enabledProductTypes: DEFAULT_ENABLED_PRODUCT_TYPES, storeEnabled })
+      return res.json({
+        name: row.name,
+        currency: row.currency,
+        logoUrl: row.logo_url || '',
+        enabledProductTypes: parseStoredEnabledProductTypes(row.enabled_product_types),
+        storeEnabled
+      })
     }
     const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
-    return res.json(cfg)
+    return res.json({
+      ...cfg,
+      enabledProductTypes: normalizeEnabledProductTypes(cfg?.enabledProductTypes || DEFAULT_ENABLED_PRODUCT_TYPES),
+      storeEnabled: cfg?.storeEnabled === undefined ? true : Boolean(cfg.storeEnabled)
+    })
   } catch (err) {
     console.error('Config GET error:', err)
     return res.status(500).json({ error: 'Server error' })
@@ -506,6 +573,7 @@ router.put('/', authMiddleware, roleMiddleware(['ADMIN']), upload.single('logo')
     const file = req.file
     const pool = await getPool()
     if (pool) {
+      await ensureConfigColumns(pool)
       const [rows] = await pool.query('SELECT logo_url FROM system_config WHERE id = 1 LIMIT 1')
       const current = rows?.[0]
       const nextLogo = file ? `/uploads/${file.filename}` : (req.body.logoUrl || current?.logo_url || null)
