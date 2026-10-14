@@ -46,6 +46,13 @@ async function ensureStoreFeatureColumns(pool) {
     ['banner_product_id_4', "ALTER TABLE store_settings ADD COLUMN banner_product_id_4 INT NULL DEFAULT NULL AFTER banner_product_id_3"],
     ['online_price_mode', "ALTER TABLE store_settings ADD COLUMN online_price_mode VARCHAR(30) NOT NULL DEFAULT 'PRICE3' AFTER banner_product_id_4"],
     ['online_cost_adjustment_percent', "ALTER TABLE store_settings ADD COLUMN online_cost_adjustment_percent DECIMAL(8,2) NOT NULL DEFAULT 0 AFTER online_price_mode"],
+    ['currency', "ALTER TABLE store_settings ADD COLUMN currency VARCHAR(8) NOT NULL DEFAULT 'GTQ' AFTER online_cost_adjustment_percent"],
+    ['online_warehouse_id', "ALTER TABLE store_settings ADD COLUMN online_warehouse_id INT NOT NULL DEFAULT 1 AFTER currency"],
+    ['cutoff_time', "ALTER TABLE store_settings ADD COLUMN cutoff_time TIME NOT NULL DEFAULT '11:00:00' AFTER online_warehouse_id"],
+    ['accept_after_cutoff', "ALTER TABLE store_settings ADD COLUMN accept_after_cutoff VARCHAR(20) NOT NULL DEFAULT 'SCHEDULE' AFTER cutoff_time"],
+    ['pickup_enabled', "ALTER TABLE store_settings ADD COLUMN pickup_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER accept_after_cutoff"],
+    ['delivery_enabled', "ALTER TABLE store_settings ADD COLUMN delivery_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER pickup_enabled"],
+    ['pickup_notes', "ALTER TABLE store_settings ADD COLUMN pickup_notes TEXT NULL AFTER delivery_enabled"],
   ]
 
   for (const [columnName, statement] of requiredColumns) {
