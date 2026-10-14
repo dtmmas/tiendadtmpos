@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useConfigStore } from '../store/config'
 import { formatCompanyName } from '../utils/text'
 import { resolveUploadedAssetUrl } from '../utils/assets'
+import { useStorePublicRouting } from '../hooks/useStorePublicRouting'
 import '../styles/store-public.css'
 
 const RESIDENTIAL_PLANS = [
@@ -55,6 +56,7 @@ const RESIDENTIAL_PLANS = [
 
 export default function StoreResidentialPlans() {
   const config = useConfigStore(s => s.config)
+  const { buildStorePath } = useStorePublicRouting()
 
   const title = useMemo(() => formatCompanyName(config?.name || 'TIENDA'), [config?.name])
   const topbarLogoUrl = useMemo(() => {
@@ -82,11 +84,11 @@ export default function StoreResidentialPlans() {
           </div>
 
           <nav className="store-market-links store-market-links-header">
-            <Link to="/tienda">Inicio</Link>
-            <Link to="/tienda/catalogo">Tienda</Link>
-            <Link to="/internet-residencial" className="store-market-link-active">Internet residencial</Link>
-            <Link to="/tienda#store-categories">Categorías</Link>
-            <Link to="/tienda#store-brands">Marcas</Link>
+            <Link to={buildStorePath()}>Inicio</Link>
+            <Link to={buildStorePath('/catalogo')}>Tienda</Link>
+            <Link to={buildStorePath('/internet-residencial')} className="store-market-link-active">Internet residencial</Link>
+            <Link to={`${buildStorePath()}#store-categories`}>Categorías</Link>
+            <Link to={`${buildStorePath()}#store-brands`}>Marcas</Link>
           </nav>
 
           <div className="store-market-search store-market-search-static">

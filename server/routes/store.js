@@ -3,6 +3,7 @@ import { authMiddleware, roleMiddleware } from '../auth.js'
 import { getPool } from '../db.js'
 import { ensureSalesSchema } from './sales.js'
 import { registerMovement } from '../services/inventory.js'
+import { buildStorePublicBasePath, DEFAULT_STORE_PUBLIC_SLUG, validateStorePublicSlug } from '../services/store_public_link.js'
 
 const router = express.Router()
 
@@ -53,6 +54,7 @@ async function ensureStoreFeatureColumns(pool) {
     ['pickup_enabled', "ALTER TABLE store_settings ADD COLUMN pickup_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER accept_after_cutoff"],
     ['delivery_enabled', "ALTER TABLE store_settings ADD COLUMN delivery_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER pickup_enabled"],
     ['pickup_notes', "ALTER TABLE store_settings ADD COLUMN pickup_notes TEXT NULL AFTER delivery_enabled"],
+    ['public_slug', `ALTER TABLE store_settings ADD COLUMN public_slug VARCHAR(60) NOT NULL DEFAULT '${DEFAULT_STORE_PUBLIC_SLUG}' AFTER pickup_notes`],
   ]
 
   for (const [columnName, statement] of requiredColumns) {
@@ -115,6 +117,33 @@ function normalizeOnlineAdjustmentPercent(value) {
   const numeric = Number(value)
   if (!Number.isFinite(numeric)) return 0
   return Math.max(-99.99, Math.min(9999.99, roundCurrency(numeric)))
+}
+
+function serializeStoreSettings(settings) {
+  const publicSlugValidation = validateStorePublicSlug(settings?.public_slug || DEFAULT_STORE_PUBLIC_SLUG)
+  const publicSlug = publicSlugValidation.slug || DEFAULT_STORE_PUBLIC_SLUG
+  const publicPath = buildStorePublicBasePath(publicSlug)
+  return {
+    currency: settings?.currency || 'GTQ',
+    enabled: Boolean(Number(settings?.enabled ?? 1)),
+    catalogEnabled: Boolean(Number(settings?.catalog_enabled ?? 1)),
+    cartEnabled: Boolean(Number(settings?.cart_enabled ?? 1)),
+    checkoutEnabled: Boolean(Number(settings?.checkout_enabled ?? 1)),
+    favoritesEnabled: Boolean(Number(settings?.favorites_enabled ?? 1)),
+    recommendationsEnabled: Boolean(Number(settings?.recommendations_enabled ?? 1)),
+    bannerProductIds: getBannerProductIds(settings),
+    onlinePricingMode: normalizeOnlinePricingMode(settings?.online_price_mode),
+    onlineCostAdjustmentPercent: Number(settings?.online_cost_adjustment_percent || 0),
+    warehouseId: Number(settings?.online_warehouse_id || 1),
+    onlineWarehouseId: Number(settings?.online_warehouse_id || 1),
+    cutoffTime: String(settings?.cutoff_time || '11:00:00'),
+    acceptAfterCutoff: String(settings?.accept_after_cutoff || 'SCHEDULE'),
+    pickupEnabled: Boolean(Number(settings?.pickup_enabled ?? 1)),
+    deliveryEnabled: Boolean(Number(settings?.delivery_enabled ?? 1)),
+    pickupNotes: settings?.pickup_notes || '',
+    publicSlug,
+    publicPath,
+  }
 }
 
 function normalizeProductPricingOverrides(input) {
@@ -279,13 +308,15 @@ async function getSettings(pool) {
     pickup_enabled TINYINT(1) NOT NULL DEFAULT 1,
     delivery_enabled TINYINT(1) NOT NULL DEFAULT 1,
     pickup_notes TEXT NULL,
+    public_slug VARCHAR(60) NOT NULL DEFAULT '${DEFAULT_STORE_PUBLIC_SLUG}',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
   )`)
   await ensureStoreFeatureColumns(pool)
   await pool.query(
-    `INSERT IGNORE INTO store_settings (id, enabled, catalog_enabled, cart_enabled, checkout_enabled, favorites_enabled, recommendations_enabled, banner_product_id, currency, online_warehouse_id, cutoff_time, accept_after_cutoff, pickup_enabled, delivery_enabled)
-     VALUES (1, 1, 1, 1, 1, 1, 1, NULL, 'GTQ', 1, '11:00:00', 'SCHEDULE', 1, 1)`
+    `INSERT IGNORE INTO store_settings (id, enabled, catalog_enabled, cart_enabled, checkout_enabled, favorites_enabled, recommendations_enabled, banner_product_id, currency, online_warehouse_id, cutoff_time, accept_after_cutoff, pickup_enabled, delivery_enabled, public_slug)
+     VALUES (1, 1, 1, 1, 1, 1, 1, NULL, 'GTQ', 1, '11:00:00', 'SCHEDULE', 1, 1, ?)`,
+    [DEFAULT_STORE_PUBLIC_SLUG]
   )
   const [rows] = await pool.query('SELECT * FROM store_settings WHERE id = 1 LIMIT 1')
   const settings = rows?.[0] || null
@@ -315,6 +346,7 @@ async function getSettings(pool) {
     pickup_enabled: 1,
     delivery_enabled: 1,
     pickup_notes: '',
+    public_slug: DEFAULT_STORE_PUBLIC_SLUG,
   }
 }
 
@@ -386,25 +418,7 @@ router.get('/settings', async (req, res) => {
   try {
     const pool = await getPool()
     const settings = await getSettings(pool)
-    const bannerProductIds = getBannerProductIds(settings)
-    return res.json({
-      currency: settings?.currency || 'GTQ',
-      enabled: Boolean(Number(settings?.enabled ?? 1)),
-      catalogEnabled: Boolean(Number(settings?.catalog_enabled ?? 1)),
-      cartEnabled: Boolean(Number(settings?.cart_enabled ?? 1)),
-      checkoutEnabled: Boolean(Number(settings?.checkout_enabled ?? 1)),
-      favoritesEnabled: Boolean(Number(settings?.favorites_enabled ?? 1)),
-      recommendationsEnabled: Boolean(Number(settings?.recommendations_enabled ?? 1)),
-      bannerProductIds,
-      onlinePricingMode: normalizeOnlinePricingMode(settings?.online_price_mode),
-      onlineCostAdjustmentPercent: Number(settings?.online_cost_adjustment_percent || 0),
-      warehouseId: Number(settings?.online_warehouse_id || 1),
-      cutoffTime: String(settings?.cutoff_time || '11:00:00'),
-      acceptAfterCutoff: String(settings?.accept_after_cutoff || 'SCHEDULE'),
-      pickupEnabled: Boolean(Number(settings?.pickup_enabled ?? 1)),
-      deliveryEnabled: Boolean(Number(settings?.delivery_enabled ?? 1)),
-      pickupNotes: settings?.pickup_notes || '',
-    })
+    return res.json(serializeStoreSettings(settings))
   } catch (err) {
     console.error('Store settings error:', err)
     return res.status(500).json({ error: 'Server error' })
@@ -938,24 +952,10 @@ router.get('/admin/settings', authMiddleware, roleMiddleware(['ADMIN']), async (
   try {
     const pool = await getPool()
     const settings = await getSettings(pool)
-    const bannerProductIds = getBannerProductIds(settings)
+    const serialized = serializeStoreSettings(settings)
     return res.json({
-      currency: settings?.currency || 'GTQ',
-      catalogEnabled: Boolean(Number(settings?.catalog_enabled ?? 1)),
-      cartEnabled: Boolean(Number(settings?.cart_enabled ?? 1)),
-      checkoutEnabled: Boolean(Number(settings?.checkout_enabled ?? 1)),
-      favoritesEnabled: Boolean(Number(settings?.favorites_enabled ?? 1)),
-      recommendationsEnabled: Boolean(Number(settings?.recommendations_enabled ?? 1)),
-      bannerProductId: bannerProductIds[0] || null,
-      bannerProductIds,
-      onlinePricingMode: normalizeOnlinePricingMode(settings?.online_price_mode),
-      onlineCostAdjustmentPercent: Number(settings?.online_cost_adjustment_percent || 0),
-      onlineWarehouseId: Number(settings?.online_warehouse_id || 1),
-      cutoffTime: String(settings?.cutoff_time || '11:00:00'),
-      acceptAfterCutoff: String(settings?.accept_after_cutoff || 'SCHEDULE'),
-      pickupEnabled: Boolean(Number(settings?.pickup_enabled ?? 1)),
-      deliveryEnabled: Boolean(Number(settings?.delivery_enabled ?? 1)),
-      pickupNotes: settings?.pickup_notes || '',
+      ...serialized,
+      bannerProductId: serialized.bannerProductIds[0] || null,
     })
   } catch (err) {
     console.error('Store admin settings error:', err)
@@ -995,33 +995,24 @@ router.put('/admin/settings', authMiddleware, roleMiddleware(['ADMIN']), async (
     const pickupEnabled = body.pickupEnabled === undefined ? Boolean(Number(settings?.pickup_enabled ?? 1)) : Boolean(body.pickupEnabled)
     const deliveryEnabled = body.deliveryEnabled === undefined ? Boolean(Number(settings?.delivery_enabled ?? 1)) : Boolean(body.deliveryEnabled)
     const pickupNotes = body.pickupNotes === undefined ? (settings?.pickup_notes || '') : String(body.pickupNotes || '')
+    const publicSlugValidation = validateStorePublicSlug(body.publicSlug === undefined ? (settings?.public_slug || DEFAULT_STORE_PUBLIC_SLUG) : body.publicSlug)
+
+    if (!publicSlugValidation.ok) {
+      return res.status(400).json({ error: publicSlugValidation.error })
+    }
 
     await pool.query(
       `UPDATE store_settings
        SET currency = ?, catalog_enabled = ?, cart_enabled = ?, checkout_enabled = ?, favorites_enabled = ?, recommendations_enabled = ?, banner_product_id = ?, banner_product_id_2 = ?, banner_product_id_3 = ?, banner_product_id_4 = ?, online_price_mode = ?, online_cost_adjustment_percent = ?, online_warehouse_id = ?, cutoff_time = ?, accept_after_cutoff = ?,
-           pickup_enabled = ?, delivery_enabled = ?, pickup_notes = ?
+           pickup_enabled = ?, delivery_enabled = ?, pickup_notes = ?, public_slug = ?
        WHERE id = 1`,
-      [currency, catalogEnabled ? 1 : 0, cartEnabled ? 1 : 0, checkoutEnabled ? 1 : 0, favoritesEnabled ? 1 : 0, recommendationsEnabled ? 1 : 0, bannerProductId1, bannerProductId2, bannerProductId3, bannerProductId4, onlinePricingMode, onlineCostAdjustmentPercent, onlineWarehouseId, cutoffTime, acceptAfterCutoff, pickupEnabled ? 1 : 0, deliveryEnabled ? 1 : 0, pickupNotes]
+      [currency, catalogEnabled ? 1 : 0, cartEnabled ? 1 : 0, checkoutEnabled ? 1 : 0, favoritesEnabled ? 1 : 0, recommendationsEnabled ? 1 : 0, bannerProductId1, bannerProductId2, bannerProductId3, bannerProductId4, onlinePricingMode, onlineCostAdjustmentPercent, onlineWarehouseId, cutoffTime, acceptAfterCutoff, pickupEnabled ? 1 : 0, deliveryEnabled ? 1 : 0, pickupNotes, publicSlugValidation.slug]
     )
     const updated = await getSettings(pool)
-    const updatedBannerProductIds = getBannerProductIds(updated)
+    const serialized = serializeStoreSettings(updated)
     return res.json({
-      currency: updated?.currency || 'GTQ',
-      catalogEnabled: Boolean(Number(updated?.catalog_enabled ?? 1)),
-      cartEnabled: Boolean(Number(updated?.cart_enabled ?? 1)),
-      checkoutEnabled: Boolean(Number(updated?.checkout_enabled ?? 1)),
-      favoritesEnabled: Boolean(Number(updated?.favorites_enabled ?? 1)),
-      recommendationsEnabled: Boolean(Number(updated?.recommendations_enabled ?? 1)),
-      bannerProductId: updatedBannerProductIds[0] || null,
-      bannerProductIds: updatedBannerProductIds,
-      onlinePricingMode: normalizeOnlinePricingMode(updated?.online_price_mode),
-      onlineCostAdjustmentPercent: Number(updated?.online_cost_adjustment_percent || 0),
-      onlineWarehouseId: Number(updated?.online_warehouse_id || 1),
-      cutoffTime: String(updated?.cutoff_time || '11:00:00'),
-      acceptAfterCutoff: String(updated?.accept_after_cutoff || 'SCHEDULE'),
-      pickupEnabled: Boolean(Number(updated?.pickup_enabled ?? 1)),
-      deliveryEnabled: Boolean(Number(updated?.delivery_enabled ?? 1)),
-      pickupNotes: updated?.pickup_notes || '',
+      ...serialized,
+      bannerProductId: serialized.bannerProductIds[0] || null,
     })
   } catch (err) {
     console.error('Store admin settings update error:', err)

@@ -5,6 +5,7 @@ import { useConfigStore } from '../store/config'
 import { useStoreCart } from '../store/storeCart'
 import { formatMoney } from '../utils/currency'
 import { formatCompanyName } from '../utils/text'
+import { useStorePublicRouting } from '../hooks/useStorePublicRouting'
 import '../styles/store-public.css'
 
 type StoreSettings = {
@@ -18,6 +19,7 @@ type StoreSettings = {
   pickupEnabled: boolean
   deliveryEnabled: boolean
   pickupNotes: string
+  publicSlug?: string
 }
 
 type ShippingZone = {
@@ -60,6 +62,7 @@ export default function StoreCheckout() {
   const [municipality, setMunicipality] = useState('')
   const [address, setAddress] = useState('')
   const [paymentProvider, setPaymentProvider] = useState<'STRIPE' | 'TRANSFER'>('STRIPE')
+  const { buildStorePath } = useStorePublicRouting(settings?.publicSlug)
 
   const title = useMemo(() => formatCompanyName(config?.name || 'TIENDA'), [config?.name])
   const currency = settings?.currency || config?.currency || 'USD'
@@ -121,9 +124,9 @@ export default function StoreCheckout() {
     else if (municipality && !municipalities.includes(municipality)) setMunicipality('')
   }, [department, municipality, municipalities])
 
-  if (!items.length) return <Navigate to="/tienda" replace />
+  if (!items.length) return <Navigate to={buildStorePath()} replace />
   if (settings && (settings.enabled === false || settings.cartEnabled === false || settings.checkoutEnabled === false)) {
-    return <Navigate to="/tienda" replace />
+    return <Navigate to={buildStorePath()} replace />
   }
 
   async function submit() {
@@ -162,7 +165,7 @@ export default function StoreCheckout() {
 
       const { data } = await api.post<OrderResponse>('/store/orders', payload)
       clear()
-      navigate(`/tienda/pedido/${data.orderCode}`)
+      navigate(buildStorePath(`/pedido/${data.orderCode}`))
     } catch (e: any) {
       setError(e?.response?.data?.error || 'No se pudo crear el pedido')
     } finally {
@@ -183,8 +186,8 @@ export default function StoreCheckout() {
           </div>
 
           <div className="store-actions">
-            <Link to="/tienda/carrito" className="store-button-secondary">Volver al carrito</Link>
-            <Link to="/tienda" className="store-button-ghost">Volver al catalogo</Link>
+            <Link to={buildStorePath('/carrito')} className="store-button-secondary">Volver al carrito</Link>
+            <Link to={buildStorePath()} className="store-button-ghost">Volver al catalogo</Link>
           </div>
         </div>
 

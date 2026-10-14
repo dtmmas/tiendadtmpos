@@ -4,6 +4,7 @@ import { api } from '../api'
 import { useConfigStore } from '../store/config'
 import { formatMoney } from '../utils/currency'
 import { formatCompanyName } from '../utils/text'
+import { useStorePublicRouting } from '../hooks/useStorePublicRouting'
 import '../styles/store-public.css'
 
 type OrderItem = {
@@ -43,6 +44,7 @@ type OrderDetails = {
   createdAt: string
   items: OrderItem[]
   payments: Payment[]
+  publicSlug?: string
 }
 
 function statusLabel(status: string) {
@@ -58,6 +60,7 @@ export default function StoreOrderStatus() {
   const [order, setOrder] = useState<OrderDetails | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { buildStorePath } = useStorePublicRouting(order?.publicSlug)
 
   const title = useMemo(() => formatCompanyName(config?.name || 'TIENDA'), [config?.name])
   const currency = order?.currency || config?.currency || 'USD'
@@ -80,7 +83,7 @@ export default function StoreOrderStatus() {
     return () => { cancelled = true }
   }, [orderCode])
 
-  if (!orderCode) return <Navigate to="/tienda" replace />
+  if (!orderCode) return <Navigate to={buildStorePath()} replace />
 
   const latestPayment = order?.payments?.[0] || null
   const provider = String(latestPayment?.provider || '').toUpperCase()
@@ -97,7 +100,7 @@ export default function StoreOrderStatus() {
           </div>
 
           <div className="store-actions">
-            <Link to="/tienda" className="store-button-secondary">Volver al catalogo</Link>
+            <Link to={buildStorePath()} className="store-button-secondary">Volver al catalogo</Link>
           </div>
         </div>
 

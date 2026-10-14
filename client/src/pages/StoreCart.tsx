@@ -6,6 +6,7 @@ import { api } from '../api'
 import { formatMoney } from '../utils/currency'
 import { resolveUploadedAssetUrl } from '../utils/assets'
 import { formatCompanyName } from '../utils/text'
+import { useStorePublicRouting } from '../hooks/useStorePublicRouting'
 import '../styles/store-public.css'
 
 export default function StoreCart() {
@@ -18,7 +19,8 @@ export default function StoreCart() {
   const clear = useStoreCart(s => s.clear)
   const subtotal = useStoreCart(s => s.subtotal())
   const totalItems = useStoreCart(s => s.count())
-  const [storeSettings, setStoreSettings] = useState<{ enabled: boolean; cartEnabled: boolean; checkoutEnabled: boolean } | null>(null)
+  const [storeSettings, setStoreSettings] = useState<{ enabled: boolean; cartEnabled: boolean; checkoutEnabled: boolean; publicSlug?: string } | null>(null)
+  const { buildStorePath } = useStorePublicRouting(storeSettings?.publicSlug)
 
   const title = useMemo(() => formatCompanyName(config?.name || 'TIENDA'), [config?.name])
   const currency = config?.currency || 'USD'
@@ -40,9 +42,9 @@ export default function StoreCart() {
     return () => { cancelled = true }
   }, [])
 
-  if (!items.length) return <Navigate to="/tienda" replace />
+  if (!items.length) return <Navigate to={buildStorePath()} replace />
   if (storeSettings && (storeSettings.enabled === false || storeSettings.cartEnabled === false)) {
-    return <Navigate to="/tienda" replace />
+    return <Navigate to={buildStorePath()} replace />
   }
 
   return (
@@ -56,8 +58,8 @@ export default function StoreCart() {
           </div>
 
           <div className="store-actions">
-            <Link to="/tienda" className="store-button-secondary">Seguir comprando</Link>
-            <button type="button" className="store-button-ghost store-remove" onClick={() => { clear(); navigate('/tienda') }}>
+            <Link to={buildStorePath()} className="store-button-secondary">Seguir comprando</Link>
+            <button type="button" className="store-button-ghost store-remove" onClick={() => { clear(); navigate(buildStorePath()) }}>
               Vaciar carrito
             </button>
           </div>
@@ -126,7 +128,7 @@ export default function StoreCart() {
             </div>
 
             {storeSettings?.checkoutEnabled !== false ? (
-              <button type="button" className="store-button store-button-full" onClick={() => navigate('/tienda/checkout')}>
+              <button type="button" className="store-button store-button-full" onClick={() => navigate(buildStorePath('/checkout'))}>
                 Continuar al checkout
               </button>
             ) : (

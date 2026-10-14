@@ -7,6 +7,7 @@ import { useStoreWishlist } from '../store/storeWishlist'
 import { formatMoney } from '../utils/currency'
 import { resolveUploadedAssetUrl } from '../utils/assets'
 import { formatCompanyName } from '../utils/text'
+import { useStorePublicRouting } from '../hooks/useStorePublicRouting'
 import '../styles/store-public.css'
 
 type StoreSettings = {
@@ -23,6 +24,7 @@ type StoreSettings = {
   pickupEnabled: boolean
   deliveryEnabled: boolean
   pickupNotes: string
+  publicSlug?: string
 }
 
 type StoreProduct = {
@@ -416,6 +418,7 @@ export default function StoreFront({ mode = 'landing' }: StoreFrontProps) {
   const [onlyFavorites, setOnlyFavorites] = useState(false)
   const [activeHeroIndex, setActiveHeroIndex] = useState(0)
   const [brandsMenuOpen, setBrandsMenuOpen] = useState(false)
+  const { buildStorePath } = useStorePublicRouting(settings?.publicSlug)
 
   const title = useMemo(() => formatCompanyName(config?.name || 'TIENDA'), [config?.name])
   const topbarLogoUrl = useMemo(() => {
@@ -855,7 +858,7 @@ export default function StoreFront({ mode = 'landing' }: StoreFrontProps) {
           <div className="store-market-dropdown-grid">
             {currentMode === 'catalog' ? (
               <Link
-                to="/tienda/catalogo"
+                to={buildStorePath('/catalogo')}
                 className={`store-market-brand-card ${activeBrand === 'ALL' ? 'store-market-brand-card-active' : ''}`}
                 role="menuitem"
                 onClick={() => setBrandsMenuOpen(false)}
@@ -868,7 +871,7 @@ export default function StoreFront({ mode = 'landing' }: StoreFrontProps) {
             {visibleBrands.map((brand) => (
               <Link
                 key={`header-brand-${currentMode}-${brand.key}`}
-                to={`/tienda/catalogo?brand=${encodeURIComponent(brand.key)}`}
+                to={`${buildStorePath('/catalogo')}?brand=${encodeURIComponent(brand.key)}`}
                 className={`store-market-brand-card ${activeBrand === brand.key ? 'store-market-brand-card-active' : ''}`}
                 role="menuitem"
                 onClick={() => setBrandsMenuOpen(false)}
@@ -905,18 +908,18 @@ export default function StoreFront({ mode = 'landing' }: StoreFrontProps) {
           <nav className="store-market-links store-market-links-header">
             {isCatalogPage ? (
               <>
-                <Link to="/tienda">Inicio</Link>
-                <Link to="/tienda/catalogo" className="store-market-link-active">Tienda</Link>
-                <Link to="/internet-residencial">Internet residencial</Link>
-                <Link to="/tienda#store-categories">Categorías</Link>
+                <Link to={buildStorePath()}>Inicio</Link>
+                <Link to={buildStorePath('/catalogo')} className="store-market-link-active">Tienda</Link>
+                <Link to={buildStorePath('/internet-residencial')}>Internet residencial</Link>
+                <Link to={`${buildStorePath()}#store-categories`}>Categorías</Link>
                 {renderBrandsDropdown('catalog')}
                 {recommendationsEnabled ? <a href="#store-top-sales">Soporte</a> : null}
               </>
             ) : (
               <>
-                <Link to="/tienda" className="store-market-link-active">Inicio</Link>
-                <Link to="/tienda/catalogo">Tienda</Link>
-                <Link to="/internet-residencial">Internet residencial</Link>
+                <Link to={buildStorePath()} className="store-market-link-active">Inicio</Link>
+                <Link to={buildStorePath('/catalogo')}>Tienda</Link>
+                <Link to={buildStorePath('/internet-residencial')}>Internet residencial</Link>
                 <a href="#store-categories">Categorías</a>
                 {renderBrandsDropdown('landing')}
                 {recommendationsEnabled ? <a href="#store-top-sales">Soporte</a> : null}
@@ -941,7 +944,7 @@ export default function StoreFront({ mode = 'landing' }: StoreFrontProps) {
 
           <div className="store-market-actions">
             {cartEnabled ? (
-              <Link to="/tienda/carrito" className="store-market-icon-link">
+              <Link to={buildStorePath('/carrito')} className="store-market-icon-link">
                 <span>Carrito</span>
                 <strong>{cartCount}</strong>
               </Link>
@@ -1527,7 +1530,7 @@ export default function StoreFront({ mode = 'landing' }: StoreFrontProps) {
                   key={`brand-row-a-${brand.key}-${index}`}
                   type="button"
                   className="store-brand-orb"
-                  onClick={() => navigate(`/tienda/catalogo?brand=${encodeURIComponent(brand.key)}`)}
+                  onClick={() => navigate(`${buildStorePath('/catalogo')}?brand=${encodeURIComponent(brand.key)}`)}
                   title={`Ver productos de ${brand.label}`}
                 >
                   <BrandOrbVisual label={brand.label} logoUrl={brand.logoUrl} />
@@ -1544,7 +1547,7 @@ export default function StoreFront({ mode = 'landing' }: StoreFrontProps) {
                   key={`brand-row-b-${brand.key}-${index}`}
                   type="button"
                   className="store-brand-orb"
-                  onClick={() => navigate(`/tienda/catalogo?brand=${encodeURIComponent(brand.key)}`)}
+                  onClick={() => navigate(`${buildStorePath('/catalogo')}?brand=${encodeURIComponent(brand.key)}`)}
                   title={`Ver productos de ${brand.label}`}
                 >
                   <BrandOrbVisual label={brand.label} logoUrl={brand.logoUrl} />
@@ -1560,7 +1563,7 @@ export default function StoreFront({ mode = 'landing' }: StoreFrontProps) {
       </div>
 
       {storeEnabled && cartEnabled ? (
-        <Link to="/tienda/carrito" className="store-floating-cart">
+        <Link to={buildStorePath('/carrito')} className="store-floating-cart">
           <span className="store-floating-cart-count">{cartCount}</span>
           <span>Carrito</span>
         </Link>
@@ -1687,7 +1690,7 @@ export default function StoreFront({ mode = 'landing' }: StoreFrontProps) {
                       Agregar al carrito
                     </button>
                     {checkoutEnabled ? (
-                      <Link to="/tienda/carrito" className="store-button-secondary" onClick={() => setSelectedProduct(null)}>
+                      <Link to={buildStorePath('/carrito')} className="store-button-secondary" onClick={() => setSelectedProduct(null)}>
                         Ir al carrito
                       </Link>
                     ) : null}

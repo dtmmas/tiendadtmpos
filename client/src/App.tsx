@@ -46,6 +46,7 @@ import StoreResidentialPlans from './pages/StoreResidentialPlans'
 import { showAppAlert } from './components/AlertHost'
 import RootCore from './pages/RootCore'
 import RootAccessGuard from './components/RootAccessGuard'
+import StoreLegacyRedirect from './components/StoreLegacyRedirect'
 
 function RootLanding() {
   const user = useAuthStore(s => s.user)
@@ -99,12 +100,18 @@ export default function App() {
   return (
     <>
       <Routes>
-        <Route path="/tienda" element={<StoreFront />} />
-        <Route path="/tienda/catalogo" element={<StoreFront mode="catalog" />} />
-        <Route path="/internet-residencial" element={<StoreResidentialPlans />} />
-        <Route path="/tienda/carrito" element={<StoreCart />} />
-        <Route path="/tienda/checkout" element={<StoreCheckout />} />
-        <Route path="/tienda/pedido/:orderCode" element={<StoreOrderStatus />} />
+        <Route path="/s/:storeSlug" element={<StoreFront />} />
+        <Route path="/s/:storeSlug/catalogo" element={<StoreFront mode="catalog" />} />
+        <Route path="/s/:storeSlug/internet-residencial" element={<StoreResidentialPlans />} />
+        <Route path="/s/:storeSlug/carrito" element={<StoreCart />} />
+        <Route path="/s/:storeSlug/checkout" element={<StoreCheckout />} />
+        <Route path="/s/:storeSlug/pedido/:orderCode" element={<StoreOrderStatus />} />
+        <Route path="/tienda" element={<StoreLegacyRedirect />} />
+        <Route path="/tienda/catalogo" element={<StoreLegacyRedirect suffix="/catalogo" />} />
+        <Route path="/internet-residencial" element={<StoreLegacyRedirect suffix="/internet-residencial" />} />
+        <Route path="/tienda/carrito" element={<StoreLegacyRedirect suffix="/carrito" />} />
+        <Route path="/tienda/checkout" element={<StoreLegacyRedirect suffix="/checkout" />} />
+        <Route path="/tienda/pedido/:orderCode" element={<StoreLegacyRedirect suffix="/pedido/:orderCode" />} />
         <Route path="/login" element={<Login />} />
         <Route
           path="/pos"

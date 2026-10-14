@@ -4,6 +4,7 @@ import { api } from '../api'
 import { useConfigStore } from '../store/config'
 import { formatCompanyName } from '../utils/text'
 import { resolveUploadedAssetUrl } from '../utils/assets'
+import { buildStorePublicBasePath } from '../utils/storePublicLink'
 
 type StoreAdminSettings = {
   currency: string
@@ -21,6 +22,8 @@ type StoreAdminSettings = {
   pickupEnabled: boolean
   deliveryEnabled: boolean
   pickupNotes: string
+  publicSlug: string
+  publicPath: string
 }
 
 type BannerProductOption = {
@@ -158,6 +161,15 @@ export default function StoreAdmin() {
     }),
     [productOptionsById, productPricingOverrides]
   )
+  const publicStorePath = useMemo(
+    () => settings?.publicPath || buildStorePublicBasePath(settings?.publicSlug),
+    [settings?.publicPath, settings?.publicSlug]
+  )
+  const publicStoreUrl = useMemo(() => {
+    if (!publicStorePath) return ''
+    if (typeof window === 'undefined') return publicStorePath
+    return `${window.location.origin}${publicStorePath}`
+  }, [publicStorePath])
 
   const filteredOverrideProducts = useMemo(() => {
     const search = overrideProductSearch.trim().toLowerCase()
@@ -246,7 +258,7 @@ export default function StoreAdmin() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <Link to="/tienda" className="btn secondary">Ver tienda pública</Link>
+          <Link to={publicStorePath || '/tienda'} className="btn secondary">Ver tienda pública</Link>
           <button type="button" className="btn" onClick={save} disabled={!settings || saving}>
             {saving ? 'Guardando...' : 'Guardar cambios'}
           </button>
@@ -259,6 +271,40 @@ export default function StoreAdmin() {
 
       {settings ? (
         <>
+          <section style={panelStyle}>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 18 }}>Enlace público de la tienda</div>
+              <div style={{ color: 'var(--muted)', fontSize: 13 }}>
+                Define un alias exclusivo para abrir la tienda desde una URL separada del sistema administrativo.
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 360px) minmax(320px, 1fr)', gap: 12 }}>
+              <label style={cardStyle}>
+                <div style={{ fontWeight: 700 }}>Alias del enlace público</div>
+                <input
+                  value={settings.publicSlug}
+                  onChange={(e) => onToggle('publicSlug', e.target.value)}
+                  placeholder="mi-tienda"
+                  autoComplete="off"
+                />
+                <div style={{ color: 'var(--muted)', fontSize: 12 }}>
+                  Usa un alias corto y recordable. Se permiten letras, números y guiones medios.
+                </div>
+              </label>
+
+              <div style={cardStyle}>
+                <div style={{ fontWeight: 700 }}>Vista previa del enlace</div>
+                <div style={{ fontFamily: 'monospace', fontSize: 14, wordBreak: 'break-all' }}>
+                  {publicStoreUrl || 'Se generará al guardar'}
+                </div>
+                <div style={{ color: 'var(--muted)', fontSize: 12 }}>
+                  La ruta pública resultante abrirá solo la tienda online y ayudará a evitar accesos al sistema interno.
+                </div>
+              </div>
+            </div>
+          </section>
+
           <section style={panelStyle}>
             <div>
               <div style={{ fontWeight: 800, fontSize: 18 }}>Funciones web</div>
