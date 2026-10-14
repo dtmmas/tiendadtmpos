@@ -45,6 +45,7 @@ type OrderDetails = {
   items: OrderItem[]
   payments: Payment[]
   publicSlug?: string
+  customDomain?: string
 }
 
 function statusLabel(status: string) {
@@ -58,12 +59,24 @@ export default function StoreOrderStatus() {
   const { orderCode } = useParams()
   const config = useConfigStore(s => s.config)
   const [order, setOrder] = useState<OrderDetails | null>(null)
+  const [storeSettings, setStoreSettings] = useState<{ publicSlug?: string; customDomain?: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const { buildStorePath } = useStorePublicRouting(order?.publicSlug)
+  const { buildStorePath } = useStorePublicRouting(storeSettings?.publicSlug || order?.publicSlug, storeSettings?.customDomain || order?.customDomain)
 
   const title = useMemo(() => formatCompanyName(config?.name || 'TIENDA'), [config?.name])
   const currency = order?.currency || config?.currency || 'USD'
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { data } = await api.get('/store/settings')
+        if (!cancelled) setStoreSettings(data)
+      } catch {}
+    })()
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     if (!orderCode) return

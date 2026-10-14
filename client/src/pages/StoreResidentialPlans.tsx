@@ -1,5 +1,6 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { api } from '../api'
 import { useConfigStore } from '../store/config'
 import { formatCompanyName } from '../utils/text'
 import { resolveUploadedAssetUrl } from '../utils/assets'
@@ -56,7 +57,19 @@ const RESIDENTIAL_PLANS = [
 
 export default function StoreResidentialPlans() {
   const config = useConfigStore(s => s.config)
-  const { buildStorePath } = useStorePublicRouting()
+  const [storeSettings, setStoreSettings] = useState<{ publicSlug?: string; customDomain?: string } | null>(null)
+  const { buildStorePath } = useStorePublicRouting(storeSettings?.publicSlug, storeSettings?.customDomain)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { data } = await api.get('/store/settings')
+        if (!cancelled) setStoreSettings(data)
+      } catch {}
+    })()
+    return () => { cancelled = true }
+  }, [])
 
   const title = useMemo(() => formatCompanyName(config?.name || 'TIENDA'), [config?.name])
   const topbarLogoUrl = useMemo(() => {

@@ -20,6 +20,7 @@ type StoreSettings = {
   deliveryEnabled: boolean
   pickupNotes: string
   publicSlug?: string
+  customDomain?: string
 }
 
 type ShippingZone = {
@@ -62,7 +63,7 @@ export default function StoreCheckout() {
   const [municipality, setMunicipality] = useState('')
   const [address, setAddress] = useState('')
   const [paymentProvider, setPaymentProvider] = useState<'STRIPE' | 'TRANSFER'>('STRIPE')
-  const { buildStorePath } = useStorePublicRouting(settings?.publicSlug)
+  const { buildStorePath } = useStorePublicRouting(settings?.publicSlug, settings?.customDomain)
 
   const title = useMemo(() => formatCompanyName(config?.name || 'TIENDA'), [config?.name])
   const currency = settings?.currency || config?.currency || 'USD'

@@ -3,7 +3,14 @@ import { authMiddleware, roleMiddleware } from '../auth.js'
 import { getPool } from '../db.js'
 import { ensureSalesSchema } from './sales.js'
 import { registerMovement } from '../services/inventory.js'
-import { buildStorePublicBasePath, DEFAULT_STORE_PUBLIC_SLUG, validateStorePublicSlug } from '../services/store_public_link.js'
+import {
+  buildStoreEntryUrl,
+  buildStorePublicBasePath,
+  checkStoreCustomDomainAvailability,
+  DEFAULT_STORE_PUBLIC_SLUG,
+  validateStoreCustomDomain,
+  validateStorePublicSlug,
+} from '../services/store_public_link.js'
 
 const router = express.Router()
 
@@ -55,6 +62,7 @@ async function ensureStoreFeatureColumns(pool) {
     ['delivery_enabled', "ALTER TABLE store_settings ADD COLUMN delivery_enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER pickup_enabled"],
     ['pickup_notes', "ALTER TABLE store_settings ADD COLUMN pickup_notes TEXT NULL AFTER delivery_enabled"],
     ['public_slug', `ALTER TABLE store_settings ADD COLUMN public_slug VARCHAR(60) NOT NULL DEFAULT '${DEFAULT_STORE_PUBLIC_SLUG}' AFTER pickup_notes`],
+    ['custom_domain', "ALTER TABLE store_settings ADD COLUMN custom_domain VARCHAR(255) NULL DEFAULT NULL AFTER public_slug"],
   ]
 
   for (const [columnName, statement] of requiredColumns) {
@@ -123,6 +131,12 @@ function serializeStoreSettings(settings) {
   const publicSlugValidation = validateStorePublicSlug(settings?.public_slug || DEFAULT_STORE_PUBLIC_SLUG)
   const publicSlug = publicSlugValidation.slug || DEFAULT_STORE_PUBLIC_SLUG
   const publicPath = buildStorePublicBasePath(publicSlug)
+  const customDomainValidation = validateStoreCustomDomain(settings?.custom_domain || '')
+  const customDomain = customDomainValidation.domain || ''
+  const storefrontUrl = buildStoreEntryUrl({
+    slug: publicSlug,
+    customDomain,
+  })
   return {
     currency: settings?.currency || 'GTQ',
     enabled: Boolean(Number(settings?.enabled ?? 1)),
@@ -143,7 +157,15 @@ function serializeStoreSettings(settings) {
     pickupNotes: settings?.pickup_notes || '',
     publicSlug,
     publicPath,
+    customDomain,
+    storefrontUrl,
   }
+}
+
+function getRequestSystemHost(req) {
+  return String(req.get('x-forwarded-host') || req.get('host') || '')
+    .split(',')[0]
+    .trim()
 }
 
 function normalizeProductPricingOverrides(input) {
@@ -309,13 +331,14 @@ async function getSettings(pool) {
     delivery_enabled TINYINT(1) NOT NULL DEFAULT 1,
     pickup_notes TEXT NULL,
     public_slug VARCHAR(60) NOT NULL DEFAULT '${DEFAULT_STORE_PUBLIC_SLUG}',
+    custom_domain VARCHAR(255) NULL DEFAULT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
   )`)
   await ensureStoreFeatureColumns(pool)
   await pool.query(
-    `INSERT IGNORE INTO store_settings (id, enabled, catalog_enabled, cart_enabled, checkout_enabled, favorites_enabled, recommendations_enabled, banner_product_id, currency, online_warehouse_id, cutoff_time, accept_after_cutoff, pickup_enabled, delivery_enabled, public_slug)
-     VALUES (1, 1, 1, 1, 1, 1, 1, NULL, 'GTQ', 1, '11:00:00', 'SCHEDULE', 1, 1, ?)`,
+    `INSERT IGNORE INTO store_settings (id, enabled, catalog_enabled, cart_enabled, checkout_enabled, favorites_enabled, recommendations_enabled, banner_product_id, currency, online_warehouse_id, cutoff_time, accept_after_cutoff, pickup_enabled, delivery_enabled, public_slug, custom_domain)
+     VALUES (1, 1, 1, 1, 1, 1, 1, NULL, 'GTQ', 1, '11:00:00', 'SCHEDULE', 1, 1, ?, NULL)`,
     [DEFAULT_STORE_PUBLIC_SLUG]
   )
   const [rows] = await pool.query('SELECT * FROM store_settings WHERE id = 1 LIMIT 1')
@@ -347,6 +370,7 @@ async function getSettings(pool) {
     delivery_enabled: 1,
     pickup_notes: '',
     public_slug: DEFAULT_STORE_PUBLIC_SLUG,
+    custom_domain: null,
   }
 }
 
@@ -963,6 +987,18 @@ router.get('/admin/settings', authMiddleware, roleMiddleware(['ADMIN']), async (
   }
 })
 
+router.get('/admin/validate-domain', authMiddleware, roleMiddleware(['ADMIN']), async (req, res) => {
+  try {
+    const validation = await checkStoreCustomDomainAvailability(String(req.query.domain || ''), {
+      systemHost: getRequestSystemHost(req),
+    })
+    return res.status(validation.ok ? 200 : 400).json(validation)
+  } catch (err) {
+    console.error('Store admin domain validation error:', err)
+    return res.status(500).json({ error: 'Server error' })
+  }
+})
+
 router.put('/admin/settings', authMiddleware, roleMiddleware(['ADMIN']), async (req, res) => {
   try {
     const pool = await getPool()
@@ -996,17 +1032,25 @@ router.put('/admin/settings', authMiddleware, roleMiddleware(['ADMIN']), async (
     const deliveryEnabled = body.deliveryEnabled === undefined ? Boolean(Number(settings?.delivery_enabled ?? 1)) : Boolean(body.deliveryEnabled)
     const pickupNotes = body.pickupNotes === undefined ? (settings?.pickup_notes || '') : String(body.pickupNotes || '')
     const publicSlugValidation = validateStorePublicSlug(body.publicSlug === undefined ? (settings?.public_slug || DEFAULT_STORE_PUBLIC_SLUG) : body.publicSlug)
+    const customDomainValidation = validateStoreCustomDomain(
+      body.customDomain === undefined ? (settings?.custom_domain || '') : body.customDomain,
+      { systemHost: getRequestSystemHost(req) }
+    )
 
     if (!publicSlugValidation.ok) {
       return res.status(400).json({ error: publicSlugValidation.error })
     }
 
+    if (!customDomainValidation.ok) {
+      return res.status(400).json({ error: customDomainValidation.error })
+    }
+
     await pool.query(
       `UPDATE store_settings
        SET currency = ?, catalog_enabled = ?, cart_enabled = ?, checkout_enabled = ?, favorites_enabled = ?, recommendations_enabled = ?, banner_product_id = ?, banner_product_id_2 = ?, banner_product_id_3 = ?, banner_product_id_4 = ?, online_price_mode = ?, online_cost_adjustment_percent = ?, online_warehouse_id = ?, cutoff_time = ?, accept_after_cutoff = ?,
-           pickup_enabled = ?, delivery_enabled = ?, pickup_notes = ?, public_slug = ?
+           pickup_enabled = ?, delivery_enabled = ?, pickup_notes = ?, public_slug = ?, custom_domain = ?
        WHERE id = 1`,
-      [currency, catalogEnabled ? 1 : 0, cartEnabled ? 1 : 0, checkoutEnabled ? 1 : 0, favoritesEnabled ? 1 : 0, recommendationsEnabled ? 1 : 0, bannerProductId1, bannerProductId2, bannerProductId3, bannerProductId4, onlinePricingMode, onlineCostAdjustmentPercent, onlineWarehouseId, cutoffTime, acceptAfterCutoff, pickupEnabled ? 1 : 0, deliveryEnabled ? 1 : 0, pickupNotes, publicSlugValidation.slug]
+      [currency, catalogEnabled ? 1 : 0, cartEnabled ? 1 : 0, checkoutEnabled ? 1 : 0, favoritesEnabled ? 1 : 0, recommendationsEnabled ? 1 : 0, bannerProductId1, bannerProductId2, bannerProductId3, bannerProductId4, onlinePricingMode, onlineCostAdjustmentPercent, onlineWarehouseId, cutoffTime, acceptAfterCutoff, pickupEnabled ? 1 : 0, deliveryEnabled ? 1 : 0, pickupNotes, publicSlugValidation.slug, customDomainValidation.domain || null]
     )
     const updated = await getSettings(pool)
     const serialized = serializeStoreSettings(updated)

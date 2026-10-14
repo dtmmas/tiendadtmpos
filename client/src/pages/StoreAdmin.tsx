@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
-import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { useConfigStore } from '../store/config'
 import { formatCompanyName } from '../utils/text'
 import { resolveUploadedAssetUrl } from '../utils/assets'
-import { buildStorePublicBasePath } from '../utils/storePublicLink'
+import { buildStoreEntryUrl, buildStorePublicBasePath, isStoreCustomDomainDevelopmentValue } from '../utils/storePublicLink'
 
 type StoreAdminSettings = {
   currency: string
@@ -24,6 +23,15 @@ type StoreAdminSettings = {
   pickupNotes: string
   publicSlug: string
   publicPath: string
+  customDomain: string
+  storefrontUrl?: string
+}
+
+type DomainValidationState = {
+  checking: boolean
+  ok: boolean | null
+  dnsReady: boolean | null
+  message: string | null
 }
 
 type BannerProductOption = {
@@ -94,6 +102,12 @@ export default function StoreAdmin() {
   const [overrideProductId, setOverrideProductId] = useState<number | ''>('')
   const [overrideProductSearch, setOverrideProductSearch] = useState('')
   const [overrideAdjustmentPercent, setOverrideAdjustmentPercent] = useState<string>('')
+  const [domainValidation, setDomainValidation] = useState<DomainValidationState>({
+    checking: false,
+    ok: null,
+    dnsReady: null,
+    message: null,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -166,10 +180,13 @@ export default function StoreAdmin() {
     [settings?.publicPath, settings?.publicSlug]
   )
   const publicStoreUrl = useMemo(() => {
-    if (!publicStorePath) return ''
-    if (typeof window === 'undefined') return publicStorePath
-    return `${window.location.origin}${publicStorePath}`
-  }, [publicStorePath])
+    if (!settings) return ''
+    return buildStoreEntryUrl({
+      slug: settings.publicSlug,
+      customDomain: settings.customDomain,
+      origin: typeof window === 'undefined' ? '' : window.location.origin,
+    })
+  }, [settings, publicStorePath])
 
   const filteredOverrideProducts = useMemo(() => {
     const search = overrideProductSearch.trim().toLowerCase()
@@ -181,6 +198,41 @@ export default function StoreAdmin() {
       return name.includes(search) || sku.includes(search) || id.includes(search)
     })
   }, [bannerProducts, overrideProductSearch])
+
+  useEffect(() => {
+    if (!settings) return
+    let cancelled = false
+    const timer = window.setTimeout(async () => {
+      try {
+        setDomainValidation((prev) => ({ ...prev, checking: true, message: null }))
+        const { data } = await api.get('/store/admin/validate-domain', {
+          params: { domain: settings.customDomain || '' },
+        })
+        if (!cancelled) {
+          setDomainValidation({
+            checking: false,
+            ok: Boolean(data?.ok),
+            dnsReady: data?.dnsReady ?? null,
+            message: data?.message || null,
+          })
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          setDomainValidation({
+            checking: false,
+            ok: false,
+            dnsReady: false,
+            message: e?.response?.data?.message || e?.response?.data?.error || 'No se pudo validar el dominio de la tienda.',
+          })
+        }
+      }
+    }, 350)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [settings?.customDomain])
 
   function addOrUpdateProductOverride() {
     const productId = Number(overrideProductId || 0)
@@ -258,7 +310,7 @@ export default function StoreAdmin() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <Link to={publicStorePath || '/tienda'} className="btn secondary">Ver tienda pública</Link>
+          <a href={publicStoreUrl || publicStorePath || '/tienda'} className="btn secondary" target="_blank" rel="noreferrer">Ver tienda pública</a>
           <button type="button" className="btn" onClick={save} disabled={!settings || saving}>
             {saving ? 'Guardando...' : 'Guardar cambios'}
           </button>
@@ -300,6 +352,37 @@ export default function StoreAdmin() {
                 </div>
                 <div style={{ color: 'var(--muted)', fontSize: 12 }}>
                   La ruta pública resultante abrirá solo la tienda online y ayudará a evitar accesos al sistema interno.
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 360px) minmax(320px, 1fr)', gap: 12 }}>
+              <label style={cardStyle}>
+                <div style={{ fontWeight: 700 }}>Dominio personalizado</div>
+                <input
+                  value={settings.customDomain}
+                  onChange={(e) => onToggle('customDomain', e.target.value)}
+                  placeholder="dtmtiendaonline.com"
+                  autoComplete="off"
+                />
+                <div style={{ color: 'var(--muted)', fontSize: 12 }}>
+                  En producción usa solo el dominio o subdominio. En desarrollo también puedes usar `localhost:5173`.
+                </div>
+              </label>
+
+              <div style={cardStyle}>
+                <div style={{ fontWeight: 700 }}>Estado del dominio</div>
+                <div style={{ fontSize: 14, color: domainValidation.ok === false ? '#b91c1c' : domainValidation.dnsReady === false ? '#92400e' : 'var(--text)' }}>
+                  {domainValidation.checking
+                    ? 'Validando dominio...'
+                    : domainValidation.message || 'Sin validación todavía.'}
+                </div>
+                <div style={{ color: 'var(--muted)', fontSize: 12 }}>
+                  {settings.customDomain
+                    ? (isStoreCustomDomainDevelopmentValue(settings.customDomain)
+                      ? 'Modo desarrollo detectado. Se asumirá protocolo HTTP.'
+                      : 'Si el DNS todavía no apunta al servidor, la tienda podrá guardarse pero no publicarse hasta completar la propagación.')
+                    : 'Si dejas este campo vacío, la tienda seguirá usando la ruta interna por alias.'}
                 </div>
               </div>
             </div>

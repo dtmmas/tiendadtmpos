@@ -25,6 +25,7 @@ type StoreSettings = {
   deliveryEnabled: boolean
   pickupNotes: string
   publicSlug?: string
+  customDomain?: string
 }
 
 type StoreProduct = {
@@ -418,7 +419,7 @@ export default function StoreFront({ mode = 'landing' }: StoreFrontProps) {
   const [onlyFavorites, setOnlyFavorites] = useState(false)
   const [activeHeroIndex, setActiveHeroIndex] = useState(0)
   const [brandsMenuOpen, setBrandsMenuOpen] = useState(false)
-  const { buildStorePath } = useStorePublicRouting(settings?.publicSlug)
+  const { buildStorePath } = useStorePublicRouting(settings?.publicSlug, settings?.customDomain)
 
   const title = useMemo(() => formatCompanyName(config?.name || 'TIENDA'), [config?.name])
   const topbarLogoUrl = useMemo(() => {

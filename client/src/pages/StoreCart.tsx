@@ -19,8 +19,8 @@ export default function StoreCart() {
   const clear = useStoreCart(s => s.clear)
   const subtotal = useStoreCart(s => s.subtotal())
   const totalItems = useStoreCart(s => s.count())
-  const [storeSettings, setStoreSettings] = useState<{ enabled: boolean; cartEnabled: boolean; checkoutEnabled: boolean; publicSlug?: string } | null>(null)
-  const { buildStorePath } = useStorePublicRouting(storeSettings?.publicSlug)
+  const [storeSettings, setStoreSettings] = useState<{ enabled: boolean; cartEnabled: boolean; checkoutEnabled: boolean; publicSlug?: string; customDomain?: string } | null>(null)
+  const { buildStorePath } = useStorePublicRouting(storeSettings?.publicSlug, storeSettings?.customDomain)
 
   const title = useMemo(() => formatCompanyName(config?.name || 'TIENDA'), [config?.name])
   const currency = config?.currency || 'USD'
