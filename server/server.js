@@ -29,7 +29,7 @@ import { envPath, uploadsDir } from './paths.js'
 import { auditTrackedInventoryConsistency, logTrackedInventoryAudit } from './services/tracked_inventory_audit.js'
 import { ensureRootAccessSchema } from './services/root_access.js'
 
-dotenv.config({ path: envPath })
+dotenv.config({ path: envPath, override: true })
 const app = express()
 const PORT = process.env.PORT || 4000
 const HOST = process.env.HOST || '0.0.0.0'

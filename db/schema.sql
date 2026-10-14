@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS system_config (
   logo_url VARCHAR(255),
   enabled_product_types TEXT NULL
 );
-INSERT IGNORE INTO system_config (id, name, currency, logo_url, enabled_product_types) VALUES (1,'DTMPos','Q.',NULL,'["GENERAL","MEDICINAL","IMEI","SERIAL","VARIANT_SERIALIZED"]');
+INSERT IGNORE INTO system_config (id, name, currency, logo_url) VALUES (1,'DTMPos','Q.',NULL);
 
 -- Proveedores y Clientes
 CREATE TABLE IF NOT EXISTS suppliers (

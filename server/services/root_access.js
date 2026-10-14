@@ -156,6 +156,12 @@ export async function ensureRootAccessSchema(executor) {
   if (await columnExists(executor, 'users', 'role_id') === false) {
     await executorQuery(executor, 'ALTER TABLE users ADD COLUMN role_id INT NULL AFTER role')
   }
+  if (await columnExists(executor, 'users', 'is_root') === false) {
+    await executorQuery(executor, 'ALTER TABLE users ADD COLUMN is_root TINYINT(1) NOT NULL DEFAULT 0 AFTER role_id')
+  }
+  if (await columnExists(executor, 'users', 'root_permissions') === false) {
+    await executorQuery(executor, 'ALTER TABLE users ADD COLUMN root_permissions TEXT NULL AFTER is_root')
+  }
   if (await columnExists(executor, 'users', 'warehouse_id') === false) {
     await executorQuery(executor, 'ALTER TABLE users ADD COLUMN warehouse_id INT NULL DEFAULT NULL AFTER role_id')
   }
