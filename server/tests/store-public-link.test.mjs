@@ -58,3 +58,12 @@ test('construye URL absoluta con dominio personalizado', () => {
     'https://tienda.midominio.com/checkout'
   )
 })
+
+test('ignora localhost como dominio activo y mantiene la ruta publica local', () => {
+  assert.equal(buildStoreEntryUrl({
+    slug: DEFAULT_STORE_PUBLIC_SLUG,
+    customDomain: 'localhost:5173',
+    origin: 'http://localhost:5173',
+    suffix: '/checkout',
+  }), `http://localhost:5173/s/${DEFAULT_STORE_PUBLIC_SLUG}/checkout`)
+})

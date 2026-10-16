@@ -37,6 +37,14 @@ function normalizeComparableHost(value: unknown) {
   return split?.host || ''
 }
 
+function getEffectiveStoreCustomDomain(value: unknown) {
+  const normalized = normalizeStoreCustomDomain(value)
+  const split = splitHostAndPort(normalized)
+  if (!split?.host) return ''
+  if (isLocalDevelopmentHost(split.host) || isIPv4(split.host)) return ''
+  return normalized
+}
+
 export function normalizeStorePublicSlug(value: unknown) {
   const rawValue = String(value || '').trim()
   if (!rawValue) return DEFAULT_STORE_PUBLIC_SLUG
@@ -95,7 +103,7 @@ export function normalizeStoreCustomDomain(value: unknown) {
 
 export function matchesStoreCustomDomain(currentHost: string, configuredDomain?: string | null) {
   const current = normalizeComparableHost(currentHost)
-  const configured = normalizeComparableHost(configuredDomain)
+  const configured = normalizeComparableHost(getEffectiveStoreCustomDomain(configuredDomain))
   return Boolean(current && configured && current === configured)
 }
 
@@ -150,7 +158,7 @@ export function buildStoreEntryUrl(options: {
   origin?: string | null
   suffix?: string
 }) {
-  const customDomain = normalizeStoreCustomDomain(options.customDomain)
+  const customDomain = getEffectiveStoreCustomDomain(options.customDomain)
   if (customDomain) {
     return `${getStoreCustomDomainProtocol(customDomain)}://${customDomain}${buildStoreRootPath(options.suffix)}`
   }
@@ -163,4 +171,3 @@ export function isStoreCustomDomainDevelopmentValue(configuredDomain?: string | 
   const split = splitHostAndPort(normalizeStoreCustomDomain(configuredDomain))
   return Boolean(split?.host && (isLocalDevelopmentHost(split.host) || isIPv4(split.host)))
 }
-

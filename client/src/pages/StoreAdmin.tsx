@@ -380,7 +380,7 @@ export default function StoreAdmin() {
                 <div style={{ color: 'var(--muted)', fontSize: 12 }}>
                   {settings.customDomain
                     ? (isStoreCustomDomainDevelopmentValue(settings.customDomain)
-                      ? 'Modo desarrollo detectado. Se asumirá protocolo HTTP.'
+                      ? 'Modo desarrollo detectado. En local se conservará la ruta /s/alias para no bloquear el login del sistema.'
                       : 'Si el DNS todavía no apunta al servidor, la tienda podrá guardarse pero no publicarse hasta completar la propagación.')
                     : 'Si dejas este campo vacío, la tienda seguirá usando la ruta interna por alias.'}
                 </div>

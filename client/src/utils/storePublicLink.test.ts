@@ -53,4 +53,20 @@ describe('storePublicLink', () => {
       suffix: '/catalogo',
     })).toBe('https://tienda.midominio.com/catalogo')
   })
+
+  it('ignora localhost como dominio activo y conserva la ruta publica local', () => {
+    expect(matchesStoreCustomDomain('localhost:5173', 'localhost:5173')).toBe(false)
+    expect(buildStoreEntryPath({
+      slug: DEFAULT_STORE_PUBLIC_SLUG,
+      customDomain: 'localhost:5173',
+      currentHost: 'localhost:5173',
+      suffix: '/checkout',
+    })).toBe(`/s/${DEFAULT_STORE_PUBLIC_SLUG}/checkout`)
+    expect(buildStoreEntryUrl({
+      slug: DEFAULT_STORE_PUBLIC_SLUG,
+      customDomain: 'localhost:5173',
+      origin: 'http://localhost:5173',
+      suffix: '/checkout',
+    })).toBe(`http://localhost:5173/s/${DEFAULT_STORE_PUBLIC_SLUG}/checkout`)
+  })
 })

@@ -18,6 +18,8 @@ import {
   validateProductImagesInstructions,
 } from '../services/product_images.js'
 
+const XLSXApi = XLSX?.readFile && XLSX?.utils ? XLSX : (XLSX?.default || XLSX)
+
 const router = express.Router()
 const upload = multer({ dest: uploadsDir })
 const productImageUpload = multer({
@@ -628,6 +630,83 @@ function mapSpreadsheetRow(rawRow) {
     serials: pick(['serials', 'series', 'serial']),
     variants: pick(['variants', 'variantes', 'serializedvariants', 'variantesserializadas']),
   }
+}
+
+function isGroupedImeiSpreadsheetFormat(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return false
+
+  let codeHeaderDetected = false
+  let imeiHeaderDetected = false
+  let namedRows = 0
+  let continuationRows = 0
+
+  for (const row of rows.slice(0, 20)) {
+    const normalizedKeys = Object.keys(row || {}).map(normalizeSpreadsheetKey).filter(Boolean)
+    if (normalizedKeys.includes('codigo')) codeHeaderDetected = true
+    if (normalizedKeys.includes('imei')) imeiHeaderDetected = true
+
+    const mapped = mapSpreadsheetRow(row)
+    if (String(mapped.name || '').trim()) namedRows += 1
+    if (!String(mapped.productCode || '').trim() && String(mapped.imeis || '').trim()) continuationRows += 1
+  }
+
+  return codeHeaderDetected && imeiHeaderDetected && namedRows === 0 && continuationRows > 0
+}
+
+function normalizeGroupedImeiSpreadsheetRows(rows) {
+  if (!isGroupedImeiSpreadsheetFormat(rows)) return rows
+
+  const grouped = new Map()
+  const orderedCodes = []
+  let currentCode = ''
+
+  const ensureEntry = (code) => {
+    const normalizedCode = String(code || '').trim()
+    if (!normalizedCode) return null
+    if (!grouped.has(normalizedCode)) {
+      grouped.set(normalizedCode, {
+        name: normalizedCode,
+        sku: normalizedCode,
+        productCode: normalizedCode,
+        unit: 'UND',
+        description: normalizedCode,
+        productType: 'IMEI',
+        imeis: [],
+      })
+      orderedCodes.push(normalizedCode)
+    }
+    return grouped.get(normalizedCode)
+  }
+
+  for (const row of rows) {
+    const mapped = mapSpreadsheetRow(row)
+    const code = String(mapped.productCode || '').trim()
+    if (code) currentCode = code
+    if (!currentCode) continue
+
+    const entry = ensureEntry(currentCode)
+    if (!entry) continue
+
+    const price = mapped.price !== '' && mapped.price !== undefined && mapped.price !== null
+      ? Number(mapped.price)
+      : null
+    if (price !== null && Number.isFinite(price)) entry.price = price
+
+    const imeis = splitList(mapped.imeis)
+    for (const imei of imeis) {
+      const normalizedImei = String(imei || '').trim()
+      if (!normalizedImei || entry.imeis.includes(normalizedImei)) continue
+      entry.imeis.push(normalizedImei)
+    }
+  }
+
+  return orderedCodes.map((code) => {
+    const entry = grouped.get(code)
+    return {
+      ...entry,
+      imeis: entry.imeis.join(','),
+    }
+  })
 }
 
 async function createProductAtomic({ pool, userId, payload, imageUrl }) {
@@ -1467,11 +1546,11 @@ router.get('/import-template', authMiddleware, async (req, res) => {
       ],
     ]
 
-    const ws = XLSX.utils.aoa_to_sheet(rows)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Formato')
+    const ws = XLSXApi.utils.aoa_to_sheet(rows)
+    const wb = XLSXApi.utils.book_new()
+    XLSXApi.utils.book_append_sheet(wb, ws, 'Formato')
 
-    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' })
+    const buf = XLSXApi.write(wb, { bookType: 'xlsx', type: 'buffer' })
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     res.setHeader('Content-Disposition', 'attachment; filename="productos_import_template.xlsx"')
     return res.send(buf)
@@ -1960,14 +2039,15 @@ router.post('/import', authMiddleware, upload.single('file'), async (req, res) =
       return res.status(400).json({ error: 'Archivo requerido' })
     }
 
-    const workbook = XLSX.readFile(filePath, { cellDates: true })
+    const workbook = XLSXApi.readFile(filePath, { cellDates: true })
     const sheetName = workbook.SheetNames?.[0]
     if (!sheetName) {
       return res.status(400).json({ error: 'Archivo sin hojas' })
     }
 
     const ws = workbook.Sheets[sheetName]
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' })
+    const rawRows = XLSXApi.utils.sheet_to_json(ws, { defval: '' })
+    const rows = normalizeGroupedImeiSpreadsheetRows(rawRows)
     const errors = []
     const created = []
 
@@ -2494,6 +2574,8 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 })
 
 export {
+  isGroupedImeiSpreadsheetFormat,
+  normalizeGroupedImeiSpreadsheetRows,
   normalizeSerializedVariants,
   parseJsonArrayFieldDetailed,
   readCaseInsensitiveValue,

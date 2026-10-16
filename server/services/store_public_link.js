@@ -90,6 +90,14 @@ function normalizeComparableHost(value) {
   return split?.host || ''
 }
 
+function getEffectiveStoreCustomDomain(value) {
+  const normalized = normalizeStoreCustomDomain(value)
+  const split = splitHostAndPort(normalized)
+  if (!split?.host) return ''
+  if (isLocalDevelopmentHost(split.host) || isIPv4(split.host)) return ''
+  return normalized
+}
+
 export function normalizeStorePublicSlug(value) {
   const rawValue = String(value || '').trim()
   if (!rawValue) return DEFAULT_STORE_PUBLIC_SLUG
@@ -282,7 +290,7 @@ export async function checkStoreCustomDomainAvailability(value, options = {}) {
 
 export function matchesStoreCustomDomain(currentHost, configuredDomain) {
   const current = normalizeComparableHost(currentHost)
-  const configured = normalizeComparableHost(configuredDomain)
+  const configured = normalizeComparableHost(getEffectiveStoreCustomDomain(configuredDomain))
   return Boolean(current && configured && current === configured)
 }
 
@@ -309,17 +317,16 @@ export function buildStorePublicPath(slug, suffix = '') {
 }
 
 export function buildStoreEntryPath(options = {}) {
-  if (options.customDomain) return buildStoreRootPath(options.suffix)
+  if (getEffectiveStoreCustomDomain(options.customDomain)) return buildStoreRootPath(options.suffix)
   return buildStorePublicPath(options.slug, options.suffix)
 }
 
 export function buildStoreEntryUrl(options = {}) {
-  if (options.customDomain) {
-    const domain = normalizeStoreCustomDomain(options.customDomain)
+  const domain = getEffectiveStoreCustomDomain(options.customDomain)
+  if (domain) {
     return `${getStoreCustomDomainProtocol(domain)}://${domain}${buildStoreRootPath(options.suffix)}`
   }
   const origin = String(options.origin || '').trim().replace(/\/+$/, '')
   const path = buildStorePublicPath(options.slug, options.suffix)
   return origin ? `${origin}${path}` : path
 }
-
